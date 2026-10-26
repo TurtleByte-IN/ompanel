@@ -96,7 +96,8 @@ What is copied:
   if T3 Code writes meanwhile, including rows still only in its write-ahead log. The copies then
   lose every row of `auth_sessions` (paired devices and clients) and `auth_pairing_links`, and
   every scheduled task's `webhook_token` and `webhook_secret` (the task's owner rotates a new
-  webhook URL). `VACUUM` then rewrites each copy, so the deleted values do not survive in free
+  webhook URL); queued webhook deliveries keep their payloads with the token in their path and URL replaced by
+  `[redacted]`. `VACUUM` then rewrites each copy, so the deleted values do not survive in free
   pages.
 
 What is not copied:
