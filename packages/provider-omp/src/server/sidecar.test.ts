@@ -193,6 +193,25 @@ describe("makeOmpSidecarResolver", () => {
     ),
   );
 
+  it.effect(
+    "rejects a relative or bare bundled sidecar path instead of looking it up on PATH",
+    () =>
+      withFixture((fixture) =>
+        Effect.gen(function* () {
+          yield* fixture.write(yield* cacheFile(fixture), PINNED_BYTES);
+          for (const bundledPath of ["omp", "bin/omp"]) {
+            const error = yield* resolveWith({
+              overridePath: "",
+              bundledPath,
+              cacheDir: fixture.cacheDir,
+            }).pipe(Effect.flip);
+            assert.strictEqual(error.reason, "bundled_not_absolute");
+            assert.include(error.message, bundledPath);
+          }
+        }),
+      ),
+  );
+
   it.effect("fails when the override path does not exist, without falling back", () =>
     withFixture((fixture) =>
       Effect.gen(function* () {

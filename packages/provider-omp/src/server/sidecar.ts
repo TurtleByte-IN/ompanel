@@ -60,6 +60,7 @@ export interface OmpSidecar {
 export const OmpSidecarErrorReason = Schema.Literals([
   "override_not_absolute",
   "override_missing",
+  "bundled_not_absolute",
   "unsupported_platform",
   "sha256_mismatch",
   "not_found",
@@ -79,7 +80,7 @@ export class OmpSidecarError extends Schema.TaggedError<OmpSidecarError>()("OmpS
 export interface OmpSidecarResolveInput {
   /** Explicit binary path from the instance settings; empty means none. */
   readonly overridePath: string;
-  /** Sidecar shipped with the app, if any. */
+  /** Sidecar shipped with the app, if any; must be absolute so `PATH` is never consulted. */
   readonly bundledPath: string | undefined;
   /** Directory holding downloaded sidecars as `<tag>/<asset>`. */
   readonly cacheDir: string;
@@ -146,6 +147,13 @@ export const makeOmpSidecarResolver = Effect.fn("makeOmpSidecarResolver")(functi
         });
       }
       return { path: expanded, source: "override", verified: false } satisfies OmpSidecar;
+    }
+
+    if (input.bundledPath && !path.isAbsolute(input.bundledPath)) {
+      return yield* new OmpSidecarError({
+        reason: "bundled_not_absolute",
+        detail: `The bundled OMP sidecar path must be absolute; "${input.bundledPath}" is not.`,
+      });
     }
 
     const platform = ompSidecarPlatform(
