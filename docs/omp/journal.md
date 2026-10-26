@@ -148,7 +148,9 @@ decide it; the step logs the five times.
 | Machine                           | Five replays (ms)            | Median | Margin to 200 ms |
 | --------------------------------- | ---------------------------- | ------ | ---------------- |
 | GitHub `ubuntu-24.04` runner (CI) | 30.7, 31.1, 24.6, 22.7, 24.3 | 24.6   | about 8×         |
+| Same runner type, a slower CI run | 55.7, 66.1, 48.3, 45.0, 48.4 | 48.4   | about 4×         |
 | Apple M5 Pro, Node 26.12.1        | 16.9, 16.6, 16.2, 15.1, 15.4 | 16.2   | about 12×        |
 
-The first replay in a fresh process is the slowest (31 ms on CI, 17 to 42 ms
-locally); even that stays more than 4× under the budget.
+Runner speed varies between CI runs by about 2×, and the first replay in a
+process is the slowest (66 ms in the slower run, 17 to 42 ms locally). Even the
+slowest single replay seen stays 3× under the budget.
