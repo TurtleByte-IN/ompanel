@@ -137,6 +137,7 @@ function fakeOmp(
     readonly version?: Behaviour;
     readonly usage?: Behaviour;
     readonly rpc?: Behaviour;
+    readonly config?: Behaviour;
   } = {},
 ): FakeOmp {
   const launches: Array<ChildProcess.StandardCommand> = [];
@@ -148,7 +149,9 @@ function fakeOmp(
       ? (input.version ?? { stdout: "omp/18.12.6\n", exitCode: 0 })
       : command.args.includes("usage")
         ? (input.usage ?? { stdout: USAGE_JSON, exitCode: 0 })
-        : (input.rpc ?? { rpc: answerLoginProviders });
+        : command.args.includes("config")
+          ? (input.config ?? { stdout: "{}\n", exitCode: 0 })
+          : (input.rpc ?? { rpc: answerLoginProviders });
     // The real spawner stops the process group when this scope closes.
     return Effect.addFinalizer(() => Effect.sync(() => void stopped++)).pipe(
       Effect.as(handle(command, behaviour)),
@@ -285,6 +288,7 @@ describe("OmpControlService deadlines", () => {
       behaviour: { rpc: { rpc: () => [] } },
       run: (c) => c.login(TARGET, "anthropic", () => Effect.succeed(undefined)),
     },
+    { budget: "config", behaviour: { config: "hang" }, run: (c) => c.configList(TARGET) },
   ];
 
   it.effect.each(cases)("stops a hung $budget at its deadline", ({ budget, behaviour, run }) =>

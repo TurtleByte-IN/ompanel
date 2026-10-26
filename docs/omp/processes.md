@@ -10,12 +10,12 @@ Every thread on an OMP instance runs its own `omp` process. The code is in
 omp --mode rpc-ui --approval-mode <mode> [--profile <name>] --config <overlay> --cwd <dir>
 ```
 
-| Flag              | Value                                                                                                                                   |
-| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `--approval-mode` | Always passed. Supervised → `always-ask`, Auto-accept edits → `write`, Full access → `yolo`. A thread stored as Auto runs `always-ask`. |
-| `--profile`       | The instance's profile setting; left out for OMP's default profile.                                                                     |
-| `--config`        | The thread's overlay, `<stateDir>/omp/threads/<thread id>/overlay.yml` (owner-only). It is an empty mapping for now.                    |
-| `--cwd`           | The thread's worktree, or the server's working directory when the thread names none.                                                    |
+| Flag              | Value                                                                                                                                                                                                                  |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--approval-mode` | Always passed. Supervised → `always-ask`, Auto-accept edits → `write`, Full access → `yolo`. A thread stored as Auto runs `always-ask`.                                                                                |
+| `--profile`       | The instance's profile setting; left out for OMP's default profile.                                                                                                                                                    |
+| `--config`        | The thread's overlay, `<stateDir>/omp/threads/<thread id>/overlay.yml` (owner-only). Created as an empty mapping; a respawn keeps it, because it holds the thread's settings overrides ([settings.md](./settings.md)). |
+| `--cwd`           | The thread's worktree, or the server's working directory when the thread names none.                                                                                                                                   |
 
 The binary is resolved (and its sha256 checked, see [sidecar.md](./sidecar.md))
 right before each spawn. The process gets the server's environment plus the

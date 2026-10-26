@@ -8,7 +8,12 @@ import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
 import * as Scope from "effect/Scope";
 
-import { ompApprovalModeFor, ompSessionArgs, writeOmpThreadOverlay } from "./launch.ts";
+import {
+  ensureOmpThreadOverlay,
+  ompApprovalModeFor,
+  ompSessionArgs,
+  ompThreadOverlayPath,
+} from "./launch.ts";
 import type { OmpPidfiles } from "./pidfiles.ts";
 import { materializeOmpJobLauncher, ompJobLauncherCommand } from "./processTree.ts";
 import { startOmpRpcProcess } from "./rpcProcess.ts";
@@ -50,10 +55,8 @@ export const startOmpSessionProcess = Effect.fn("startOmpSessionProcess")(functi
 ) {
   const path = yield* Path.Path;
   const scope = yield* Effect.scope;
-  const overlayPath = yield* writeOmpThreadOverlay({
-    // Thread ids are opaque; keep them to one path segment.
-    dir: path.join(input.dirs.threads, encodeURIComponent(input.threadId)),
-  });
+  const overlayPath = ompThreadOverlayPath(path, input.dirs.threads, input.threadId);
+  yield* ensureOmpThreadOverlay(overlayPath);
   const args = ompSessionArgs({
     approvalMode: ompApprovalModeFor(input.runtimeMode),
     profile: input.profile,

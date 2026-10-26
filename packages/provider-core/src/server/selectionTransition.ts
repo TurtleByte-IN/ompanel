@@ -1,9 +1,15 @@
-import type { ModelSelection, OrchestrationV2ProviderCapabilities } from "@t3tools/contracts";
+import type {
+  ModelSelection,
+  OrchestrationV2ProviderCapabilities,
+  ProviderSessionId,
+} from "@t3tools/contracts";
 
 export interface ProviderSelectionTransitionInput {
   readonly current: ModelSelection;
   readonly target: ModelSelection;
   readonly sessionCapabilities: OrchestrationV2ProviderCapabilities;
+  /** The live session the change applies to, when there is one. */
+  readonly providerSessionId?: ProviderSessionId;
 }
 
 export type ProviderSelectionTransitionPlan =

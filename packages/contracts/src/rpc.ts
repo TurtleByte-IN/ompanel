@@ -67,6 +67,17 @@ import {
   AcpRegistrySetProviderInput,
   AcpRegistrySetProviderResult,
 } from "./acpRegistry.ts";
+import {
+  OmpSettingsForm,
+  OmpSettingsOperationError,
+  OmpSettingsReadInput,
+  OmpSettingsResetInput,
+  OmpSettingsWriteInput,
+  OmpSettingsWriteResult,
+  OmpThreadOverrideClearInput,
+  OmpThreadOverrideInput,
+  OmpThreadOverrideResult,
+} from "./ompSettings.ts";
 import { ExternalLauncherError, LaunchEditorInput } from "./editor.ts";
 import {
   AuthAccessStreamError,
@@ -502,6 +513,11 @@ export const WS_METHODS = {
   serverSetAcpRegistryProvider: "server.setAcpRegistryProvider",
   serverDisableAcpRegistryProvider: "server.disableAcpRegistryProvider",
   serverLogoutAcpRegistry: "server.logoutAcpRegistry",
+  serverReadOmpSettings: "server.readOmpSettings",
+  serverWriteOmpSetting: "server.writeOmpSetting",
+  serverResetOmpSetting: "server.resetOmpSetting",
+  serverSetOmpThreadOverride: "server.setOmpThreadOverride",
+  serverClearOmpThreadOverride: "server.clearOmpThreadOverride",
   serverGetTraceDiagnostics: "server.getTraceDiagnostics",
   serverGetProcessDiagnostics: "server.getProcessDiagnostics",
   serverGetHostResources: "server.getHostResources",
@@ -861,6 +877,41 @@ const WsServerLogoutAcpRegistryRpc = Rpc.make(WS_METHODS.serverLogoutAcpRegistry
   payload: AcpRegistryLogoutInput,
   success: AcpRegistryLogoutResult,
   error: Schema.Union([AcpRegistryOperationError, EnvironmentAuthorizationError]),
+});
+
+const OmpSettingsRpcError = Schema.Union([
+  OmpSettingsOperationError,
+  EnvironmentAuthorizationError,
+]);
+
+const WsServerReadOmpSettingsRpc = Rpc.make(WS_METHODS.serverReadOmpSettings, {
+  payload: OmpSettingsReadInput,
+  success: OmpSettingsForm,
+  error: OmpSettingsRpcError,
+});
+
+const WsServerWriteOmpSettingRpc = Rpc.make(WS_METHODS.serverWriteOmpSetting, {
+  payload: OmpSettingsWriteInput,
+  success: OmpSettingsWriteResult,
+  error: OmpSettingsRpcError,
+});
+
+const WsServerResetOmpSettingRpc = Rpc.make(WS_METHODS.serverResetOmpSetting, {
+  payload: OmpSettingsResetInput,
+  success: OmpSettingsWriteResult,
+  error: OmpSettingsRpcError,
+});
+
+const WsServerSetOmpThreadOverrideRpc = Rpc.make(WS_METHODS.serverSetOmpThreadOverride, {
+  payload: OmpThreadOverrideInput,
+  success: OmpThreadOverrideResult,
+  error: OmpSettingsRpcError,
+});
+
+const WsServerClearOmpThreadOverrideRpc = Rpc.make(WS_METHODS.serverClearOmpThreadOverride, {
+  payload: OmpThreadOverrideClearInput,
+  success: OmpThreadOverrideResult,
+  error: OmpSettingsRpcError,
 });
 
 const WsServerGetTraceDiagnosticsRpc = Rpc.make(WS_METHODS.serverGetTraceDiagnostics, {
@@ -1974,6 +2025,11 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerSetAcpRegistryProviderRpc,
   WsServerDisableAcpRegistryProviderRpc,
   WsServerLogoutAcpRegistryRpc,
+  WsServerReadOmpSettingsRpc,
+  WsServerWriteOmpSettingRpc,
+  WsServerResetOmpSettingRpc,
+  WsServerSetOmpThreadOverrideRpc,
+  WsServerClearOmpThreadOverrideRpc,
   WsServerGetTraceDiagnosticsRpc,
   WsServerGetProcessDiagnosticsRpc,
   WsServerGetHostResourcesRpc,

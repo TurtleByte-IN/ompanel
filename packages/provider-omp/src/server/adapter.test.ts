@@ -24,6 +24,7 @@ import {
   makeFakeOmpState,
   waitUntil,
 } from "./testing/fakeOmp.ts";
+import { makeOmpThreadSessions, makeOmpThreadSettingsHost } from "./threadSessions.ts";
 
 // Process groups and the `#!/bin/sh` fake omp are POSIX; Windows trees are job objects.
 const platform = HostProcess.Platform.defaultValue();
@@ -35,6 +36,7 @@ const makeAdapter = (state: FakeOmpState, profile: string, vars: Record<string, 
     const dirs = ompStateDirs(path, NodePath.join(state.dir, "state"));
     const pidfiles = yield* makeOmpPidfiles({ dir: dirs.pidfiles, platform: platform });
     const binaryPath = state.executable();
+    const threadSessions = makeOmpThreadSessions();
     const adapter = yield* makeOmpAdapter({
       instanceId: ProviderInstanceId.make("omp-work"),
       profile,
@@ -45,8 +47,9 @@ const makeAdapter = (state: FakeOmpState, profile: string, vars: Record<string, 
       dirs,
       pidfiles,
       expectedContractVersion: "1.0.0",
+      threadSessions,
     });
-    return { adapter, dirs };
+    return { adapter, dirs, threadSessions };
   });
 
 const openInput = (cwd: string, runtimeMode: "approval-required" | "full-access") => ({
@@ -414,6 +417,78 @@ posixOnly("OmpAdapter.openSession", () => {
         if (last._tag === "Some" && last.value.type === "provider_session.updated") {
           assert.strictEqual(last.value.providerSession.status, "stopped");
         }
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live(
+    "registers the running thread for settings: overlay kept on respawn, RPC commands, restart marker",
+    () =>
+      Effect.gen(function* () {
+        const state = yield* makeFakeOmpState;
+        const { adapter, dirs, threadSessions } = yield* makeAdapter(state, "");
+        const capabilities = yield* adapter.getCapabilities();
+        const host = yield* makeOmpThreadSettingsHost({
+          sessions: threadSessions,
+          threadsDir: dirs.threads,
+        });
+        const overlayPath = NodePath.join(dirs.threads, "thread%2F1", "overlay.yml");
+        // Overrides written while the thread was stopped survive its next start.
+        const overrides =
+          '# Per-thread OMP settings written by Ompanel.\n{"memory":{"backend":"local"}}\n';
+        yield* host.writeOverlay("thread/1", overrides);
+        const input = openInput(state.dir, "approval-required");
+        const transition = (providerSessionId = input.providerSessionId) =>
+          adapter.planSelectionTransition({
+            current: input.modelSelection,
+            target: { ...input.modelSelection, model: "other" },
+            sessionCapabilities: capabilities,
+            providerSessionId,
+          });
+
+        const events = yield* Effect.gen(function* () {
+          const session = yield* adapter.openSession(input);
+          assert.strictEqual(NodeFS.readFileSync(overlayPath, "utf8"), overrides);
+          assert.strictEqual(yield* host.readOverlay("thread/1"), overrides);
+          assert.deepStrictEqual(yield* host.openThreads, [
+            { threadId: "thread/1", cwd: state.dir },
+          ]);
+
+          const rejected = yield* host
+            .sendCommand("thread/1", { type: "set_auto_compaction", params: { enabled: false } })
+            .pipe(Effect.flip);
+          assert.strictEqual(rejected.reason, "rejected");
+          assert.include(state.events(), "command:set_auto_compaction");
+
+          assert.deepStrictEqual(yield* transition(), { type: "apply_on_next_turn" });
+          yield* host.markRestartRequired("thread/1", ["memory.backend"]);
+          yield* host.markRestartRequired("thread/1", ["memory.backend"]);
+          assert.deepStrictEqual(session.providerSession.restartRequired, ["memory.backend"]);
+          assert.deepStrictEqual(yield* transition(), { type: "restart_session" });
+          assert.deepStrictEqual(yield* transition(ProviderSessionId.make("session-other")), {
+            type: "apply_on_next_turn",
+          });
+          return session.events;
+        }).pipe(Effect.scoped);
+
+        const updates = yield* events.pipe(
+          Stream.filter((event) => event.type === "provider_session.updated"),
+          Stream.runCollect,
+        );
+        // One update for the marker (the repeat adds nothing), then the stop.
+        assert.deepStrictEqual(
+          updates.map((event) =>
+            event.type === "provider_session.updated"
+              ? event.providerSession.restartRequired
+              : undefined,
+          ),
+          [["memory.backend"], ["memory.backend"]],
+        );
+        assert.deepStrictEqual(yield* host.openThreads, []);
+        assert.deepStrictEqual(yield* transition(), { type: "apply_on_next_turn" });
+        const closed = yield* host
+          .sendCommand("thread/1", { type: "set_auto_retry", params: { enabled: true } })
+          .pipe(Effect.flip);
+        assert.strictEqual(closed.reason, "not_open");
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

@@ -1475,6 +1475,31 @@ export function createServerEnvironmentAtoms<R, E>(
         key: ({ environmentId, input }) => `${environmentId}:${input.instanceId}`,
       },
     }),
+    readOmpSettings: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:omp-settings:read",
+      tag: WS_METHODS.serverReadOmpSettings,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) =>
+          `${environmentId}:${input.instanceId}:${input.projectId ?? "global"}`,
+      },
+    }),
+    writeOmpSetting: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:omp-settings:write",
+      tag: WS_METHODS.serverWriteOmpSetting,
+    }),
+    resetOmpSetting: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:omp-settings:reset",
+      tag: WS_METHODS.serverResetOmpSetting,
+    }),
+    setOmpThreadOverride: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:omp-settings:set-thread-override",
+      tag: WS_METHODS.serverSetOmpThreadOverride,
+    }),
+    clearOmpThreadOverride: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:omp-settings:clear-thread-override",
+      tag: WS_METHODS.serverClearOmpThreadOverride,
+    }),
     signalProcess: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:signal-process",
       tag: WS_METHODS.serverSignalProcess,

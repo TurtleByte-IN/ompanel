@@ -34,7 +34,10 @@ public fork with `git` (no credentials), then fails when:
 - the tag no longer points at `commit`,
 - the tag's `contractVersion`, `cliContractVersion` or either `schemaHash`
   differs from `omp.lock`,
-- any vendored file is missing, extra, or differs by a single byte.
+- any vendored file is missing, extra, or differs by a single byte,
+- `src/ompSettingKeys.generated.ts` differs from the setting ids and
+  credential markers in the tag's settings registry (`config/all-settings.ts`
+  and the domain modules it imports).
 
 CI runs it in the `Lint` job of `ci.yml`.
 
@@ -43,7 +46,8 @@ CI runs it in the `Lint` job of `ci.yml`.
 1. Set `tag`, `commit`, `version`, `contract` and `cliContract` in `omp.lock`
    and in `src/ompLock.ts`.
 2. Run `vp run --filter @t3tools/provider-omp contract:vendor`. It replaces
-   `contract/` with the tag's files and then runs the check.
+   `contract/` with the tag's files, regenerates
+   `src/ompSettingKeys.generated.ts`, and then runs the check.
 3. Copy each platform's sha256 from the release's `SHA256SUMS.txt`
    (`gh release view <tag> -R TurtleByte-IN/oh-my-pi`) into `sidecars`.
    Leave out platforms the release has no asset for.

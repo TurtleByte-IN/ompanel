@@ -52,20 +52,21 @@ export const ompSessionArgs = (launch: OmpSessionLaunch): ReadonlyArray<string> 
 /** OMP rejects a missing or non-mapping overlay, so an empty one is an explicit empty mapping. */
 export const OMP_EMPTY_OVERLAY = "# Per-thread OMP settings written by Ompanel.\n{}\n";
 
+/** The thread's `--config` overlay; thread ids are opaque, so each keeps to one path segment. */
+export const ompThreadOverlayPath = (path: Path.Path, threadsDir: string, threadId: string) =>
+  path.join(threadsDir, encodeURIComponent(threadId), "overlay.yml");
+
 /**
- * Writes the thread's `--config` overlay (the highest config layer below flags and env) under
- * `dir`, owner-only, and returns its path.
+ * Makes sure the thread's `--config` overlay (the highest config layer below flags and env)
+ * exists, owner-only. An existing overlay holds the thread's settings overrides, so a respawn
+ * keeps it.
  */
-export const writeOmpThreadOverlay = Effect.fn("writeOmpThreadOverlay")(function* (input: {
-  readonly dir: string;
-  readonly content?: string;
-}) {
+export const ensureOmpThreadOverlay = Effect.fn("ensureOmpThreadOverlay")(function* (
+  overlayPath: string,
+) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  yield* fileSystem.makeDirectory(input.dir, { recursive: true, mode: 0o700 });
-  const overlayPath = path.join(input.dir, "overlay.yml");
-  yield* fileSystem.writeFileString(overlayPath, input.content ?? OMP_EMPTY_OVERLAY, {
-    mode: 0o600,
-  });
-  return overlayPath;
+  yield* fileSystem.makeDirectory(path.dirname(overlayPath), { recursive: true, mode: 0o700 });
+  if (yield* fileSystem.exists(overlayPath)) return;
+  yield* fileSystem.writeFileString(overlayPath, OMP_EMPTY_OVERLAY, { mode: 0o600 });
 });

@@ -454,6 +454,14 @@ export class OmpThreadMapper {
     ];
   }
 
+  /** Settings changed that the session reads only at startup; a restart applies them. */
+  setRestartRequired(keys: ReadonlyArray<string>, now: DateTime.Utc): Array<Event> {
+    this.#session = { ...this.#session, restartRequired: keys, updatedAt: now };
+    return [
+      { type: "provider_session.updated", driver: OMP_PROVIDER, providerSession: this.#session },
+    ];
+  }
+
   /** Binds the app thread to the live OMP session described by `get_state`. */
   bindThread(
     input: {

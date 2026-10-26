@@ -23,6 +23,7 @@ import { subscribeChatGptHandoff } from "./provider/CodexChatGptHandoff.ts";
 import { subscribeCodexAuthCallback } from "./provider/CodexAuthCallback.ts";
 import {
   AcpRegistryOperationError,
+  OmpSettingsOperationError,
   CommandId,
   authScopeResponse,
   AuthAccessStreamError,
@@ -1434,6 +1435,69 @@ export const layerWsRpc = (
         return { instance, manager: instance.acpSessionManagement };
       });
 
+      const ompSettingsController = Effect.fn("ws.ompSettings.controller")(function* (
+        instanceId: ProviderInstanceId,
+      ) {
+        const instance = yield* providerInstances.getInstance(instanceId);
+        if (instance === undefined) {
+          return yield* new OmpSettingsOperationError({
+            reason: "instance_not_found",
+            message: `Provider instance ${instanceId} was not found.`,
+          });
+        }
+        if (instance.ompSettings === undefined) {
+          return yield* new OmpSettingsOperationError({
+            reason: "unsupported",
+            message: `Provider instance ${instanceId} has no OMP settings.`,
+          });
+        }
+        return instance.ompSettings;
+      });
+
+      /** The project's workspace root, whose `.omp/config.yml` is the project layer. */
+      const ompSettingsCwd = Effect.fn("ws.ompSettings.cwd")(function* (
+        projectId: ProjectId | undefined,
+      ) {
+        if (projectId === undefined) return undefined;
+        const project = yield* projectService.getById(projectId).pipe(
+          Effect.mapError(
+            () =>
+              new OmpSettingsOperationError({
+                reason: "project_not_found",
+                message: `Project ${projectId} is unavailable.`,
+              }),
+          ),
+        );
+        return yield* Option.match(project, {
+          onNone: () =>
+            Effect.fail(
+              new OmpSettingsOperationError({
+                reason: "project_not_found",
+                message: `Project ${projectId} was not found.`,
+              }),
+            ),
+          onSome: (found) => Effect.succeed(found.workspaceRoot),
+        });
+      });
+
+      const ompSettingsThread = Effect.fn("ws.ompSettings.thread")(function* (threadId: ThreadId) {
+        const shell = yield* threadManagement.getThreadShell(threadId).pipe(
+          Effect.mapError(
+            () =>
+              new OmpSettingsOperationError({
+                reason: "thread_failed",
+                message: `Thread ${threadId} could not be read.`,
+              }),
+          ),
+        );
+        if (shell === null) {
+          return yield* new OmpSettingsOperationError({
+            reason: "thread_failed",
+            message: `Thread ${threadId} was not found.`,
+          });
+        }
+      });
+
       const importedAcpThreadId = (input: {
         readonly driver: ProviderDriverKind;
         readonly instanceId: ProviderInstanceId;
@@ -2319,6 +2383,76 @@ export const layerWsRpc = (
                 }
                 yield* providerRegistry.refreshInstance(input.instanceId);
                 return { loggedOut: true } as const;
+              }),
+            ),
+          ),
+        [WS_METHODS.serverReadOmpSettings]: (input) =>
+          Effect.annotateCurrentSpan({ "provider.instance_id": input.instanceId }).pipe(
+            Effect.andThen(
+              Effect.gen(function* () {
+                const settings = yield* ompSettingsController(input.instanceId);
+                return yield* settings.read({ cwd: yield* ompSettingsCwd(input.projectId) });
+              }),
+            ),
+          ),
+        [WS_METHODS.serverWriteOmpSetting]: (input) =>
+          Effect.annotateCurrentSpan({
+            "provider.instance_id": input.instanceId,
+            "omp.setting": input.key,
+          }).pipe(
+            Effect.andThen(
+              Effect.gen(function* () {
+                const settings = yield* ompSettingsController(input.instanceId);
+                return yield* settings.write({
+                  cwd: yield* ompSettingsCwd(input.projectId),
+                  scope: input.scope,
+                  key: input.key,
+                  value: input.value,
+                });
+              }),
+            ),
+          ),
+        [WS_METHODS.serverResetOmpSetting]: (input) =>
+          Effect.annotateCurrentSpan({
+            "provider.instance_id": input.instanceId,
+            "omp.setting": input.key,
+          }).pipe(
+            Effect.andThen(
+              Effect.gen(function* () {
+                const settings = yield* ompSettingsController(input.instanceId);
+                return yield* settings.reset({
+                  cwd: yield* ompSettingsCwd(input.projectId),
+                  scope: input.scope,
+                  key: input.key,
+                });
+              }),
+            ),
+          ),
+        [WS_METHODS.serverSetOmpThreadOverride]: (input) =>
+          Effect.annotateCurrentSpan({
+            "provider.instance_id": input.instanceId,
+            "thread.id": input.threadId,
+            "omp.setting": input.key,
+          }).pipe(
+            Effect.andThen(
+              Effect.gen(function* () {
+                const settings = yield* ompSettingsController(input.instanceId);
+                yield* ompSettingsThread(input.threadId);
+                return yield* settings.setThreadOverride(input);
+              }),
+            ),
+          ),
+        [WS_METHODS.serverClearOmpThreadOverride]: (input) =>
+          Effect.annotateCurrentSpan({
+            "provider.instance_id": input.instanceId,
+            "thread.id": input.threadId,
+            "omp.setting": input.key,
+          }).pipe(
+            Effect.andThen(
+              Effect.gen(function* () {
+                const settings = yield* ompSettingsController(input.instanceId);
+                yield* ompSettingsThread(input.threadId);
+                return yield* settings.clearThreadOverride(input);
               }),
             ),
           ),

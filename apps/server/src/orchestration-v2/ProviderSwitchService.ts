@@ -112,6 +112,7 @@ export const layer: Layer.Layer<
                   current,
                   target: targetModelSelection,
                   sessionCapabilities: negotiatedCapabilities ?? currentInstance.value.capabilities,
+                  ...(currentSession === undefined ? {} : { providerSessionId: currentSession.id }),
                 })
               : undefined;
           const transition =

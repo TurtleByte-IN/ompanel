@@ -1,0 +1,106 @@
+# OMP settings
+
+Ompanel never keeps its own copy of OMP's settings schema. The settings engine
+(`packages/provider-omp/src/server/settingsEngine.ts`) builds every form from
+`omp config list --json --cwd <project>` and writes only through `omp config set`
+and `omp config reset`, using OMP's CLI JSON contract 1.0.0.
+
+## Rules the engine enforces
+
+- Each field shows the effective value and the layer that supplied it:
+  `default`, `global`, `project`, `overlay`, `runtime` or `env`.
+- A field whose source is `env` is read-only: set, reset and thread overrides
+  are refused before any `omp` process starts.
+- Writes run `omp config set --scope global|project --cwd <project> --json -- <key> <JSON>`.
+  The value is JSON for every type, which OMP's parser accepts, and the `--`
+  stops a negative number from being read as a flag. The engine then re-reads
+  `config list` rather than trusting the `set` output (oh-my-pi#23).
+- There is no `config get` anywhere in Ompanel. It prints credentials unmasked;
+  `config list` withholds them (`redacted: true`, no `value`).
+- A credential is never set through the engine, stored or not. `config set`
+  takes the value in argv, which other local users can read, and an overlay
+  would copy it to disk. A credential can still be reset, and its value never
+  reaches the client. OMP redacts a credential only once it holds a value, so
+  the engine does not trust `config list` for this. It fails closed: a key is
+  a credential unless the pinned OMP registers it without a credential marker
+  (`credential: true` or `ui.secret`). Text and record keys whose last word
+  names a secret (`…Token`, `…Password`, `…ApiKey`) count as well. The
+  registered keys and credentials live in `src/ompSettingKeys.generated.ts`,
+  generated from the pinned tag's settings registry.
+
+## Launch-scoped keys
+
+A running RPC omp applies most edits live. It watches `config.yml`, project
+settings and `--config` overlays (`main.ts`, `startWatching` for `rpc` and
+`rpc-ui`), and its consumers re-read settings or subscribe to them. A key is
+launch-scoped when the session reads it only while it starts. A global change
+to such a key marks every open thread on the instance "restart required". A
+project change marks only threads whose working directory is inside that
+project.
+
+The list lives in `OMP_LAUNCH_SCOPED_KEYS` (`packages/provider-omp/src/configForm.ts`).
+It was derived from O main `a3aff57a7e`. The scan collected every setting
+`createAgentSession` (`sdk.ts`) reads, dropped those covered by a `.listen()`
+or `onEffectiveChange` subscription anywhere in `packages/coding-agent/src`,
+and dropped those read again on each use.
+
+| Key                      | Why it needs a restart (O main `a3aff57a7e`)                                            |
+| ------------------------ | --------------------------------------------------------------------------------------- |
+| `memory.backend`         | `sdk.ts` `startMemoryBackend` resolves and starts the backend once per session          |
+| `mnemopi.embeddingModel` | read when the Mnemopi backend starts (`mnemopi/config.ts`); its description says so too |
+| `mcp.startupTimeoutMs`   | only used by MCP discovery during session construction (`sdk.ts`)                       |
+| `plan.enabled`           | decides plan-mode tool wiring when the tool registry is built (`sdk.ts`)                |
+| `plan.defaultOnStartup`  | read only at startup (`main.ts`)                                                        |
+| `goal.enabled`           | the goal tool registers at construction; turning it off never unregisters it            |
+
+Re-check the list when the pin moves. The CLI contract does not report
+launch scope yet, so the list is maintained by hand.
+
+## Per-thread overrides
+
+An override changes one key for one thread:
+
+- If the pinned RPC contract has a session-only command for the key, the
+  engine sends it to the running thread. These commands never write
+  `config.yml`: `defaultThinkingLevel` → `set_thinking_level`, `steeringMode` /
+  `followUpMode` / `interruptMode` → `set_*_mode`, `compaction.enabled` →
+  `set_auto_compaction`, `retry.enabled` → `set_auto_retry`,
+  `providers.cacheWarming` → `set_cache_warming`. The thread must be running.
+  Clearing the override sends the value the config layers resolve to.
+- `tools.approvalMode` cannot be overridden per thread. Every thread starts
+  with `--approval-mode` from its runtime mode, and a flag outranks overlays.
+- For any other key, the engine edits the thread's `--config` overlay. The
+  overlay is a comment line followed by JSON, which OMP's YAML loader reads
+  unchanged. It is replaced by a rename, so OMP's live reload never reads half
+  a file. OMP reloads the overlay live, so only launch-scoped keys mark the
+  thread "restart required". The overlay survives a respawn.
+
+`set_approval_mode` and `set_advisor` (O-2) are not in the pinned contract
+1.0.0. `advisor.enabled` goes through the overlay, which OMP applies live.
+
+## Restart required
+
+The adapter registers every running thread with the instance's thread
+registry (`server/threadSessions.ts`). When a launch-scoped key changes for
+a thread, the session's provider state gains `restartRequired: [keys]`
+(`OrchestrationV2ProviderSession`), which reaches the thread projection
+through `provider_session.updated`. The next model selection change on that
+session returns `restart_session` from `planSelectionTransition`. Stopping
+the thread's session also restarts it, and its replacement starts clean.
+
+## Server API
+
+The OMP provider instance exposes the engine as `ompSettings`. The server
+serves it over these RPC methods:
+
+| Method                          | Scope                   |
+| ------------------------------- | ----------------------- |
+| `server.readOmpSettings`        | `orchestration:read`    |
+| `server.writeOmpSetting`        | `providers:manage`      |
+| `server.resetOmpSetting`        | `providers:manage`      |
+| `server.setOmpThreadOverride`   | `orchestration:operate` |
+| `server.clearOmpThreadOverride` | `orchestration:operate` |
+
+A `projectId` selects the project layer, at the project's workspace root.
+Without one, calls run in `<stateDir>/omp`, which has no project config. Errors
+are `OmpSettingsOperationError` and never carry `omp` output.

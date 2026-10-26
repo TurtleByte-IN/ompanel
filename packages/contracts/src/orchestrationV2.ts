@@ -854,6 +854,8 @@ export const OrchestrationV2ProviderSession = Schema.Struct({
   createdAt: Schema.DateTimeUtc,
   updatedAt: Schema.DateTimeUtc,
   lastError: Schema.NullOr(Schema.String),
+  /** Settings changed since the session started that it reads only at startup; a restart applies them. */
+  restartRequired: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
 });
 export type OrchestrationV2ProviderSession = typeof OrchestrationV2ProviderSession.Type;
 

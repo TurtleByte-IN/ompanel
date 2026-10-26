@@ -27,6 +27,9 @@ import type {
   LoginProvider,
   ReadyEvent,
 } from "../../contract/src/wire.generated.ts";
+import type { OmpConfigScope } from "@t3tools/contracts";
+
+import { OmpConfigList, OmpConfigResetResult, OmpConfigSetResult } from "../configForm.ts";
 
 /** Hard deadline per operation, from spawn to exit. */
 export const OMP_CONTROL_TIMEOUTS_MS = {
@@ -38,6 +41,8 @@ export const OMP_CONTROL_TIMEOUTS_MS = {
   usage: 10_000,
   /** An RPC `login` session, from spawn until the provider stores the credential. */
   login: 60_000,
+  /** `omp config list|set|reset --json`. */
+  config: 10_000,
 } as const;
 export type OmpControlBudget = keyof typeof OMP_CONTROL_TIMEOUTS_MS;
 
@@ -73,11 +78,28 @@ export interface OmpControlTarget {
   readonly cwd: string;
 }
 
-export type OmpControlOperation = "version" | "usage" | "rpc" | "login_providers" | "login";
+export type OmpControlOperation =
+  | "version"
+  | "usage"
+  | "rpc"
+  | "login_providers"
+  | "login"
+  | "config_list"
+  | "config_set"
+  | "config_reset";
 
 /** Carries no process output: stderr and stdout may contain credentials. */
 export class OmpControlError extends Schema.TaggedError<OmpControlError>()("OmpControlError", {
-  operation: Schema.Literals(["version", "usage", "rpc", "login_providers", "login"]),
+  operation: Schema.Literals([
+    "version",
+    "usage",
+    "rpc",
+    "login_providers",
+    "login",
+    "config_list",
+    "config_set",
+    "config_reset",
+  ]),
   reason: Schema.Literals(["missing", "spawn", "timeout", "exit", "invalid", "rejected"]),
   timeoutMs: Schema.optional(Schema.Number),
   exitCode: Schema.optional(Schema.Number),
@@ -154,6 +176,10 @@ export const OmpUsageReport = Schema.Struct({
 });
 export type OmpUsageReport = typeof OmpUsageReport.Type;
 const decodeUsageReport = Schema.decodeEffect(Schema.fromJsonString(OmpUsageReport));
+const decodeConfigList = Schema.decodeEffect(Schema.fromJsonString(OmpConfigList));
+const decodeConfigSetResult = Schema.decodeEffect(Schema.fromJsonString(OmpConfigSetResult));
+const decodeConfigResetResult = Schema.decodeEffect(Schema.fromJsonString(OmpConfigResetResult));
+const encodeJsonValue = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 export type OmpProbeFailure =
   | { readonly stage: "version"; readonly reason: "missing" | "spawn" | "timeout" | "exit" }
@@ -199,6 +225,21 @@ export interface OmpControlService {
   readonly probe: (target: OmpControlTarget) => Effect.Effect<OmpProbeResult>;
   /** Drops every cached result of this instance. */
   readonly invalidate: Effect.Effect<void>;
+  /** `omp config list --json --cwd <target.cwd>` (10 s), uncached: every field with its source layer. */
+  readonly configList: (target: OmpControlTarget) => Effect.Effect<OmpConfigList, OmpControlError>;
+  /**
+   * `omp config set --scope <scope> --cwd <target.cwd> --json -- <key> <JSON value>` (10 s).
+   * There is deliberately no `config get`: it prints credentials unmasked.
+   */
+  readonly configSet: (
+    target: OmpControlTarget,
+    input: { readonly key: string; readonly value: unknown; readonly scope: OmpConfigScope },
+  ) => Effect.Effect<OmpConfigSetResult, OmpControlError>;
+  /** `omp config reset --scope <scope> --cwd <target.cwd> --json -- <key>` (10 s). */
+  readonly configReset: (
+    target: OmpControlTarget,
+    input: { readonly key: string; readonly scope: OmpConfigScope },
+  ) => Effect.Effect<OmpConfigResetResult, OmpControlError>;
 }
 
 export interface OmpControlServiceOptions {
@@ -273,13 +314,14 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
     );
 
   const collect = (
-    operation: "version" | "usage",
+    operation: OmpControlOperation,
+    budget: OmpControlBudget,
     target: OmpControlTarget,
     args: ReadonlyArray<string>,
   ) =>
     withDeadline(
       operation,
-      operation,
+      budget,
       spawnAndCollect(target.binaryPath, command(target, args, "ignore")).pipe(
         Effect.mapError(
           (cause) =>
@@ -294,7 +336,7 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
 
   const version = Effect.fn("OmpControl.version")(function* (target: OmpControlTarget) {
     // The version belongs to the binary, not the profile.
-    const output = yield* collect("version", target, ["--version"]);
+    const output = yield* collect("version", "version", target, ["--version"]);
     if (output.code !== 0) {
       return yield* new OmpControlError({
         operation: "version",
@@ -309,7 +351,7 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
     target: OmpControlTarget,
     provider: string | undefined,
   ) {
-    const output = yield* collect("usage", target, [
+    const output = yield* collect("usage", "usage", target, [
       ...profileArgs(target.profile),
       "usage",
       "--json",
@@ -326,6 +368,61 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
       Effect.mapError(
         (cause) => new OmpControlError({ operation: "usage", reason: "invalid", cause }),
       ),
+    );
+  });
+
+  /** Runs `omp [--profile p] config <args>` and decodes its JSON stdout. */
+  const runConfig = <A>(
+    operation: "config_list" | "config_set" | "config_reset",
+    target: OmpControlTarget,
+    args: ReadonlyArray<string>,
+    decode: (stdout: string) => Effect.Effect<A, Schema.SchemaError>,
+  ) =>
+    collect(operation, "config", target, [...profileArgs(target.profile), "config", ...args]).pipe(
+      Effect.flatMap((output) =>
+        output.code === 0
+          ? decode(output.stdout.trim()).pipe(
+              Effect.mapError(
+                (cause) => new OmpControlError({ operation, reason: "invalid", cause }),
+              ),
+            )
+          : Effect.fail(new OmpControlError({ operation, reason: "exit", exitCode: output.code })),
+      ),
+    );
+
+  const configList = Effect.fn("OmpControl.configList")(function* (target: OmpControlTarget) {
+    return yield* runConfig(
+      "config_list",
+      target,
+      ["list", "--json", "--cwd", target.cwd],
+      decodeConfigList,
+    );
+  });
+
+  const configSet = Effect.fn("OmpControl.configSet")(function* (
+    target: OmpControlTarget,
+    input: { readonly key: string; readonly value: unknown; readonly scope: OmpConfigScope },
+  ) {
+    // OMP parses the text by the key's type and accepts JSON for every type; `--` keeps a negative
+    // number from reading as a flag. Values arrive decoded from JSON, so they always encode.
+    const valueText = yield* encodeJsonValue(input.value).pipe(Effect.orDie);
+    return yield* runConfig(
+      "config_set",
+      target,
+      ["set", "--scope", input.scope, "--cwd", target.cwd, "--json", "--", input.key, valueText],
+      decodeConfigSetResult,
+    );
+  });
+
+  const configReset = Effect.fn("OmpControl.configReset")(function* (
+    target: OmpControlTarget,
+    input: { readonly key: string; readonly scope: OmpConfigScope },
+  ) {
+    return yield* runConfig(
+      "config_reset",
+      target,
+      ["reset", "--scope", input.scope, "--cwd", target.cwd, "--json", "--", input.key],
+      decodeConfigResetResult,
     );
   });
 
@@ -575,5 +672,8 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
     login,
     probe: (target) => cached(["probe", targetKey(target)].join("\0"), probeUncached(target)),
     invalidate,
+    configList,
+    configSet,
+    configReset,
   } satisfies OmpControlService;
 });

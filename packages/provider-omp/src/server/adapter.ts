@@ -24,6 +24,7 @@ import { OMP_PROVIDER, OmpThreadMapper, type OmpTurnOutcome } from "./mapper.ts"
 import type { OmpRpcRequestError, OmpRpcRequestOptions } from "./rpcProcess.ts";
 import type { OmpPidfiles } from "./pidfiles.ts";
 import { type OmpStateDirs, startOmpSessionProcess } from "./session.ts";
+import type { OmpThreadSessions } from "./threadSessions.ts";
 import type { OmpSidecarError } from "./sidecar.ts";
 import {
   isOmpCancelRequest,
@@ -170,6 +171,8 @@ export interface OmpAdapterOptions {
   /** `contract.version` from `omp.lock`. */
   readonly expectedContractVersion: string;
   readonly readyTimeoutMs?: number;
+  /** This instance's running thread sessions, shared with the settings engine. */
+  readonly threadSessions: OmpThreadSessions;
 }
 
 /** Operations other Ompanel items wire up; this build refuses them. */
@@ -426,6 +429,21 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
     yield* process
       .request("set_ask_dialog", { enabled: true }, { timeoutMs: SIDE_REQUEST_TIMEOUT_MS })
       .pipe(Effect.ignore);
+    yield* options.threadSessions.register({
+      threadId: input.threadId,
+      providerSessionId: input.providerSessionId,
+      cwd,
+      process,
+      // Ordered with frames and turns, like every other change to the session.
+      onRestartRequired: Effect.fn("OmpAdapter.publishRestartRequired")(function* (keys) {
+        yield* exclusive(
+          Effect.gen(function* () {
+            if (settled) return;
+            yield* emit(mapper.setRestartRequired(keys, yield* DateTime.now));
+          }),
+        );
+      }),
+    });
 
     /** Binds the thread to the session this process opened; switching sessions is C-10's. */
     const bindThread = Effect.fnUntraced(function* (
@@ -669,7 +687,14 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
     instanceId: options.instanceId,
     driver: OMP_PROVIDER,
     getCapabilities: () => Effect.succeed(OMP_PROVIDER_CAPABILITIES),
-    planSelectionTransition: () => Effect.succeed(turnScopedSelectionTransition()),
+    // A session that must restart for changed settings is restarted on the selection change.
+    planSelectionTransition: (input) =>
+      Effect.succeed(
+        input.providerSessionId !== undefined &&
+          options.threadSessions.restartRequired(input.providerSessionId).length > 0
+          ? ({ type: "restart_session" } as const)
+          : turnScopedSelectionTransition(),
+      ),
     openSession,
   });
 });
