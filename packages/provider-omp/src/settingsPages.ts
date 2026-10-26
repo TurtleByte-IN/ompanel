@@ -22,6 +22,7 @@ export const OMP_MODEL_ROLES: ReadonlyArray<{ readonly role: string; readonly la
 
 export type OmpSettingsPageId =
   | "models"
+  | "providers"
   | "routing"
   | "thinking"
   | "advisor"
@@ -33,6 +34,8 @@ export type OmpSettingsPageId =
   | "runtime"
   | "search"
   | "discovery"
+  | "mcp"
+  | "customization"
   | "terminal";
 
 export interface OmpSettingsPage {
@@ -61,6 +64,14 @@ export const OMP_SETTINGS_PAGES: Readonly<Record<OmpSettingsPageId, OmpSettingsP
       "disabledProviders",
       "includeModelInPrompt",
     ],
+  },
+  providers: {
+    id: "providers",
+    title: "Custom providers",
+    description:
+      "Your own model endpoints and overrides of built-in ones, in models.yml in OMP's agent directory. OMP checks the file before a save replaces it.",
+    // Everything here lives in models.yml, not in OMP's settings.
+    keys: [],
   },
   routing: {
     id: "routing",
@@ -191,6 +202,20 @@ export const OMP_SETTINGS_PAGES: Readonly<Record<OmpSettingsPageId, OmpSettingsP
       "mcp.enableProjectConfig",
       "contextFiles.extra",
     ],
+  },
+  mcp: {
+    id: "mcp",
+    title: "MCP",
+    description:
+      "The MCP servers OMP starts in every thread, from mcp.json in OMP's agent directory, and how OMP runs them.",
+    keys: ["mcp."],
+  },
+  customization: {
+    id: "customization",
+    title: "Customization",
+    description:
+      "Skills, rules (TTSR), prompt templates, hooks, custom tools and custom agents in OMP's agent directory, and how rules fire.",
+    keys: ["ttsr.", "skills.customDirectories", "skills.ignoredSkills", "skills.includeSkills"],
   },
   terminal: {
     id: "terminal",

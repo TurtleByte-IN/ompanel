@@ -17,11 +17,8 @@ export const OmpAgentFileName = Schema.String.check(
 );
 
 /**
- * Files OMP loads from its agent directory that Settings → OMP → Customization lists, by kind,
- * as the pinned OMP discovers them (`discovery/builtin.ts`): `skills/<name>/SKILL.md` (and the
- * auto-learned `managed-skills/<name>/SKILL.md`), `rules/*.{md,mdc}` plus the always-applied
- * `RULES.md`, `prompts/*.md`, `hooks/{pre,post}/*`, and `tools/*.{json,md,ts,js,sh,bash,py}` or
- * `tools/<name>/index.ts`.
+ * Agent-directory files Settings → OMP → Customization lists, at the paths the pinned OMP
+ * discovers them (`discovery/builtin.ts`); see `ompCustomizationPathAllowed`.
  */
 export const OmpCustomizationCategory = Schema.Literals([
   "skill",
@@ -35,7 +32,7 @@ export type OmpCustomizationCategory = typeof OmpCustomizationCategory.Type;
 const NAME = "[A-Za-z0-9][A-Za-z0-9._-]{0,99}";
 
 /** Paths relative to the agent directory, per kind; nothing else is reached. */
-export const OMP_CUSTOMIZATION_PATH_PATTERNS: Readonly<Record<OmpCustomizationCategory, RegExp>> = {
+const OMP_CUSTOMIZATION_PATH_PATTERNS: Readonly<Record<OmpCustomizationCategory, RegExp>> = {
   skill: new RegExp(`^(?:skills|managed-skills)/${NAME}/SKILL\\.md$`),
   rule: new RegExp(`^(?:rules/${NAME}\\.(?:md|mdc)|RULES\\.md)$`),
   prompt: new RegExp(`^prompts/${NAME}\\.md$`),

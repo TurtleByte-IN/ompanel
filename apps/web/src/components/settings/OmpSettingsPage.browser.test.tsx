@@ -1,6 +1,13 @@
-import { EnvironmentId, ProviderInstanceId, type OmpConfigType } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  OmpAgentFilesOperationError,
+  ProviderInstanceId,
+  type OmpConfigType,
+} from "@t3tools/contracts";
 import { buildOmpSettingsForm } from "@t3tools/provider-omp/configForm";
 import { OMP_MODEL_ROLES, OMP_SETTINGS_PAGES } from "@t3tools/provider-omp/settingsPages";
+import * as Cause from "effect/Cause";
+import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
@@ -12,6 +19,7 @@ import {
   usePhoneViewport,
 } from "../../../test/phoneViewport";
 import { render } from "../../../test/render";
+import { toastManager } from "../ui/toast";
 
 // What the pinned OMP registers for the pages, plus one key no page shows.
 const REGISTRY: Readonly<Record<string, { type: OmpConfigType; default: unknown; env?: true }>> = {
@@ -81,6 +89,9 @@ const REGISTRY: Readonly<Record<string, { type: OmpConfigType; default: unknown;
   "startup.quiet": { type: "boolean", default: false },
   "theme.dark": { type: "string", default: "titanium" },
   "statusLine.preset": { type: "enum", default: "default" },
+  "mcp.startupTimeoutMs": { type: "number", default: 30000 },
+  "ttsr.enabled": { type: "boolean", default: true },
+  "skills.customDirectories": { type: "array", default: [] },
 };
 
 /** The settings engine over an in-memory global layer: every write re-reads the list. */
@@ -107,6 +118,7 @@ const commands = vi.hoisted(() => ({
   readFile: vi.fn(),
   writeFile: vi.fn(),
   deleteFile: vi.fn(),
+  unpackAgents: vi.fn(),
 }));
 
 vi.mock(import("../../state/use-atom-command"), async (original) => {
@@ -119,6 +131,7 @@ vi.mock(import("../../state/use-atom-command"), async (original) => {
     [serverEnvironment.readOmpAgentFile, commands.readFile],
     [serverEnvironment.writeOmpAgentFile, commands.writeFile],
     [serverEnvironment.deleteOmpAgentFile, commands.deleteFile],
+    [serverEnvironment.unpackOmpAgents, commands.unpackAgents],
   ]);
   return {
     ...(await original()),
@@ -132,12 +145,51 @@ const environmentId = EnvironmentId.make("local");
 const instanceId = ProviderInstanceId.make("omp");
 const row = (key: string) => document.querySelector(`[data-setting="${key}"]`);
 
-/** The agent directory: `WATCHDOG.yml` and `agents/<name>` by relative path. */
+/** The agent directory: every file by its relative path. */
 const files = vi.hoisted(() => new Map<string, string>());
 const AGENT_DIR = "/home/tester/.omp/profiles/work/agent";
 const fileVersion = (content: string) => `v:${content}`;
-const relativePathOf = (file: { kind: string; name?: string }) =>
-  file.kind === "watchdog" ? "WATCHDOG.yml" : `agents/${file.name}`;
+type FileRef =
+  | { kind: "watchdog" }
+  | { kind: "models" }
+  | { kind: "agent"; name: string }
+  | { kind: "mcp"; name: string }
+  | { kind: "custom"; category: string; path: string };
+const relativePathOf = (file: FileRef) => {
+  switch (file.kind) {
+    case "watchdog":
+      return "WATCHDOG.yml";
+    case "models":
+      return "models.yml";
+    case "mcp":
+      return file.name;
+    case "custom":
+      return file.path;
+    case "agent":
+      return `agents/${file.name}`;
+  }
+};
+const CATEGORY_OF: ReadonlyArray<readonly [string, string]> = [
+  ["skills/", "skill"],
+  ["rules/", "rule"],
+  ["RULES.md", "rule"],
+  ["prompts/", "prompt"],
+  ["hooks/", "hook"],
+  ["tools/", "tool"],
+];
+/** MCP servers the server would list from `mcp.json`. */
+const mcpServers = () => {
+  const text = files.get("mcp.json");
+  if (text === undefined) return [];
+  const parsed: { mcpServers?: Record<string, { command?: string }> } = JSON.parse(text);
+  return Object.entries(parsed.mcpServers ?? {}).map(([name, server]) => ({
+    name,
+    file: "mcp.json",
+    transport: "stdio",
+    ...(server.command === undefined ? {} : { target: server.command }),
+    disabled: false,
+  }));
+};
 const fileList = () => ({
   agentDir: AGENT_DIR,
   watchdogFileName: "WATCHDOG.yml",
@@ -146,7 +198,20 @@ const fileList = () => ({
     .filter((path) => path.startsWith("agents/"))
     .map((path) => ({ name: path.slice("agents/".length), editable: true }))
     .toSorted((left, right) => left.name.localeCompare(right.name)),
+  modelsFileName: "models.yml",
+  modelsExists: files.has("models.yml"),
+  modelsLegacyJson: false,
+  mcpFiles: ["mcp.json", ".mcp.json"].map((name) => ({ name, exists: files.has(name) })),
+  mcpServers: mcpServers(),
+  customization: [...files.keys()]
+    .flatMap((path) => {
+      const category = CATEGORY_OF.find(([prefix]) => path.startsWith(prefix))?.[1];
+      return category === undefined ? [] : [{ category, path, editable: true }];
+    })
+    .toSorted((left, right) => left.path.localeCompare(right.path)),
 });
+/** What OMP's `models.yml` check refuses here: a provider naming an `api` OMP does not know. */
+const MODELS_REFUSED = /api: carrier-pigeon/;
 
 /** Empties the global layer and the agent directory, and wires the commands to them. */
 function resetEngine() {
@@ -172,7 +237,7 @@ function resetEngine() {
   }));
   commands.readFile
     .mockReset()
-    .mockImplementation(async ({ input }: { input: { file: { kind: string; name?: string } } }) => {
+    .mockImplementation(async ({ input }: { input: { file: FileRef } }) => {
       const relativePath = relativePathOf(input.file);
       const content = files.get(relativePath);
       return {
@@ -187,16 +252,23 @@ function resetEngine() {
   commands.writeFile
     .mockReset()
     .mockImplementation(
-      async ({
-        input,
-      }: {
-        input: { file: { kind: string; name?: string }; content: string; baseVersion?: string };
-      }) => {
+      async ({ input }: { input: { file: FileRef; content: string; baseVersion?: string } }) => {
         const relativePath = relativePathOf(input.file);
         const current = files.get(relativePath);
         // The page must send the version it read; a stale one fails the test outright.
         if ((current === undefined ? undefined : fileVersion(current)) !== input.baseVersion) {
           throw new Error(`${relativePath}: stale baseVersion ${input.baseVersion}`);
+        }
+        // OMP's check leaves the file as it was when it refuses the text.
+        if (input.file.kind === "models" && MODELS_REFUSED.test(input.content)) {
+          return AsyncResult.failure(
+            Cause.fail(
+              new OmpAgentFilesOperationError({
+                reason: "invalid",
+                message: "OMP did not load this models.yml. The file was not saved.",
+              }),
+            ),
+          );
         }
         files.set(relativePath, input.content);
         return {
@@ -206,20 +278,32 @@ function resetEngine() {
             relativePath,
             content: input.content,
             version: fileVersion(input.content),
+            ...(input.file.kind === "models"
+              ? { checkedModels: [{ provider: "lab", id: "a" }] }
+              : {}),
           },
         };
       },
     );
   commands.deleteFile
     .mockReset()
-    .mockImplementation(async ({ input }: { input: { file: { kind: string; name?: string } } }) => {
+    .mockImplementation(async ({ input }: { input: { file: FileRef } }) => {
       files.delete(relativePathOf(input.file));
       return { _tag: "Success", value: fileList() };
     });
+  commands.unpackAgents.mockReset().mockImplementation(async () => {
+    const written = ["explore.md", "plan.md"].filter((name) => !files.has(`agents/${name}`));
+    const skipped = ["explore.md", "plan.md"].filter((name) => !written.includes(name));
+    for (const name of written) files.set(`agents/${name}`, `# ${name}\n`);
+    return { _tag: "Success", value: { written, skipped, files: fileList() } };
+  });
+  toastSpy.mockClear();
 }
 
+const toastSpy = vi.spyOn(toastManager, "add");
+
 describe("OMP settings pages", () => {
-  it.each(Object.values(OMP_SETTINGS_PAGES))(
+  it.each(Object.values(OMP_SETTINGS_PAGES).filter((page) => page.keys.length > 0))(
     "$title shows exactly its keys with their source layer",
     async (page) => {
       resetEngine();
@@ -594,6 +678,243 @@ describe("OMP settings pages", () => {
     expect(files.has("agents/reviewer.md")).toBe(false);
   });
 
+  const renderK04d = (pageId: "providers" | "mcp" | "customization") =>
+    render(
+      <OmpSettingsPageBody environmentId={environmentId} instanceId={instanceId} pageId={pageId} />,
+    );
+
+  const LAB = [
+    "# The lab box",
+    "providers:",
+    "  lab:",
+    "    baseUrl: http://lab:8000/v1",
+    "    api: openai-completions",
+    "    apiKey: LAB_KEY",
+    "    headers:",
+    "      X-Team: ml",
+    "    models:",
+    "      - id: a",
+    "",
+  ].join("\n");
+
+  it("Custom providers edits models.yml in the form, keeping what the form does not show", async () => {
+    resetEngine();
+    files.set("models.yml", LAB);
+    await using screen = await renderK04d("providers");
+    await expect
+      .element(screen.getByRole("textbox", { name: "lab baseUrl" }))
+      .toHaveValue("http://lab:8000/v1");
+    await expect
+      .element(screen.getByRole("textbox", { name: "lab apiKey" }))
+      .toHaveValue("LAB_KEY");
+    await expect
+      .element(screen.getByText("Also set in YAML, kept as written: headers."))
+      .toBeVisible();
+    // models.yml is not one of OMP's settings: nothing is read through the settings engine.
+    expect(commands.read).not.toHaveBeenCalled();
+    await expect.element(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+
+    await userEvent.type(
+      screen.getByRole("textbox", { name: "lab/a contextWindow" }),
+      "32768{Enter}",
+    );
+    await userEvent.click(screen.getByRole("switch", { name: "lab/a reasoning" }));
+    await userEvent.fill(screen.getByRole("textbox", { name: "New model id for lab" }), "b");
+    await userEvent.click(screen.getByRole("button", { name: "Add model" }));
+    await userEvent.fill(screen.getByRole("textbox", { name: "New provider id" }), "local");
+    await userEvent.click(screen.getByRole("button", { name: "Add provider" }));
+    await userEvent.click(screen.getByRole("button", { name: "none" }).last());
+    await expect.element(screen.getByRole("textbox", { name: "local baseUrl" })).toHaveValue("");
+    // A provider id OMP would not take as a key is refused before anything changes.
+    await userEvent.fill(screen.getByRole("textbox", { name: "New provider id" }), "a b");
+    await expect.element(screen.getByRole("button", { name: "Add provider" })).toBeDisabled();
+
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    await expect.poll(() => files.get("models.yml")).not.toBe(LAB);
+    const saved = files.get("models.yml") ?? "";
+    expect(saved).toContain("# The lab box");
+    expect(saved).toContain("X-Team: ml");
+    expect(saved).toContain("contextWindow: 32768");
+    expect(saved).toContain("reasoning: true");
+    expect(saved).toContain("- id: b");
+    expect(saved).toMatch(/local:\n {4}api: openai-completions\n {4}models: \[\]\n {4}auth: none/);
+    expect(commands.writeFile).toHaveBeenLastCalledWith({
+      environmentId,
+      input: {
+        instanceId,
+        file: { kind: "models" },
+        content: saved,
+        baseVersion: fileVersion(LAB),
+      },
+    });
+    expect(toastSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "OMP loaded 1 model(s) from this file" }),
+    );
+  });
+
+  it("Custom providers saves raw YAML only when OMP loads it, leaving the file as it was otherwise", async () => {
+    resetEngine();
+    files.set("models.yml", LAB);
+    await using screen = await renderK04d("providers");
+    await expect.element(screen.getByRole("textbox", { name: "lab baseUrl" })).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "YAML" }));
+    const yaml = screen.getByRole("textbox", { name: "Contents of models.yml" });
+    await expect.element(yaml).toHaveValue(LAB);
+
+    // OMP refuses the text: the file keeps its old text and the editor keeps the new one.
+    const refused = LAB.replace("api: openai-completions", "api: carrier-pigeon");
+    await userEvent.fill(yaml, refused);
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    await expect
+      .poll(() => toastSpy.mock.calls.at(-1)?.[0])
+      .toMatchObject({ type: "error", title: "Could not save models.yml" });
+    expect(files.get("models.yml")).toBe(LAB);
+    await expect.element(yaml).toHaveValue(refused);
+
+    // Broken YAML: the form says where, and points at the YAML view.
+    await userEvent.fill(yaml, "providers: [\n");
+    await userEvent.click(screen.getByRole("button", { name: "Form" }));
+    await expect.element(screen.getByText(/not valid YAML at line \d+, column \d+/)).toBeVisible();
+
+    await userEvent.click(screen.getByRole("button", { name: "YAML" }));
+    const accepted = LAB.replace("- id: a", "- id: a\n      - id: c");
+    await userEvent.fill(screen.getByRole("textbox", { name: "Contents of models.yml" }), accepted);
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    await expect.poll(() => files.get("models.yml")).toBe(accepted);
+    expect(commands.writeFile).toHaveBeenLastCalledWith({
+      environmentId,
+      input: {
+        instanceId,
+        file: { kind: "models" },
+        content: accepted,
+        baseVersion: fileVersion(LAB),
+      },
+    });
+  });
+
+  it("MCP lists OMP's on-disk servers and opens mcp.json beside Ompanel's own MCP server", async () => {
+    resetEngine();
+    files.set("mcp.json", JSON.stringify({ mcpServers: { github: { command: "npx" } } }, null, 2));
+    await using screen = await renderK04d("mcp");
+    await expect
+      .poll(() => document.querySelector('[data-mcp-server="github"]')?.textContent)
+      .toContain("npx");
+    await expect.element(screen.getByText("Ompanel's MCP server")).toBeVisible();
+    await expect.poll(() => row("mcp.startupTimeoutMs")).not.toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "mcp.json", exact: true }));
+    const text = screen.getByRole("textbox", { name: "Contents of mcp.json" });
+    const next = JSON.stringify(
+      { mcpServers: { github: { command: "npx" }, docs: { command: "uvx" } } },
+      null,
+      2,
+    );
+    await userEvent.fill(text, next);
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    await expect
+      .poll(() => document.querySelector('[data-mcp-server="docs"]')?.textContent)
+      .toContain("uvx");
+
+    // .mcp.json does not exist yet: it opens with an empty server list, created on save.
+    await userEvent.click(screen.getByRole("button", { name: ".mcp.json" }));
+    await expect
+      .element(screen.getByRole("textbox", { name: "Contents of .mcp.json" }))
+      .toHaveValue('{\n  "mcpServers": {}\n}\n');
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(commands.writeFile).toHaveBeenLastCalledWith({
+      environmentId,
+      input: {
+        instanceId,
+        file: { kind: "mcp", name: ".mcp.json" },
+        content: '{\n  "mcpServers": {}\n}\n',
+      },
+    });
+  });
+
+  it("Customization lists skills, rules, prompts, hooks and tools and opens them in the editor", async () => {
+    resetEngine();
+    files.set("skills/tdd/SKILL.md", "---\nname: tdd\n---\n");
+    files.set("RULES.md", "Be brief.\n");
+    files.set("rules/no-any.md", "---\ndescription: no any\n---\n");
+    files.set("prompts/review.md", "Review $1\n");
+    files.set("hooks/pre/bash.ts", "export default {}\n");
+    files.set("tools/fetch.py", "print(1)\n");
+    await using screen = await renderK04d("customization");
+    for (const [category, path] of [
+      ["skill", "skills/tdd/SKILL.md"],
+      ["rule", "RULES.md"],
+      ["rule", "rules/no-any.md"],
+      ["prompt", "prompts/review.md"],
+      ["hook", "hooks/pre/bash.ts"],
+      ["tool", "tools/fetch.py"],
+    ] as const) {
+      await expect
+        .poll(() => document.querySelector(`[data-customization="${category}"]`)?.textContent)
+        .toContain(path);
+    }
+    await expect.poll(() => row("ttsr.enabled")).not.toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "rules/no-any.md" }));
+    const rule = screen.getByRole("textbox", { name: "Contents of rules/no-any.md" });
+    await expect.element(rule).toHaveValue("---\ndescription: no any\n---\n");
+    await userEvent.fill(rule, "---\ndescription: no any\n---\nNever use any.\n");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(commands.writeFile).toHaveBeenLastCalledWith({
+      environmentId,
+      input: {
+        instanceId,
+        file: { kind: "custom", category: "rule", path: "rules/no-any.md" },
+        content: "---\ndescription: no any\n---\nNever use any.\n",
+        baseVersion: fileVersion("---\ndescription: no any\n---\n"),
+      },
+    });
+
+    // New files stay in their kind's folder: a name with a path is refused.
+    const newSkill = screen.getByRole("textbox", { name: "New skills name" });
+    await userEvent.fill(newSkill, "../escape");
+    const skillGroup = screen.getByRole("list", { name: "Skills" }).element().parentElement!;
+    const newButton = () =>
+      [...skillGroup.querySelectorAll("button")].find((button) => button.textContent === "New")!;
+    expect(newButton().disabled).toBe(true);
+    await userEvent.fill(newSkill, "tdd");
+    expect(newButton().disabled).toBe(true);
+    await userEvent.fill(newSkill, "debug");
+    await userEvent.click(newButton());
+    const skill = screen.getByRole("textbox", { name: "Contents of skills/debug/SKILL.md" });
+    await expect.element(skill).toHaveValue("---\nname: debug\ndescription: \n---\n\n");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(commands.writeFile).toHaveBeenLastCalledWith({
+      environmentId,
+      input: {
+        instanceId,
+        file: { kind: "custom", category: "skill", path: "skills/debug/SKILL.md" },
+        content: "---\nname: debug\ndescription: \n---\n\n",
+      },
+    });
+    await expect
+      .element(screen.getByRole("button", { name: "skills/debug/SKILL.md" }))
+      .toBeVisible();
+  });
+
+  it("Customization unpacks OMP's bundled agents and keeps the user's own", async () => {
+    resetEngine();
+    files.set("agents/plan.md", "mine\n");
+    await using screen = await renderK04d("customization");
+    await userEvent.click(screen.getByRole("button", { name: "Unpack bundled agents" }));
+    expect(commands.unpackAgents).toHaveBeenCalledExactlyOnceWith({
+      environmentId,
+      input: { instanceId },
+    });
+    await expect.element(screen.getByRole("button", { name: "explore.md" })).toBeVisible();
+    expect(files.get("agents/plan.md")).toBe("mine\n");
+    expect(toastSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Unpacked 1 bundled agent(s) into agents/",
+        description: "Kept 1 existing file(s): plan.md",
+      }),
+    );
+  });
+
   const renderK04c = (
     pageId: "memory" | "context" | "modes" | "runtime" | "search" | "discovery" | "terminal",
   ) =>
@@ -789,6 +1110,17 @@ describe("OMP settings pages at phone width", () => {
       ]);
       files.set("WATCHDOG.yml", "rules: []\n");
       files.set("agents/reviewer-with-a-rather-long-name.md", "# Reviewer\n");
+      files.set(
+        "models.yml",
+        "providers:\n  a-provider-with-a-long-name:\n    baseUrl: https://a-very-long-host-name.example.com/some/long/path/v1\n    api: openai-completions\n    apiKey: A_PROVIDER_WITH_A_LONG_NAME_API_KEY\n    models:\n      - id: a-model-id-that-is-quite-long-indeed\n",
+      );
+      files.set(
+        "mcp.json",
+        JSON.stringify({
+          mcpServers: { "a-server-with-a-long-name": { command: "/opt/tools/bin/a-long-command" } },
+        }),
+      );
+      files.set("skills/a-skill-with-a-rather-long-name/SKILL.md", "---\nname: x\n---\n");
       await using _viewport = await usePhoneViewport();
       expect(document.documentElement.clientWidth).toBe(390);
       await using screen = await render(
@@ -799,7 +1131,20 @@ describe("OMP settings pages at phone width", () => {
         />,
         { container: settingsContentColumn() },
       );
-      await expect.poll(() => document.querySelector("[data-setting]")).not.toBeNull();
+      await expect
+        .poll(() =>
+          page.keys.length > 0
+            ? document.querySelector("[data-setting]")
+            : document.querySelector("[data-omp-files]"),
+        )
+        .not.toBeNull();
+      await expect
+        .poll(() =>
+          ["mcp", "customization"].includes(page.id)
+            ? document.querySelector("[data-omp-files]")
+            : true,
+        )
+        .not.toBeNull();
       expect(elementsPastViewport(screen.container)).toEqual([]);
       expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(390);
     },

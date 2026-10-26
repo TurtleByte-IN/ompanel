@@ -26,7 +26,7 @@ export const OMP_MODELS_APIS = [
 export const OMP_PROVIDER_AUTH_MODES = ["apiKey", "none", "oauth"] as const;
 
 /** Provider keys the form edits; the rest are kept as written. */
-export const OMP_PROVIDER_FORM_KEYS = ["baseUrl", "api", "apiKey", "auth", "models"] as const;
+const OMP_PROVIDER_FORM_KEYS = ["baseUrl", "api", "apiKey", "auth", "models"] as const;
 export type OmpProviderField = "baseUrl" | "api" | "apiKey" | "auth";
 
 /** Model keys the form edits; the rest are kept as written. */
