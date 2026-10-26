@@ -27,6 +27,7 @@ import {
   makeProviderFailure,
   makeProviderFailureTurnItem,
 } from "@t3tools/provider-core/server/failure";
+import { OMP_CARD_OUTPUT_KEY, readOmpToolCard } from "@t3tools/shared/ompToolCard";
 import * as DateTime from "effect/DateTime";
 
 import type {
@@ -37,6 +38,14 @@ import type {
   TodoPhase,
   Usage,
 } from "../../contract/src/wire.generated.ts";
+import {
+  advisorNotice,
+  cardOutput,
+  conflictCard,
+  fallbackNotice,
+  ompCardFor,
+  ttsrNotice,
+} from "./ompCards.ts";
 import type { OmpSubagentScope } from "./subagents.ts";
 import { OMP_HOST_TERMINAL_TOOL } from "./hostTools.ts";
 
@@ -130,6 +139,10 @@ interface ActiveTurn {
   tokenUsage: OrchestrationV2ProviderTurnTokenUsage | undefined;
   promptId: string | null;
   noticeCount: number;
+  /** The compaction card while OMP compacts, so its end updates the same item. */
+  compaction: { readonly nativeItemId: string; readonly startedAt: DateTime.Utc } | null;
+  /** Staged `ast_edit` proposals, re-emitted once the agent resolves or rejects them. */
+  readonly proposals: Map<string, { readonly startedAt: DateTime.Utc; readonly body: ItemBody }>;
 }
 
 interface BoundThread {
@@ -235,22 +248,41 @@ function ompToolCard(input: {
     if (scheme === "xd" && toolName === "write" && target.length > 0) {
       const device = target.split("/")[0] ?? target;
       const content = stringField(args, "content");
+      const input = content === undefined ? {} : parseJson(content);
+      // The device's own args and details ride in `details.xdev`; card them like the bare tool.
+      const xdev = asRecord(asRecord(details)?.["xdev"]);
+      const carded = ompCardFor({
+        toolName: device,
+        args: xdev?.["args"] ?? input,
+        result: { content: asRecord(result)?.["content"], details: xdev?.["inner"] },
+        isError,
+      });
       return {
         title: `xd://${device}`,
         type: "dynamic_tool",
         toolName: `xd://${device}`,
         toolSource: uriSource(scheme),
-        input: content === undefined ? {} : parseJson(content),
-        ...(output.length > 0 ? { output } : {}),
+        input,
+        ...(carded !== null
+          ? { output: cardOutput(carded.blocks, carded.card) }
+          : output.length > 0
+            ? { output }
+            : {}),
       };
     }
+    const conflict =
+      scheme === "conflict" && toolName === "write" ? conflictCard(target, result, isError) : null;
     return {
       title: `${toolName} ${path}`.slice(0, 160),
       type: "dynamic_tool",
       toolName,
       toolSource: uriSource(scheme),
       input: args ?? {},
-      ...(output.length > 0 ? { output } : {}),
+      ...(conflict !== null
+        ? { output: cardOutput(conflict.blocks, conflict.card) }
+        : output.length > 0
+          ? { output }
+          : {}),
     };
   }
 
@@ -314,12 +346,17 @@ function ompToolCard(input: {
     };
   }
 
+  const carded = ompCardFor({ toolName, args, result, isError });
   return {
     title: toolName,
     type: "dynamic_tool",
     toolName,
     input: args ?? {},
-    ...(output.length > 0 ? { output } : {}),
+    ...(carded !== null
+      ? { output: cardOutput(carded.blocks, carded.card) }
+      : output.length > 0
+        ? { output }
+        : {}),
   };
 }
 
@@ -556,6 +593,8 @@ export class OmpThreadMapper {
       tokenUsage: undefined,
       promptId: null,
       noticeCount: 0,
+      compaction: null,
+      proposals: new Map(),
     };
     // The orchestrator owns the provider thread row; keep its identity for later updates.
     thread.providerThread = {
@@ -646,10 +685,69 @@ export class OmpThreadMapper {
           );
         }
         break;
-      case "message_end":
-        if (turn !== null && stringField(f["message"], "role") === "assistant") {
+      case "message_end": {
+        const message = asRecord(f["message"]);
+        if (turn !== null && stringField(message, "role") === "assistant") {
           events.push(...this.#completeStreamItems(turn, now));
-          events.push(...this.#messageUsage(turn, asRecord(f["message"]) ?? {}, now));
+          events.push(...this.#messageUsage(turn, message ?? {}, now));
+        }
+        if (
+          turn !== null &&
+          stringField(message, "role") === "custom" &&
+          stringField(message, "customType") === "advisor"
+        ) {
+          const advice = advisorNotice(message);
+          if (advice !== null) {
+            events.push(
+              ...this.#oneShotItem(turn, "advisor", now, {
+                title: "Advisor",
+                type: "notification",
+                source: { kind: "system" },
+                outcome: advice.blocker ? "failed" : "updated",
+                summary: advice.summary,
+                detail: advice.detail,
+              }),
+            );
+          }
+        }
+        break;
+      }
+      case "auto_compaction_start":
+      case "manual_compaction_start":
+      case "auto_compaction_end":
+      case "manual_compaction_end":
+        if (turn !== null) events.push(...this.#compactionEvent(turn, f, now));
+        break;
+      case "ttsr_triggered":
+        if (turn !== null) {
+          const notice = ttsrNotice(Array.isArray(f["rules"]) ? f["rules"] : []);
+          if (notice !== null) {
+            events.push(
+              ...this.#oneShotItem(turn, "ttsr", now, {
+                title: "Rule injected",
+                type: "notification",
+                source: { kind: "system" },
+                outcome: "updated",
+                ...notice,
+              }),
+            );
+          }
+        }
+        break;
+      case "retry_fallback_applied":
+        if (turn !== null) {
+          const notice = fallbackNotice(f);
+          if (notice !== null) {
+            events.push(
+              ...this.#oneShotItem(turn, "fallback", now, {
+                title: "Fallback applied",
+                type: "notification",
+                source: { kind: "system" },
+                outcome: "updated",
+                ...notice,
+              }),
+            );
+          }
         }
         break;
       case "tool_execution_start":
@@ -1191,9 +1289,83 @@ export class OmpThreadMapper {
 
     const status: TurnItemStatus = completed ? (isError ? "failed" : "completed") : "running";
     const card = ompToolCard({ toolName: call.toolName, args: call.args, result, isError });
-    return [
+    const events: Array<Event> = [
       this.#node(turn, toolCallId, "tool_call", status, call.startedAt, completed ? now : null),
       this.#item(turn, toolCallId, status, call.startedAt, now, card),
+    ];
+    const proposal = card.type === "dynamic_tool" ? readOmpToolCard(card.output) : null;
+    if (completed && proposal?.kind === "proposed_edit") {
+      if (proposal.state === "proposed") {
+        turn.proposals.set(toolCallId, { startedAt: call.startedAt, body: card });
+      } else if (card.toolName === "xd://resolve" || card.toolName === "xd://reject") {
+        // OMP applies or discards every staged proposal at once; their cards follow.
+        for (const [proposalId, staged] of turn.proposals) {
+          const output = asRecord(staged.body.type === "dynamic_tool" ? staged.body.output : null);
+          const stagedCard = readOmpToolCard(output);
+          if (output === undefined || stagedCard?.kind !== "proposed_edit") continue;
+          events.push(
+            this.#item(turn, proposalId, "completed", staged.startedAt, now, {
+              ...staged.body,
+              output: {
+                ...output,
+                [OMP_CARD_OUTPUT_KEY]: { ...stagedCard, state: proposal.state },
+              },
+            } as ItemBody),
+          );
+        }
+        turn.proposals.clear();
+      }
+    }
+    return events;
+  }
+
+  /** Auto and manual compaction share one card that runs from start to end. */
+  #compactionEvent(
+    turn: ActiveTurn,
+    frame: Record<string, unknown>,
+    now: DateTime.Utc,
+  ): Array<Event> {
+    const type = frame["type"];
+    const starting = type === "auto_compaction_start" || type === "manual_compaction_start";
+    let current = turn.compaction;
+    if (current === null || starting) {
+      turn.noticeCount += 1;
+      current = {
+        nativeItemId: `compaction:${turn.providerTurn.id}:${turn.noticeCount}`,
+        startedAt: now,
+      };
+    }
+    turn.compaction = starting ? current : null;
+    const resultRecord = asRecord(frame["result"]);
+    const errorMessage = stringField(frame, "errorMessage");
+    const status: TurnItemStatus = starting
+      ? "running"
+      : frame["aborted"] === true
+        ? "interrupted"
+        : errorMessage !== undefined && frame["skipped"] !== true && resultRecord === undefined
+          ? "failed"
+          : "completed";
+    const summary =
+      stringField(resultRecord, "shortSummary") ??
+      stringField(resultRecord, "summary") ??
+      errorMessage;
+    const tokensBefore = optionalCount(resultRecord?.["tokensBefore"]);
+    return [
+      this.#node(
+        turn,
+        current.nativeItemId,
+        "system",
+        starting ? "running" : status === "failed" ? "failed" : "completed",
+        current.startedAt,
+        starting ? null : now,
+      ),
+      this.#item(turn, current.nativeItemId, status, current.startedAt, now, {
+        title: null,
+        type: "compaction",
+        driver: OMP_PROVIDER,
+        ...(starting || summary === undefined ? {} : { summary }),
+        ...(tokensBefore === undefined ? {} : { beforeTokenCount: tokensBefore }),
+      }),
     ];
   }
 
