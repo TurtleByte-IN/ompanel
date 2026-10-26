@@ -32,6 +32,7 @@ import {
 } from "./hostTools.ts";
 import { makeOmpPidfiles } from "./pidfiles.ts";
 import { ompStateDirs } from "./session.ts";
+import { makeOmpThreadSessions } from "./threadSessions.ts";
 import { fakeOmpFrames, type FakeOmpStep, makeFakeOmpState, waitUntil } from "./testing/fakeOmp.ts";
 
 const platform = HostProcess.Platform.defaultValue();
@@ -157,6 +158,7 @@ const runSession = (input: {
       dirs,
       pidfiles: yield* makeOmpPidfiles({ dir: dirs.pidfiles, platform }),
       expectedContractVersion: input.contract,
+      threadSessions: makeOmpThreadSessions(),
     }).pipe(
       Effect.provideService(ProviderHostTools.ProviderHostTools, host.service),
       Effect.provideService(McpProviderSessions.McpProviderSessions, mcpSessions),
