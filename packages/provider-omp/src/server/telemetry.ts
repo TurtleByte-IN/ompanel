@@ -29,7 +29,7 @@ export const ompFramesDroppedTotal = Metric.counter("t3_omp_frames_dropped_total
 
 const SEMVER = /^\d{1,4}\.\d{1,4}\.\d{1,6}(?:-[0-9A-Za-z]{1,32}(?:\.[0-9A-Za-z]{1,32}){0,4})?$/;
 
-export const OMP_ERROR_CLASSES = [
+const OMP_ERROR_CLASSES = [
   // Starting a session.
   "sidecar",
   "spawn",
@@ -57,7 +57,7 @@ export const OMP_ERROR_CLASSES = [
 ] as const;
 export type OmpErrorClass = (typeof OMP_ERROR_CLASSES)[number];
 
-export const OMP_FRAME_DROP_REASONS = [
+const OMP_FRAME_DROP_REASONS = [
   /** OMP could not fit an event in the transport limits and sent `rpc_frame_error` instead. */
   "sidecar_oversize",
   /** A turn-scoped frame arrived with no turn to attach it to (and no detached run took it). */
