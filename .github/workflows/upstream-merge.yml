@@ -1,0 +1,282 @@
+name: Upstream merge
+
+# Merges pingdotgg/t3code `main` into this fork every Monday and opens a pull
+# request for it, or an issue listing the conflicting files when the merge
+# cannot be done automatically. Pull requests opened with GITHUB_TOKEN start no
+# `pull_request` workflows, so this workflow dispatches `ci.yml` on the merge
+# branch, waits for it and posts its result as the required `Check` status.
+# See docs/omp/ci.md ("Upstream merge").
+
+on:
+  schedule:
+    # Mondays 06:00 UTC.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Merge and report in the run summary only; push, open and dispatch nothing
+        type: boolean
+        default: true
+      upstream_ref:
+        description: Upstream branch, tag or full commit SHA to merge
+        type: string
+        default: main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: upstream-merge
+  cancel-in-progress: false
+
+jobs:
+  merge:
+    name: Merge upstream
+    if: github.repository != 'pingdotgg/t3code'
+    runs-on: ubuntu-24.04
+    # Includes waiting for the dispatched ci.yml run (about 20 minutes).
+    timeout-minutes: 120
+    permissions:
+      contents: write # push the merge branch
+      pull-requests: write # open the merge PR, close superseded ones
+      issues: write # conflict and push-failure issues, the label
+      actions: write # dispatch ci.yml on the merge branch
+      statuses: write # report the dispatched CI result as `Check`
+    env:
+      UPSTREAM_REPO: pingdotgg/t3code
+      UPSTREAM_REF: ${{ inputs.upstream_ref || 'main' }}
+      # Scheduled runs have no inputs, so they are never dry runs.
+      DRY_RUN: ${{ inputs.dry_run == true }}
+      # Optional token (contents, pull requests, issues, actions and workflows
+      # write). Without it the run uses GITHUB_TOKEN, which cannot push an
+      # upstream change to .github/workflows and whose PRs start no CI.
+      USE_PAT: ${{ secrets.UPSTREAM_MERGE_TOKEN != '' }}
+      GH_TOKEN: ${{ secrets.UPSTREAM_MERGE_TOKEN || github.token }}
+      LABEL: upstream-merge
+      CI_CONTEXT: Check
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.UPSTREAM_MERGE_TOKEN || github.token }}
+
+      - name: Merge upstream and open a PR or a conflict issue
+        id: merge
+        run: |
+          set -euo pipefail
+
+          summary() { printf '%s\n' "$@" | tee -a "$GITHUB_STEP_SUMMARY"; }
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+
+          if [[ ! "$UPSTREAM_REF" =~ ^[A-Za-z0-9._/-]+$ ]]; then
+            echo "::error::upstream_ref must be a branch, tag or commit SHA: $UPSTREAM_REF"
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Read-only upstream: the push URL is unusable, so nothing here can
+          # push to pingdotgg/t3code.
+          git remote add upstream "https://github.com/$UPSTREAM_REPO.git"
+          git remote set-url --push upstream DISABLED
+          git fetch --no-tags upstream "$UPSTREAM_REF"
+          upstream_sha="$(git rev-parse "FETCH_HEAD^{commit}")"
+          short="${upstream_sha:0:12}"
+          main_sha="$(git rev-parse HEAD)"
+
+          if git merge-base --is-ancestor "$upstream_sha" "$main_sha"; then
+            summary "main already contains \`$UPSTREAM_REPO@$short\` ($UPSTREAM_REF). Nothing to merge."
+            exit 0
+          fi
+
+          base="$(git merge-base "$main_sha" "$upstream_sha")"
+          count="$(git rev-list --count "$main_sha..$upstream_sha")"
+          compare="https://github.com/$UPSTREAM_REPO/compare/${base:0:12}...$short"
+          branch="chore/upstream-merge-$(date -u +%Y-%m-%d)-${upstream_sha:0:7}"
+          pr_title="chore: merge upstream $UPSTREAM_REPO@$short"
+          issue_title="Upstream merge conflicts: $UPSTREAM_REPO@$short"
+          push_title="Upstream merge push failed: $UPSTREAM_REPO@$short"
+          ready_title="Upstream merge ready for a PR: $UPSTREAM_REPO@$short"
+
+          # One PR or issue per upstream commit: a re-run, or a Monday on which
+          # upstream did not move, adds nothing.
+          if [[ "$DRY_RUN" != true ]]; then
+            gh label create "$LABEL" --color 0e8a16 \
+              --description "Automated upstream merge (docs/omp/ci.md)" --force
+            # Every PR or issue this workflow opens ends its title with the
+            # upstream commit.
+            handled="$( {
+              gh pr list --state open --label "$LABEL" --limit 100 --json title,url
+              gh issue list --state open --label "$LABEL" --limit 100 --json title,url
+            } | jq -rs --arg s "$UPSTREAM_REPO@$short" 'add | .[] | select(.title | endswith($s)) | .url')"
+            if [[ -n "$handled" ]]; then
+              summary "\`$UPSTREAM_REPO@$short\` is already handled: $handled"
+              exit 0
+            fi
+          fi
+
+          git switch -c "$branch"
+          if ! git merge --no-ff --no-edit \
+            -m "Merge $UPSTREAM_REPO@$short ($UPSTREAM_REF) into main" "$upstream_sha"; then
+            conflicts="$(git diff --name-only --diff-filter=U)"
+            git merge --abort
+            body="$RUNNER_TEMP/issue.md"
+            {
+              echo "The weekly upstream merge of [\`$UPSTREAM_REPO@$short\`](https://github.com/$UPSTREAM_REPO/commit/$upstream_sha) ($UPSTREAM_REF, $count commits, [compare]($compare)) into \`main\` (\`${main_sha:0:12}\`) stopped on conflicts in:"
+              echo
+              while IFS= read -r f; do echo "- \`$f\`"; done <<< "$conflicts"
+              echo
+              echo "Resolve it by hand (docs/omp/ci.md, \"Upstream merge\"):"
+              echo
+              echo '```bash'
+              echo "git fetch origin main && git fetch https://github.com/$UPSTREAM_REPO.git $upstream_sha"
+              echo "git switch -c $branch origin/main"
+              echo "git merge --no-ff $upstream_sha   # resolve, then git commit"
+              echo "git push origin $branch && gh pr create --base main --label $LABEL --title \"$pr_title\""
+              echo '```'
+              echo
+              echo "Run: $run_url"
+            } > "$body"
+            echo "::warning title=Upstream merge conflicts::$(echo "$conflicts" | wc -l) conflicting files"
+            if [[ "$DRY_RUN" == true ]]; then
+              summary "Dry run: would open issue **$issue_title**:" "" "$(cat "$body")"
+              exit 0
+            fi
+            url="$(gh issue create --title "$issue_title" --label "$LABEL" --body-file "$body")"
+            gh issue list --state open --label "$LABEL" --limit 100 --json title,url |
+              jq -r --arg u "$url" '.[] | select(.url != $u and (.title | startswith("Upstream merge conflicts:"))) | .url' |
+              while IFS= read -r old; do
+                gh issue close "$old" --comment "Superseded by $url, for a newer upstream commit."
+              done
+            summary "Merge conflicts; opened $url" "" "$(cat "$body")"
+            exit 0
+          fi
+
+          # Files both sides changed since the merge base: they merged cleanly
+          # but are where upstream and the fork can disagree (PRD §4, rule 4).
+          overlap="$(comm -12 \
+            <(git diff --name-only "$base" "$main_sha" | sort) \
+            <(git diff --name-only "$base" "$upstream_sha" | sort))"
+          body="$RUNNER_TEMP/pr.md"
+          {
+            echo "Merges [\`$UPSTREAM_REPO@$short\`](https://github.com/$UPSTREAM_REPO/commit/$upstream_sha) ($UPSTREAM_REF): $count upstream commits, [compare]($compare). Opened by the weekly upstream merge ($run_url)."
+            echo
+            if [[ "$USE_PAT" == true ]]; then
+              echo "CI runs on this pull request as usual."
+            else
+              echo "This PR was opened with \`GITHUB_TOKEN\`, which starts no \`pull_request\` workflows. The merge workflow dispatched \`ci.yml\` on \`$branch\` instead ([runs](https://github.com/$GITHUB_REPOSITORY/actions/workflows/ci.yml?query=branch%3A$branch)), waits for it, and posts its result as the required \`Check\` status ([merge run]($run_url)). A push to this branch by a person runs CI normally."
+            fi
+            echo
+            echo "Review only the files both upstream and the fork changed since the merge base (auto-merged, no conflicts):"
+            echo
+            if [[ -z "$overlap" ]]; then
+              echo "_none_"
+            else
+              head -n 200 <<< "$overlap" | while IFS= read -r f; do echo "- \`$f\`"; done
+            fi
+          } > "$body"
+
+          if [[ "$DRY_RUN" == true ]]; then
+            summary "Dry run: merged cleanly. Would push \`$branch\`, dispatch \`ci.yml\` on it, open PR **$pr_title** (or issue **$ready_title** if Actions may not open PRs) and close older open \`$LABEL\` PRs and issues." "" "$(cat "$body")"
+            exit 0
+          fi
+
+          if ! git push origin "$branch" 2> "$RUNNER_TEMP/push.err"; then
+            cat "$RUNNER_TEMP/push.err"
+            {
+              echo "The merge of \`$UPSTREAM_REPO@$short\` into \`main\` is clean, but pushing \`$branch\` failed:"
+              echo
+              echo '```'
+              cat "$RUNNER_TEMP/push.err"
+              echo '```'
+              echo
+              echo "GITHUB_TOKEN cannot push commits that change \`.github/workflows\`. Push the merge by hand (docs/omp/ci.md, \"Upstream merge\") or add the \`UPSTREAM_MERGE_TOKEN\` secret."
+              echo
+              echo "Run: $run_url"
+            } > "$RUNNER_TEMP/push-issue.md"
+            gh issue create --title "$push_title" --label "$LABEL" --body-file "$RUNNER_TEMP/push-issue.md"
+            exit 1
+          fi
+
+          if [[ "$USE_PAT" != true ]]; then
+            gh workflow run ci.yml --ref "$branch"
+            # The dispatched run's checks do not count for the PR, so the next
+            # step mirrors its result as a `Check` commit status.
+            gh api "repos/$GITHUB_REPOSITORY/statuses/$(git rev-parse HEAD)" -f state=pending \
+              -f context="$CI_CONTEXT" -f description="ci.yml dispatched by the upstream merge" >/dev/null
+            {
+              echo "ci_branch=$branch"
+              echo "ci_sha=$(git rev-parse HEAD)"
+            } >> "$GITHUB_OUTPUT"
+          fi
+          if ! url="$(gh pr create --base main --head "$branch" --title "$pr_title" \
+            --label "$LABEL" --body-file "$body")"; then
+            # GITHUB_TOKEN may not open PRs while "Allow GitHub Actions to create
+            # and approve pull requests" is off. A person opens it from the issue.
+            open_pr="https://github.com/$GITHUB_REPOSITORY/compare/main...$branch?expand=1&labels=$LABEL&title=$(jq -rn --arg t "$pr_title" '$t | @uri')"
+            {
+              echo "\`$branch\` holds a clean merge of \`$UPSTREAM_REPO@$short\`, but this workflow could not open the pull request (docs/omp/ci.md, \"Upstream merge\")."
+              echo
+              echo "**[Open the pull request]($open_pr)** and paste the description below. CI was dispatched on the branch already."
+              echo
+              echo "---"
+              echo
+              cat "$body"
+            } > "$RUNNER_TEMP/ready-issue.md"
+            url="$(gh issue create --title "$ready_title" --label "$LABEL" --body-file "$RUNNER_TEMP/ready-issue.md")"
+          fi
+          # This merge contains every older one, so older merge PRs and
+          # conflict or push-failure issues are closed.
+          {
+            gh pr list --state open --label "$LABEL" --limit 100 --json url
+            gh issue list --state open --label "$LABEL" --limit 100 --json url
+          } | jq -rs --arg u "$url" 'add | .[] | select(.url != $u) | .url' |
+            while IFS= read -r old; do
+              if [[ "$old" == */pull/* ]]; then
+                gh pr close "$old" --comment "Superseded by $url, which merges a newer upstream commit. The branch is kept."
+              else
+                gh issue close "$old" --comment "Superseded by $url, which merges a newer upstream commit."
+              fi
+            done
+          summary "Opened $url from \`$branch\`." "" "$(cat "$body")"
+
+      # Branch protection ignores the check runs of a workflow_dispatch run, so
+      # a PR opened with GITHUB_TOKEN would never get its required `Check`.
+      # This step waits for the dispatched ci.yml run and posts its result as
+      # a `Check` commit status from GITHUB_TOKEN (the GitHub Actions app, the
+      # source the required check expects).
+      - name: Report the dispatched CI result as Check
+        if: steps.merge.outputs.ci_sha != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_BRANCH: ${{ steps.merge.outputs.ci_branch }}
+          CI_SHA: ${{ steps.merge.outputs.ci_sha }}
+        run: |
+          set -euo pipefail
+          id=""
+          for _ in $(seq 30); do
+            id="$(gh run list --workflow ci.yml --branch "$CI_BRANCH" --commit "$CI_SHA" \
+              --event workflow_dispatch --limit 1 --json databaseId --jq '.[0].databaseId // empty')"
+            [[ -n "$id" ]] && break
+            sleep 10
+          done
+          status() {
+            gh api "repos/$GITHUB_REPOSITORY/statuses/$CI_SHA" -f state="$1" -f context="$CI_CONTEXT" \
+              -f description="$2" ${3:+-f target_url="$3"} >/dev/null
+          }
+          if [[ -z "$id" ]]; then
+            status error "The dispatched ci.yml run was not found"
+            exit 1
+          fi
+          ci_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$id"
+          status pending "ci.yml dispatched by the upstream merge" "$ci_url"
+          gh run watch "$id" --interval 60 >/dev/null || true
+          conclusion="$(gh run view "$id" --json conclusion --jq .conclusion)"
+          if [[ "$conclusion" == success ]]; then
+            status success "ci.yml passed" "$ci_url"
+          else
+            status failure "ci.yml: ${conclusion:-unknown}" "$ci_url"
+          fi
+          echo "ci.yml run $ci_url: $conclusion" | tee -a "$GITHUB_STEP_SUMMARY"

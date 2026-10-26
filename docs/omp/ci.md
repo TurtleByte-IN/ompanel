@@ -67,3 +67,83 @@ upstream, so fork jobs build and test without a remote cache.
 The `Test` job in `ci.yml` took about 8 minutes on a 4 vCPU hosted runner,
 against a 10-minute limit. Its limit is now 15 minutes. The other jobs finished
 well inside their upstream limits, so those are unchanged.
+
+## Upstream merge
+
+`.github/workflows/upstream-merge.yml` merges `pingdotgg/t3code` `main` into
+the fork every Monday at 06:00 UTC (PRD §4, merge cadence; §10, upstream
+merge). It fetches upstream over public HTTPS with its push URL disabled, so it
+cannot push upstream. It merges into a fresh branch off `main`, named
+`chore/upstream-merge-<date>-<sha>`. Then one of these happens:
+
+- `main` already contains upstream: nothing.
+- The merge conflicts: it opens an issue labelled `upstream-merge`, titled
+  `Upstream merge conflicts: pingdotgg/t3code@<sha>`. The issue lists the
+  conflicting files and the commands to do the merge by hand. Nothing is
+  pushed.
+- The merge is clean: it pushes the branch, opens a pull request labelled
+  `upstream-merge`, and dispatches `ci.yml` on the branch. The PR description
+  lists the files both upstream and the fork changed since the merge base.
+  Those merged without conflicts but are the ones to review (PRD §4, rule 4).
+
+A run does nothing when an open `upstream-merge` PR or issue already covers
+the same upstream commit. A new merge PR closes older open `upstream-merge`
+PRs and issues, because it contains their upstream commits. Closed branches are
+kept.
+
+### How the merge PR gets its CI
+
+A pull request opened with `GITHUB_TOKEN` starts no `pull_request` workflows.
+So the merge workflow runs `gh workflow run ci.yml --ref <branch>`, and
+`ci.yml` accepts `workflow_dispatch` for this. Change detection has no base
+commit in a dispatched run, so every job runs.
+
+Branch protection does not count the check runs of a dispatched run: the PR
+lists none of them, and its required `Check` stays "Expected" even after the
+dispatched `Check` job passes. So the merge workflow posts a commit status
+named `Check` on the merge commit. It is `pending` from the dispatch, and
+`success` or `failure` once the dispatched run ends, linking to that run. The
+status comes from `GITHUB_TOKEN`, i.e. the GitHub Actions app, which is the
+source the required check accepts. The merge job therefore waits for CI, about
+20 minutes, and has a 120-minute limit. If it times out, the status stays
+`pending`. Push to the branch (an empty commit is enough) to run CI the usual
+way.
+
+The PR therefore cannot merge until the full suite passes. A push to the branch
+by a person, for example a fix, runs CI the usual way.
+
+### What GITHUB_TOKEN cannot do
+
+`GITHUB_TOKEN` cannot push a commit that changes `.github/workflows`. When an
+upstream merge changes a workflow file, the push fails. The workflow then opens
+an `Upstream merge push failed: …` issue with the error and fails the run.
+Do that merge by hand with the commands from a conflict issue, pushing over SSH.
+
+An optional repository secret, `UPSTREAM_MERGE_TOKEN`, removes this gap. It is
+a fine-grained token for this repository with read and write access to
+contents, pull requests, issues, actions and workflows. With it, the workflow
+pushes and opens the PR as the token's owner. That PR runs CI like any other,
+so nothing is dispatched. Only an admin can create the token; until then, the
+`GITHUB_TOKEN` path above applies.
+
+`GITHUB_TOKEN` can open a pull request only when "Allow GitHub Actions to
+create and approve pull requests" is on, both for the TurtleByte-IN
+organization and for this repository (Settings → Actions → General). The
+organization has it off, so the repository cannot turn it on. While it is off,
+`gh pr create` fails after the push and the CI dispatch. The workflow then
+opens an `Upstream merge ready for a PR: …` issue instead. It holds a link that
+opens the PR from the pushed branch, and the PR description to paste. A PR a
+person opens runs CI as usual. The `UPSTREAM_MERGE_TOKEN` secret avoids this
+too.
+
+### Running it by hand
+
+```bash
+# Dry run (the default for a dispatch): merge on the runner and report the
+# PR or conflict issue it would open in the run summary. Writes nothing.
+gh workflow run upstream-merge.yml -R TurtleByte-IN/ompanel
+
+# A real run. upstream_ref takes a branch, tag or full commit SHA.
+gh workflow run upstream-merge.yml -R TurtleByte-IN/ompanel \
+  -f dry_run=false -f upstream_ref=main
+```
