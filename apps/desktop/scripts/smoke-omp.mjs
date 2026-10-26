@@ -108,7 +108,11 @@ NodeFS.writeFileSync(
   "modelRoles:\n  default: smoke/smoke-model\n",
 );
 
-const env = { ...process.env };
+// The app and the downloaded sidecar get no runner credentials (ACTIONS_* tokens, GITHUB_TOKEN).
+const RUNNER_SECRET = /^(?:ACTIONS_|GITHUB_TOKEN$|GH_TOKEN$|RUNNER_TOKEN$)/u;
+const env = Object.fromEntries(
+  Object.entries(process.env).filter(([key]) => !RUNNER_SECRET.test(key.toUpperCase())),
+);
 delete env.ELECTRON_RUN_AS_NODE;
 Object.assign(env, profile, {
   OMPANEL_HOME: ompanelHome,

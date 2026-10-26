@@ -675,7 +675,7 @@ jobs:
   desktop_smoke:
     permissions:
       contents: read
-      id-token: write
+    # No id-token: nothing here uses OIDC, and the job runs a downloaded binary.
     name: Desktop Smoke ${{ matrix.label }}
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.desktop_smoke != 'false' }}

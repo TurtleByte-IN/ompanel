@@ -59,9 +59,13 @@ cancelled job fails it. Through it, every pull request is gated on:
   of the providers page and the app's log are uploaded as
   `desktop-smoke-<platform>-<arch>`; on failure the backend logs and the
   output of the cached sidecar run with the status check's flags are too.
-  On Windows the job first runs
+  The job has only `contents: read` (no OIDC token), and the script drops
+  `ACTIONS_*`, `GITHUB_TOKEN` and `GH_TOKEN` from the environment the app and
+  the downloaded sidecar inherit. On Windows the job first runs
   `processTree.windows.test.ts`, which kills real process trees under the
-  job-object launcher ([processes.md](processes.md#stopping)). Locally, run
+  job-object launcher ([processes.md](processes.md#stopping)). Its waits
+  allow for the ~20-30 s launcher start on `windows-11-arm` (ompanel#145).
+  Locally, run
   the build, then the script; set `OMPANEL_DESKTOP_SMOKE_ARTIFACTS` to keep the
   screenshot somewhere other than `apps/desktop/.smoke-omp`.
 
