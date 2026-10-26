@@ -95,6 +95,34 @@ posixOnly("startOmpRpcProcess", () => {
     ),
   );
 
+  it.live("echoes a response onto the frame stream behind the frames written before it", () =>
+    live(
+      Effect.gen(function* () {
+        const state = yield* makeFakeOmpState;
+        const omp = yield* start(
+          state,
+          state.script({
+            afterNegotiate: [],
+            commands: {
+              prompt: [
+                { emit: { type: "command_output", text: "Context: 12%" } },
+                { respond: { agentInvoked: false } },
+              ],
+            },
+          }),
+        );
+        const ack = yield* omp.request("prompt", { message: "/context" }, { echoResponse: true });
+        assert.deepStrictEqual(ack, { agentInvoked: false });
+        const frames = yield* omp.frames.pipe(Stream.take(2), Stream.runCollect);
+        assert.deepStrictEqual(
+          frames.map((frame) => frame.type),
+          ["command_output", "response"],
+        );
+        assert.propertyVal(frames[1], "command", "prompt");
+      }),
+    ),
+  );
+
   it.live("refuses a chunk sequence over 64 MiB and stops the process", () =>
     live(
       Effect.gen(function* () {

@@ -103,14 +103,13 @@ posixOnly("OmpAdapter.openSession", () => {
           assert.deepStrictEqual(state.events(), ["command:negotiate_protocol"]);
           assert.strictEqual(NodeFS.readdirSync(dirs.pidfiles).length, 1);
 
-          const turn = yield* session
-            .ensureThread({
-              threadId: ThreadId.make("thread/1"),
-              modelSelection: openInput(work, "approval-required").modelSelection,
-              runtimePolicy: openInput(work, "approval-required").runtimePolicy,
-            })
-            .pipe(Effect.flip);
-          assert.strictEqual(turn._tag, "ProviderAdapterProtocolError");
+          // The thread binds to the session the process opened.
+          const providerThread = yield* session.ensureThread({
+            threadId: ThreadId.make("thread/1"),
+            modelSelection: openInput(work, "approval-required").modelSelection,
+            runtimePolicy: openInput(work, "approval-required").runtimePolicy,
+          });
+          assert.strictEqual(providerThread.nativeThreadRef?.nativeId, "fake-session");
           return session.events;
         }).pipe(Effect.scoped);
 
