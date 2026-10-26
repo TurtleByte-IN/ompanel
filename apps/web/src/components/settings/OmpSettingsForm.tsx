@@ -40,6 +40,7 @@ function JsonField({
 }) {
   const [invalid, setInvalid] = useState(false);
   const text = field.value === undefined ? "" : JSON.stringify(field.value, null, 2);
+  const lines = text.split("\n").length;
   return (
     <div>
       <Textarea
@@ -47,7 +48,7 @@ function JsonField({
         aria-label={field.key}
         aria-invalid={invalid}
         disabled={field.readOnly}
-        rows={Math.min(8, text.split("\n").length + 1)}
+        rows={lines < 8 ? lines + 1 : 8}
         defaultValue={text}
         onBlur={(event) => {
           const next = event.target.value.trim();
