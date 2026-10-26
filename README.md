@@ -1,19 +1,19 @@
-# T3 Code
+# Ompanel
 
-T3 Code is an "agent harness control surface". It enables control of the agents on your machine with a best-in-class mobile app ([iOS](https://apps.apple.com/us/app/t3-code-remote-claude-more/id6787819824), [Android](https://play.google.com/store/apps/details?id=in.turtlebyte.ompanel)), [web app](https://app.t3.codes) and [Electron-based desktop app](https://t3.codes).
+Ompanel is an "agent harness control surface". It lets you control the coding agents on your machine from a web app served by your own computer, an Electron-based desktop app, and a mobile app.
 
-Works with your subscriptions on Claude Code, Codex, Cursor, Grok Build, OpenCode, and Google Antigravity. If they're set up on your computer, T3 Code can control them.
+Ompanel is a fork of [T3 Code](https://github.com/pingdotgg/t3code), maintained by TurtleByte. It carries its own name, identifiers and artwork; see [docs/omp/branding.md](./docs/omp/branding.md).
+
+Works with your subscriptions on Claude Code, Codex, Cursor, Grok Build, OpenCode, and Google Antigravity. If they're set up on your computer, Ompanel can control them.
 
 ## "Wait, what are you selling me?"
 
-Nothing. We built T3 Code because we wanted the best possible development experience with agents. We were inspired by existing solutions like the Codex desktop app, Conductor, Claude Desktop and Cursor Glass, but none met our bar.
-
-We wanted something performant, remote-ready, and truly open. If we ever go the wrong direction, we want you to have everything you need to fork and build the editor that you want.
+Nothing. Ompanel exists to give the best possible development experience with agents, in an app that is performant, remote-ready, and truly open. If it ever goes the wrong direction, you have everything you need to fork it and build the editor that you want.
 
 ## Installation
 
 > [!WARNING]
-> T3 Code currently supports Codex, Claude, Cursor, Grok Build, OpenCode, and Antigravity. Install and authenticate at least one provider before use:
+> Ompanel currently supports Codex, Claude, Cursor, Grok Build, OpenCode, and Antigravity. Install and authenticate at least one provider before use:
 >
 > - Codex: install [Codex CLI](https://developers.openai.com/codex/cli) and run `codex login`
 > - Claude: install [Claude Code](https://claude.com/product/claude-code) and run `claude auth login`
@@ -25,13 +25,13 @@ We wanted something performant, remote-ready, and truly open. If we ever go the 
 ### Command line
 
 ```bash
-curl -fsSL https://t3.codes/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/TurtleByte-IN/ompanel/main/scripts/install.sh | sh
 ```
 
 On Windows, in PowerShell:
 
 ```powershell
-irm https://t3.codes/install.ps1 | iex
+irm https://raw.githubusercontent.com/TurtleByte-IN/ompanel/main/scripts/install.ps1 | iex
 ```
 
 Then run `ompanel` to start the server and open the local web app. `ompanel service install` keeps it running in the background, `ompanel update` moves to a newer release, and `ompanel --help` has the full reference.
@@ -40,55 +40,25 @@ To try it once without installing, run `npx ompanel@latest` instead.
 
 ### Desktop app
 
-Install the latest version of the desktop app from [GitHub Releases](https://github.com/pingdotgg/t3code/releases), or from your favorite package registry:
-
-#### Windows (`winget`)
-
-```bash
-winget install T3Tools.T3Code
-```
-
-#### Windows (`scoop`)
-
-```bash
-scoop install extras/t3code
-```
-
-#### macOS (Homebrew)
-
-```bash
-brew install --cask t3-code
-```
+Install the latest version of the desktop app from [GitHub Releases](https://github.com/TurtleByte-IN/ompanel/releases).
 
 #### Debian, Ubuntu (`.deb`)
 
-Download the `.deb` from [GitHub Releases](https://github.com/pingdotgg/t3code/releases), then:
+Download the `.deb` from [GitHub Releases](https://github.com/TurtleByte-IN/ompanel/releases), then:
 
 ```bash
-sudo apt install ./T3-Code-*.deb
+sudo apt install ./Ompanel-*.deb
 ```
 
 #### Arch Linux (AUR)
 
-Stable:
+PKGBUILDs for `ompanel-bin` (stable) and `ompanel-nightly-bin` (nightly) live under [`packaging/aur`](./packaging/aur). They are not published to the AUR yet; build them with `makepkg -si`.
 
-```bash
-yay -S t3code-bin
-```
-
-Nightly:
-
-```bash
-yay -S t3code-nightly-bin
-```
-
-The AUR packaging is maintained in this repository under [`packaging/aur`](./packaging/aur).
+Ompanel is not in winget, Scoop or Homebrew yet.
 
 ## Some notes
 
 We are very very early in this project. Expect bugs.
-
-We are (mostly) not accepting contributions yet. Small fixes may be considered. Big features will not be.
 
 ## Documentation
 
@@ -104,15 +74,15 @@ Full docs live in [docs/](./docs). There's no docs site yet.
 - [Keeping app and server in sync](./docs/user/updating.md)
 - [Source control integrations](./docs/user/source-control.md)
 - Multiple accounts: [Codex](./docs/user/providers-codex.md) · [Claude](./docs/user/providers-claude.md)
-- [Run T3 Code as a background service](./docs/user/background-service.md)
+- [Run Ompanel as a background service](./docs/user/background-service.md)
 
 Building from source? Start at [docs/internals/overview.md](./docs/internals/overview.md).
 
-## If you REALLY want to contribute still.... read this first
+## Contributing
 
 ### Install `vp`
 
-T3 Code uses Vite+ so you'll need to install the global `vp` command-line tool.
+Ompanel uses Vite+ so you'll need to install the global `vp` command-line tool.
 
 #### macOS / Linux
 
@@ -136,6 +106,8 @@ vp i
 
 Read [CONTRIBUTING.md](./CONTRIBUTING.md) before reporting a bug or opening a PR.
 
-Have a feature request? Start an [Ideas discussion](https://github.com/pingdotgg/t3code/discussions/categories/ideas).
+Have a feature request or need support? Open a [GitHub issue](https://github.com/TurtleByte-IN/ompanel/issues).
 
-Need support? Join the [Discord](https://discord.gg/jn4EGJjrvv).
+## License
+
+[MIT](./LICENSE).

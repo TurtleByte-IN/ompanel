@@ -166,6 +166,10 @@ Renaming them would only add merge conflicts or break existing data.
   them.
 - Third-party registrations made for upstream: the Grok OAuth referrer `t3code` and the Expo
   owner in `apps/mobile/app.config.ts`.
+- Applied relay database migrations under `infra/relay/migrations/`: they are never rewritten once
+  applied, so their upstream names stay byte for byte.
+- Upstream's dependency forks are named as upstream's, such as T3 Code's react-native-screens fork
+  in `docs/operations/mobile-screens-fork.md`.
 
 ## After an upstream merge
 
@@ -182,3 +186,37 @@ Weekly upstream merges can bring back upstream names. Check each of these:
    migration's skip list. New tables that hold credentials: add them to its cleared tables.
 6. New `t3.codes` defaults, especially anything that builds a URL carrying a token: source it
    from `HOSTED_APP_URL` and keep it off when that is unset.
+7. Run `vp test run scripts/brand-marks.test.ts` (from `scripts/`: `pnpm run test`). It fails on
+   any `T3 Code`, `t3.codes`, `T3CODE_` or Theo handle in a user-facing file that is not on its
+   allowlist, which mirrors this page.
+
+## Copy and links
+
+User-visible text says Ompanel, and "T3 Connect" is "Ompanel Connect". Code reads the display
+name, repository URL and releases URL from the brand module (`PRODUCT_NAME`, `REPOSITORY_URL`,
+`RELEASES_URL`). Code identifiers that contain `T3` (`T3ConnectUserProfilePage`, `t3-*` mobile
+modules, `font-t3-*` classes) stay, like the other internal names above.
+
+Upstream's hosted services (`app.t3.codes`, `relay.t3.codes`, `clerk.t3.codes`, the `t3.codes`
+site) have no Ompanel equivalent until `ompanel.dev` exists (blocker B-003), so links to them were
+replaced or removed:
+
+| Upstream link                                  | Now                                                                                                         |
+| ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `t3.codes/install.sh`, `install.ps1`           | `raw.githubusercontent.com/TurtleByte-IN/ompanel/main/scripts/…`                                            |
+| `t3.codes/download`                            | GitHub releases (`RELEASES_URL`)                                                                            |
+| `t3.codes` homepage, "Created in" footer       | GitHub repository (`REPOSITORY_URL`)                                                                        |
+| `t3.codes/privacy-policy` (web, mobile)        | removed with its settings row and welcome note; mobile Legal opens `LICENSE`                                |
+| `t3.codes/security-policy`, `security@ping.gg` | GitHub private vulnerability reporting                                                                      |
+| App Store / Google Play listings               | removed; the mobile app is not published for Ompanel                                                        |
+| GitHub Discussions (ideas)                     | GitHub issues; blank issues are enabled                                                                     |
+| winget, Scoop, Homebrew, AUR packages          | removed from install docs; AUR PKGBUILDs renamed `ompanel-bin` and `ompanel-nightly-bin`, not yet published |
+| `app.t3.codes` in user docs                    | "the hosted web app"; prompt-link examples use `https://<web-app>/`                                         |
+
+Still pointing at upstream, because they are infrastructure rather than links and are only used
+when a build opts into the hosted services: `apps/web/vercel.ts`, `infra/relay/src/monitoring.ts`,
+and the hosted app channels in `docs/operations/release.md`,
+`docs/operations/relay-observability.md` and `.github/workflows/release.yml`. The `t3.json`
+schema URL is upstream's project-file format.
+
+The `T3 Tools Inc.` copyright line in `LICENSE` stays: the MIT grant requires keeping it.

@@ -1431,7 +1431,7 @@ describe("PiAdapterV2", () => {
       }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
-  it.effect("stops provider-initiated work that has no T3 turn owner", () =>
+  it.effect("stops provider-initiated work that has no Ompanel turn owner", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
       const { runtime, takeEvent } = yield* openRuntime(fake);
@@ -1548,7 +1548,7 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
-  it.effect("injects the T3 MCP extension and bearer when a session exists", () =>
+  it.effect("injects the Ompanel MCP extension and bearer when a session exists", () =>
     Effect.gen(function* () {
       yield* (yield* McpProviderSessions.McpProviderSessions).set({
         environmentId: EnvironmentId.make("environment-pi-mcp"),
@@ -2822,7 +2822,7 @@ describe("PiAdapterV2", () => {
       assert.deepEqual(forkedEntries(), []);
       assert.equal(missing._tag, "Failure");
 
-      // An adopted wake precedes its T3 turn, but follows turn 1 and its steer.
+      // An adopted wake precedes its Ompanel turn, but follows turn 1 and its steer.
       fake.queueEntries(UNCAPTURED_TURN_TREE);
       yield* rollBackToFirst(uncapturedTurns(providerThread.id));
       assert.deepEqual(forkedEntries(), ["u2"]);
@@ -2871,7 +2871,7 @@ describe("PiAdapterV2", () => {
         leafId: "a3",
       };
 
-      // The adopted wake precedes T3's first turn; its steer must be discarded with it.
+      // The adopted wake precedes Ompanel's first turn; its steer must be discarded with it.
       fake.queueEntries(entries);
       yield* rollBackToStart(150);
       assert.deepEqual(forkedEntries(), ["u2"]);

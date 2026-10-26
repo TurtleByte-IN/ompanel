@@ -295,7 +295,7 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
       if (url === PAGE_URL && body !== undefined) {
         return fulfillPage(sessionId, paused.requestId, body);
       }
-      // Subframes may show other sites covered by Local Network Access; the main frame stays on T3's page.
+      // Subframes may show other sites covered by Local Network Access; the main frame stays on Ompanel's page.
       const otherSiteFrame =
         paused.resourceType === "Document" &&
         paused.frameId !== page.mainFrameId &&
@@ -438,7 +438,7 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
       Ignored,
       sessionId,
     );
-    // Intercept T3's page and all document navigations to keep the main frame on it.
+    // Intercept Ompanel's page and all document navigations to keep the main frame on it.
     yield* send(
       "Fetch.enable",
       {

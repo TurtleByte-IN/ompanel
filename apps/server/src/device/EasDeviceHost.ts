@@ -425,7 +425,7 @@ export const make = Effect.fn("EasDeviceHost.make")(function* (config: EasDevice
     context: DeviceHost.DeviceOpenContext | undefined,
     startedIn: number,
   ) {
-    const name = `T3 Code · ${config.label} · ${(yield* Random.nextIntBetween(0, 0xffffff)).toString(16).padStart(6, "0")}`;
+    const name = `Ompanel · ${config.label} · ${(yield* Random.nextIntBetween(0, 0xffffff)).toString(16).padStart(6, "0")}`;
     // The credential comes first: without one, the answer is how to sign in,
     // not that the limit is reached.
     const expo = yield* api;
@@ -730,7 +730,7 @@ export const make = Effect.fn("EasDeviceHost.make")(function* (config: EasDevice
     agentEndpoint: (deviceId) =>
       Option.match(sessionFor(deviceId), {
         onNone: () => Effect.fail(unavailable("This EAS Simulator device is no longer running.")),
-        // agent-device selects the simulator by its UDID, not the session id T3 shows.
+        // agent-device selects the simulator by its UDID, not the session id Ompanel shows.
         onSome: (session) => Effect.succeed({ ...session.agent, agentDeviceId: session.udid }),
       }),
     endsDevices: true,

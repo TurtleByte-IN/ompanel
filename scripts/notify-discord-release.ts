@@ -191,7 +191,7 @@ export const buildDiscordReleaseAnnouncement = (
 
   const intro =
     options.target === "prerelease"
-      ? "A new T3 Code prerelease is available for nightly testers."
+      ? "A new Ompanel prerelease is available for nightly testers."
       : `[View full release notes on GitHub](${options.releaseUrl.href})`;
   const notes =
     options.target === "prerelease"
@@ -380,7 +380,7 @@ export const notifyDiscordReleaseCommand = Command.make(
       }
       yield* Effect.logInfo("discord release announcement completed");
     }),
-).pipe(Command.withDescription("Post a T3 Code release announcement to Discord."));
+).pipe(Command.withDescription("Post an Ompanel release announcement to Discord."));
 
 if (import.meta.main) {
   Command.run(notifyDiscordReleaseCommand, { version: "0.0.0" }).pipe(

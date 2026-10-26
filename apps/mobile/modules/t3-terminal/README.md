@@ -1,4 +1,4 @@
-# T3 Mobile Terminal Native Module
+# Ompanel Mobile Terminal Native Module
 
 This local Expo module owns the native terminal surface for the mobile app.
 

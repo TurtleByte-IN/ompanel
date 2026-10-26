@@ -284,8 +284,8 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
           source: { kind: "system" },
           outcome: "updated",
           summary: note.settled
-            ? "T3 Code restarted and stopped background work"
-            : "T3 Code restarted and resumed this turn",
+            ? "Ompanel restarted and stopped background work"
+            : "Ompanel restarted and resumed this turn",
           detail: text,
         },
         attachments: [],

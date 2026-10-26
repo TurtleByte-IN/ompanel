@@ -35,7 +35,7 @@ class LocalTracer extends Context.Reference("@t3tools/shared/relayTracing/LocalT
   defaultValue: () => Option.none<Tracer.Tracer>(),
 }) {}
 
-/** Export only T3 Connect spans; wrap local work with {@link withLocalTracing}. */
+/** Export only Ompanel Connect spans; wrap local work with {@link withLocalTracing}. */
 export const withRelayClientTracing = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, E, R> =>

@@ -128,7 +128,7 @@ export const layer = Layer.effect(
                 Ref.set(
                   preflightErrorRef,
                   Option.some(
-                    "Another T3 Code server is using this distro's T3 home, or an older background service is set up for it. Stop that server or pair with it, or try `ompanel update` in the distro. If the older launcher cannot update, run `ompanel service uninstall` and optionally reinstall with `ompanel service install` from a current CLI in the distro. Use `npx ompanel@latest` if `ompanel` is missing or outdated, and pass `--base-dir` with the service's T3 home to each command.",
+                    "Another Ompanel server is using this distro's Ompanel home, or an older background service is set up for it. Stop that server or pair with it, or try `ompanel update` in the distro. If the older launcher cannot update, run `ompanel service uninstall` and optionally reinstall with `ompanel service install` from a current CLI in the distro. Use `npx ompanel@latest` if `ompanel` is missing or outdated, and pass `--base-dir` with the service's Ompanel home to each command.",
                   ),
                 ),
               ),

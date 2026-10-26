@@ -120,7 +120,7 @@ function ConfiguredSettingsRouteScreen() {
         {
           id: "account",
           icon: "person.crop.circle",
-          label: "T3 Account",
+          label: "Ompanel Account",
           value: accountLabel,
           disabled: !isLoaded,
           onPress: () => navigation.navigate("SettingsAuth"),
@@ -273,7 +273,7 @@ function useSettingsIndexSections(): SettingsListSection[] {
     },
     {
       title: "App",
-      rows: [page("SettingsAbout", "info.circle", "About T3 Code")],
+      rows: [page("SettingsAbout", "info.circle", "About Ompanel")],
     },
   ];
 }

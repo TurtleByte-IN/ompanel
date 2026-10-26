@@ -7,7 +7,7 @@ Generate with `python3 scripts/fixtures/issue-16534/seed.py --output /tmp/sideba
 archive-unrelated-threads.sql, hide-v1-threads.sql, hide-unrelated-projects.sql,
 projects.sql, threads.sql, messages.sql, turn-items.sql, transcript-runs.sql,
 transcript-messages.sql and transcript-turn-items.sql, in that order, with the documented
-`t3-sqlite-state.ts exec` helper, once per file. Never target the live T3 home.
+`t3-sqlite-state.ts exec` helper, once per file. Never target the live Ompanel home.
 
 `all` includes two eight-thread projects, forty spacers, child/grandchild/fork
 lineage and synthetic markdown navigation messages. Other variants isolate shelf,

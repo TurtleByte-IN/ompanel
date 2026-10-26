@@ -27,11 +27,11 @@ sudo ln -sf "$VP_BIN_DIR/vp" /usr/local/bin/vp
 # First-run terminal notice, rendered by the devcontainers base image.
 sudo mkdir -p /usr/local/etc/vscode-dev-containers
 sudo tee /usr/local/etc/vscode-dev-containers/first-run-notice.txt >/dev/null <<'EOF'
-T3 Code devcontainer
+Ompanel devcontainer
 
   vp run dev            start server + web, then open the pairing URL it
                         prints (the bare forwarded port will not authenticate)
-  cp .env.example .env  optional: then fill in your own Clerk and relay values to enable T3 Connect
+  cp .env.example .env  optional: then fill in your own Clerk and relay values to enable Ompanel Connect
                         (public identifiers, not secrets)
 
 Details: docs/internals/devcontainer.md
