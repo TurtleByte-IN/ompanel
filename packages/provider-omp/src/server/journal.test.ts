@@ -271,6 +271,64 @@ describe("OMP journal entries", () => {
     );
   });
 
+  it("replays steers, a Stop and OMP's queue, including a queue change between turns", () => {
+    const now = (ms: number) => DateTime.makeUnsafe(3_000 + ms);
+    const entries: Array<OmpJournalEntry> = [];
+    const recorder = new OmpJournalRecorder((entry) => entries.push(entry));
+    const providerSession = {
+      id: ProviderSessionId.make("session-steer"),
+      driver: OMP_PROVIDER,
+      providerInstanceId: JOURNAL_INSTANCE_ID,
+      status: "ready" as const,
+      cwd: "/work",
+      model: "default",
+      capabilities: OMP_PROVIDER_CAPABILITIES,
+      createdAt: now(0),
+      updatedAt: now(0),
+      lastError: null,
+    };
+    recorder.record(
+      ompJournalOpenEntry({
+        threadId: JOURNAL_THREAD_ID,
+        instanceId: JOURNAL_INSTANCE_ID,
+        contractVersion: "1.6.0",
+        providerSession,
+        now: now(0),
+      }),
+    );
+    const mapper = new OmpJournaledMapper(
+      { instanceId: JOURNAL_INSTANCE_ID, providerSession },
+      recorder,
+    );
+    const queue = (steering: ReadonlyArray<string>) => ({
+      type: "queue_update",
+      steering,
+      followUp: [],
+    });
+    const live: Array<Event> = [];
+    const bound = mapper.bindThread(
+      { threadId: JOURNAL_THREAD_ID, state: { sessionId: "steer-session" } },
+      now(1),
+    );
+    live.push(...bound.events);
+    // Left over from before the turn: the turn's queue card starts from it.
+    live.push(...mapper.handleFrame(queue(["earlier"]), now(2)).events);
+    live.push(...mapper.startTurn(journalTurnInput(bound.providerThread, 1, now(3)), now(3)));
+    mapper.steerSent();
+    live.push(...mapper.handleFrame(queue(["earlier", "also this"]), now(4)).events);
+    mapper.beginStop();
+    live.push(...mapper.endStop({ steering: ["earlier", "also this"], followUp: [] }, now(5)));
+    live.push(...mapper.finalizeTurn({ status: "interrupted" }, {}, now(6)));
+
+    assert.deepStrictEqual(
+      entries.map((entry) => entry.k),
+      ["open", "bind", "frame", "turn", "steer", "frame", "stop", "stopped", "finalize"],
+    );
+    const replay = replayOmpJournal(entries);
+    assert.strictEqual(replay.skipped, 0);
+    assert.deepStrictEqual(ompThreadView(replay.events), ompThreadView(live));
+  });
+
   it("finds the run still waiting for a turn at the end of a segment", () => {
     const frame = (type: string) => ({ type });
     const segment: Array<OmpJournalEntry> = [

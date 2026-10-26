@@ -62,6 +62,8 @@ const OMP_JOURNAL_FLUSH_MS = 100;
  * keeps one per tool call this often, and always the last one before the call ends.
  */
 const OMP_JOURNAL_TOOL_UPDATE_MS = 5_000;
+/** The frames that change the mapper's state when no turn is active; the rest are not written then. */
+const OUT_OF_TURN_FRAMES: Record<string, true> = { session_info_update: true, queue_update: true };
 
 /** A frame as recorded: the parts of it the mapping reads (see `ompJournalFrame`). */
 export type OmpJournalFrame = { readonly type: string } & Readonly<Record<string, unknown>>;
@@ -107,6 +109,18 @@ export type OmpJournalEntry =
       readonly lastError: string | null;
     }
   | { readonly k: "restart"; readonly at: number; readonly keys: ReadonlyArray<string> }
+  /** A Stop began, ended (`restored`: what OMP withdrew, null if it failed), a steer was sent or lost. */
+  | { readonly k: "stop" }
+  | {
+      readonly k: "stopped";
+      readonly at: number;
+      readonly restored: {
+        readonly steering: ReadonlyArray<string>;
+        readonly followUp: ReadonlyArray<string>;
+      } | null;
+    }
+  | { readonly k: "steer" }
+  | { readonly k: "steerLost" }
   | { readonly k: "place"; readonly nativeItemId: string; readonly fallbackThreadId: string }
   | {
       readonly k: "dialog";
@@ -133,6 +147,10 @@ const ENTRY_KINDS: Record<OmpJournalEntry["k"], true> = {
   adopt: true,
   status: true,
   restart: true,
+  stop: true,
+  stopped: true,
+  steer: true,
+  steerLost: true,
   place: true,
   dialog: true,
   resolve: true,
@@ -492,6 +510,37 @@ export class OmpJournaledMapper extends OmpThreadMapper {
     );
   }
 
+  override beginStop(): void {
+    this.#recorder.run(
+      () => ({ k: "stop" }),
+      () => super.beginStop(),
+    );
+  }
+
+  override endStop(
+    restored: Parameters<OmpThreadMapper["endStop"]>[0],
+    now: DateTime.Utc,
+  ): Array<Event> {
+    return this.#recorder.run(
+      () => ({ k: "stopped", at: millis(now), restored }),
+      () => super.endStop(restored, now),
+    );
+  }
+
+  override steerSent(): void {
+    this.#recorder.run(
+      () => ({ k: "steer" }),
+      () => super.steerSent(),
+    );
+  }
+
+  override steerLost(): OmpTurnOutcome | null {
+    return this.#recorder.run(
+      () => ({ k: "steerLost" }),
+      () => super.steerLost(),
+    );
+  }
+
   override adoptSession(sessionId: string, now: DateTime.Utc): Array<Event> {
     return this.#recorder.run(
       () => ({ k: "adopt", at: millis(now), sessionId }),
@@ -526,9 +575,9 @@ export class OmpJournaledMapper extends OmpThreadMapper {
   }
 
   override handleFrame(frame: { readonly type: string }, now: DateTime.Utc): OmpFrameResult {
-    // Outside a turn only `session_info_update` changes anything; every other frame maps to
-    // nothing (a parked background job's tool updates keep coming for hours).
-    if (!this.hasActiveTurn && frame.type !== "session_info_update") {
+    // Outside a turn only the session id/title and OMP's queue change; every other frame maps
+    // to nothing (a parked background job's tool updates keep coming for hours).
+    if (!this.hasActiveTurn && !Object.hasOwn(OUT_OF_TURN_FRAMES, frame.type)) {
       return this.#recorder.quiet(() => super.handleFrame(frame, now));
     }
     const at = millis(now);
@@ -807,6 +856,18 @@ export function replayOmpJournal(entries: Iterable<OmpJournalEntry>): OmpJournal
         case "restart":
           push(mapper.setRestartRequired(entry.keys, utc(entry.at)));
           break;
+        case "stop":
+          mapper.beginStop();
+          break;
+        case "stopped":
+          push(mapper.endStop(entry.restored, utc(entry.at)));
+          break;
+        case "steer":
+          mapper.steerSent();
+          break;
+        case "steerLost":
+          mapper.steerLost();
+          break;
         case "place":
           mapper.requestPlacement(entry.nativeItemId, ThreadId.make(entry.fallbackThreadId));
           break;
@@ -915,11 +976,9 @@ export interface OmpJournalWriter {
 }
 
 /**
- * Appends to the thread's journal for the life of the scope. A journal over the rotation size
- * (at open, or as this process writes it) moves to `journal.1.ndjson`, replacing the one before;
- * the new file starts with this process's `open` line, so the tail reader finds its segment. A
- * torn last line (a crash mid-write) is ended first, so it cannot swallow the next line. Write
- * failures are logged and never fail the session: the journal is a record.
+ * Appends to the thread's journal for the scope's life. Past the rotation size (at open or while
+ * writing) it moves to `journal.1.ndjson`; the new file starts with this process's `open` line.
+ * A torn last line is ended first. Write failures are logged, never fail the session.
  */
 export const makeOmpJournalWriter = Effect.fn("makeOmpJournalWriter")(function* (
   file: string,
