@@ -185,6 +185,6 @@ Still pointing at upstream, because they are infrastructure rather than links an
 when a build opts into the hosted services: `apps/web/vercel.ts`, the mobile Clerk passkey domain
 in `apps/mobile/app.config.ts`, `.env.example`, `infra/relay/src/monitoring.ts`, and the hosted
 app channels in `docs/operations/release.md`, `docs/operations/relay-observability.md` and
-`.github/workflows/release.yml`.  The `t3.json` schema URL is upstream's project-file format.
+`.github/workflows/release.yml`. The `t3.json` schema URL is upstream's project-file format.
 
 The `T3 Tools Inc.` copyright line in `LICENSE` stays: the MIT grant requires keeping it.

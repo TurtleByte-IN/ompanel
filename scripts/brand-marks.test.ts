@@ -77,18 +77,6 @@ const ALLOWLIST: ReadonlyArray<Allowance> = [
     marks: ["t3.codes", "T3 Code"],
     reason: "t3.json schema URL",
   },
-  // Wire identifier: the GNOME extension UUID the desktop app installs and looks up.
-  {
-    path: "apps/desktop/gnome-extension/bundle.json",
-    marks: ["t3.codes"],
-    reason: "extension UUID",
-  },
-  {
-    path: "apps/desktop/gnome-extension/metadata.json",
-    marks: ["t3.codes"],
-    reason: "extension UUID",
-  },
-  { path: "docs/internals/linux-snap-shot.md", marks: ["t3.codes"], reason: "extension UUID" },
   {
     path: "docs/internals/product-analytics.md",
     marks: ["t3.codes"],
