@@ -129,16 +129,45 @@ local stand-in binaries in `OMPANEL_DESKTOP_OMP_SIDECAR_DIR`. The app that
 results carries a sidecar its own server refuses, since the server checks
 against the `omp.lock` it was built with.
 
+## Control processes
+
+Every short-lived `omp` process Ompanel starts outside a thread goes through
+`OmpControlService` (`packages/provider-omp/src/server/control.ts`). Each has a
+hard deadline from spawn to exit:
+
+| Operation                                          | Limit |
+| -------------------------------------------------- | ----- |
+| `omp --version`                                    | 4 s   |
+| Status RPC server: `ready` + `get_login_providers` | 10 s  |
+| `omp usage --json`                                 | 10 s  |
+| RPC `login` session                                | 60 s  |
+
+On a deadline the process group gets SIGTERM and, 1 s later, SIGKILL, so a
+hung omp and its children never outlive the call. Probe and usage results are
+cached for 30 s per provider instance, keyed by binary (path and file
+identity), profile and working directory; failed usage runs are not cached,
+and a successful login drops the
+instance's cache. Callers sharing a result in flight share one process.
+
+RPC control processes run `omp --mode rpc --no-session --no-tools
+--no-extensions --no-skills --no-rules --no-lsp --no-title` (plus
+`--profile <name>` when the instance sets one). `--no-tools` also keeps MCP
+servers from starting. Login providers that extensions contribute are
+therefore not listed.
+
 ## Status checks
 
-An enabled OMP instance runs `omp --version` (4 s limit), then starts
-`omp --mode rpc --no-session --no-tools --no-extensions --no-skills --no-rules
---no-lsp --no-title` (plus `--profile <name>` when the instance sets one) and
-reads its first frame, which must be `ready` (10 s limit). The process is
-stopped right after. `--no-tools` also keeps MCP servers from starting. The
-result is cached for 30 s per instance, binary (path and file identity),
-profile and working directory.
+An enabled OMP instance runs `omp --version`, then starts an RPC control
+process, reads its first frame, which must be `ready`, and sends
+`get_login_providers`. The process is stopped right after. The check runs in
+the background: the provider list shows "Checking the OMP sidecar..." until it
+finishes and never waits for it.
 
 The instance is ready only when `ready.contractVersion` equals
 `contract.version` in `omp.lock`; a sidecar that reports another version, or
 none, is shown as an error.
+
+`get_login_providers` lists OAuth providers only (`LoginProvider {id, name,
+available, authenticated}`). The status card shows the signed-in ones as
+authenticated; with none signed in, auth stays "unknown", because API keys and
+environment credentials are not visible there.

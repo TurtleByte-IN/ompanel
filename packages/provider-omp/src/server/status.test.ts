@@ -20,10 +20,12 @@ describe("ompProviderSnapshot", () => {
           status: "ready",
           version: "18.12.6",
           ready: { contractVersion: OMP_LOCK.contract.version },
+          loginProviders: null,
         },
       },
     });
     assert.strictEqual(snapshot.status, "ready");
+    assert.deepStrictEqual(snapshot.auth, { status: "unknown" });
     assert.isTrue(snapshot.installed);
     assert.isTrue(snapshot.supportsTextGeneration);
     assert.isTrue(snapshot.supportsConversationRollback);
@@ -38,6 +40,7 @@ describe("ompProviderSnapshot", () => {
       status: "ready",
       version: "18.12.6",
       ready: { contractVersion: OMP_LOCK.contract.version },
+      loginProviders: null,
     } as const;
     const override = ompProviderSnapshot({
       settings,
@@ -55,6 +58,38 @@ describe("ompProviderSnapshot", () => {
     assert.isUndefined(verified.message);
   });
 
+  it("reports signed-in OAuth providers and leaves API-key-only auth unknown", () => {
+    const probed = (authenticated: boolean) =>
+      ompProviderSnapshot({
+        settings,
+        checkedAt,
+        resolution: {
+          kind: "probed",
+          probe: {
+            status: "ready",
+            version: "18.12.6",
+            ready: { contractVersion: OMP_LOCK.contract.version },
+            loginProviders: [
+              { id: "anthropic", name: "Anthropic", available: true, authenticated },
+              { id: "openai-codex", name: "OpenAI Codex", available: true, authenticated },
+              {
+                id: "github-copilot",
+                name: "GitHub Copilot",
+                available: true,
+                authenticated: false,
+              },
+            ],
+          },
+        },
+      });
+    assert.deepStrictEqual(probed(true).auth, {
+      status: "authenticated",
+      type: "oauth",
+      label: "Anthropic, OpenAI Codex",
+    });
+    assert.deepStrictEqual(probed(false).auth, { status: "unknown" });
+  });
+
   it("refuses a different contract version", () => {
     const snapshot = ompProviderSnapshot({
       settings,
@@ -62,7 +97,12 @@ describe("ompProviderSnapshot", () => {
       lock: { ...OMP_LOCK, contract: { ...OMP_LOCK.contract, version: "1.1.0" } },
       resolution: {
         kind: "probed",
-        probe: { status: "ready", version: "18.12.6", ready: { contractVersion: "1.0.0" } },
+        probe: {
+          status: "ready",
+          version: "18.12.6",
+          ready: { contractVersion: "1.0.0" },
+          loginProviders: null,
+        },
       },
     });
     assert.strictEqual(snapshot.status, "error");

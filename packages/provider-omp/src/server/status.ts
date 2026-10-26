@@ -1,4 +1,8 @@
-import type { CustomModelSetting, ServerProviderModel } from "@t3tools/contracts";
+import type {
+  CustomModelSetting,
+  ServerProviderAuth,
+  ServerProviderModel,
+} from "@t3tools/contracts";
 import {
   buildServerProvider,
   providerModelsFromSettings,
@@ -10,7 +14,7 @@ import * as Effect from "effect/Effect";
 
 import { OMP_LOCK, type OmpLock } from "../ompLock.ts";
 import type { OmpSettings } from "../settings.ts";
-import { OMP_READY_TIMEOUT_MS, type OmpProbeResult } from "./probe.ts";
+import { OMP_CONTROL_TIMEOUTS_MS, type OmpProbeResult } from "./control.ts";
 import type { OmpSidecar, OmpSidecarError } from "./sidecar.ts";
 
 const OMP_PRESENTATION = {
@@ -81,12 +85,28 @@ function probeFailureMessage(failure: Extract<OmpProbeResult, { status: "failed"
   switch (failure.reason) {
     case "spawn":
     case "exit":
-      return "OMP exited before its RPC server reported ready.";
+      return "OMP exited before its RPC server answered.";
     case "timeout":
-      return `OMP's RPC server did not report ready within ${OMP_READY_TIMEOUT_MS / 1000} s.`;
+      return `OMP's RPC server did not answer within ${OMP_CONTROL_TIMEOUTS_MS.ready / 1000} s.`;
     case "invalid":
       return "OMP's RPC server did not start with a ready frame.";
   }
+}
+
+/**
+ * `get_login_providers` lists OAuth providers only, so API keys and environment credentials are
+ * invisible here: no signed-in OAuth provider means "unknown", never "unauthenticated".
+ */
+function ompAuthFromLoginProviders(
+  providers: Extract<OmpProbeResult, { status: "ready" }>["loginProviders"],
+): ServerProviderAuth {
+  const signedIn = (providers ?? []).filter((provider) => provider.authenticated);
+  if (signedIn.length === 0) return UNKNOWN_AUTH;
+  return {
+    status: "authenticated",
+    type: "oauth",
+    label: signedIn.map((provider) => provider.name || provider.id).join(", "),
+  };
 }
 
 /** The snapshot of an enabled instance after sidecar resolution and probing. */
@@ -143,7 +163,7 @@ export function ompProviderSnapshot(input: {
     installed: true,
     version: probe.version,
     status: "ready",
-    auth: UNKNOWN_AUTH,
+    auth: ompAuthFromLoginProviders(probe.loginProviders),
     ...(sidecar && !sidecar.verified
       ? {
           message: `Running the OMP binary at ${sidecar.path}, which Ompanel does not check against OMP ${lock.tag}.`,
