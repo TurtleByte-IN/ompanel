@@ -391,6 +391,9 @@ posixOnly("OmpAdapter browser and computer-use guard", () => {
         ["/share", "share_command_refused"],
         ["/mcp add evil -- sh -c 'id'", "builtin_command_refused"],
         ["/plugins install evil", "builtin_command_refused"],
+        ["/plugin enable evil", "builtin_command_refused"],
+        ["/todo export ~/.zshrc", "builtin_command_refused"],
+        ["/stats --host 0.0.0.0", "builtin_command_refused"],
       ] as const) {
         const cause = refusal(yield* turn("full-access", false, { text }).pipe(Effect.flip));
         assert.strictEqual(cause.reason, reason);

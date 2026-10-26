@@ -112,7 +112,12 @@ import {
   ompTurnsTotal,
   recordOmpMetric,
 } from "./telemetry.ts";
-import { ompGuardedToolOverlay, ompRefusedSlashCommand } from "./toolGuards.ts";
+import {
+  ompGuardedToolOverlay,
+  ompRefusedSlashCommand,
+  type OmpReportedBuiltins,
+  ompReportedBuiltins,
+} from "./toolGuards.ts";
 import { type OmpSetVibeModeResult, ompVibeModeAvailable } from "./vibe.ts";
 
 /** Streamed text is held this long so a burst of deltas becomes one update. */
@@ -571,6 +576,8 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
     let turnStartedAt = 0;
     /** A rewind or fork is moving the session to another file. */
     let sessionChanging = false;
+    /** The builtins OMP last listed for this session (toolGuards.ts `ompReportedBuiltins`). */
+    let reportedBuiltins: OmpReportedBuiltins = {};
     /** The user message entry the turn's prompt wrote (sessionBranches.ts); undefined: unread. */
     const captureTurnEntry = Effect.fnUntraced(function* () {
       const previous = sessionLeaf;
@@ -769,6 +776,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
         return;
       }
       if (frame.type === "available_commands_update") {
+        reportedBuiltins = ompReportedBuiltins(frame.commands);
         if (options.commands !== undefined) {
           yield* options.commands.onAvailableCommands(cwd, frame.commands);
         }
@@ -1337,7 +1345,9 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
         options.commands === undefined
           ? messageText
           : yield* options.commands.resolvePrompt(cwd, messageText);
-      const refused = isContinuation ? undefined : ompRefusedSlashCommand(promptText);
+      const refused = isContinuation
+        ? undefined
+        : ompRefusedSlashCommand(promptText, reportedBuiltins);
       if (refused !== undefined) return yield* protocolError(refused.detail, refused.reason);
       yield* applySelection(turnInput.modelSelection);
       // T3 names the thread; OMP keeps it as a user-set title, which its own titling respects.

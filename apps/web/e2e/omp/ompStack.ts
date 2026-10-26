@@ -9,6 +9,8 @@ import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import JSZip from "jszip";
+
 import { type FakeSignInVendor, startFakeSignInVendor, writeFakeSignInOmp } from "./fakeSignIn.ts";
 import { type OtlpMetricsReceiver, startOtlpMetricsReceiver } from "./otlpMetrics.ts";
 import { type ScriptedModel, startScriptedModel } from "./scriptedModel.ts";
@@ -67,11 +69,14 @@ export interface OmpStack {
   /** The server's output, pairing token redacted. */
   readonly serverLog: () => string;
   /**
-   * Stops the server and its `omp` processes, then lists each handled secret (pairing token,
-   * `secretEnvironment` values, fake-vendor OAuth codes) found in the server output (bar its
-   * pairing announcement), `<state>/logs` or `<state>/omp`, as `"<label> in <file>"` (PRD §9).
+   * Stops the server and its `omp` processes, then lists each handled secret found in the run's
+   * records, state, workspace, metric exports and `uploaded` (zips entry by entry) as
+   * `"<label> in <file>"` (PRD §9; docs/omp/security.md).
    */
-  readonly stop: () => Promise<{ readonly leakedSecrets: ReadonlyArray<string> }>;
+  readonly stop: (options?: {
+    /** Directories CI uploads as artifacts. */
+    readonly uploaded?: ReadonlyArray<string>;
+  }) => Promise<{ readonly leakedSecrets: ReadonlyArray<string> }>;
 }
 
 const freePort = async () => {
@@ -102,11 +107,21 @@ const commandLine = (pid: number) => {
 /** The server's start-up line that hands the operator the pairing link (`announceStartupPairingUrl`). */
 const PAIRING_ANNOUNCEMENT = /^\s*pairingUrl: \S+$/;
 
+/** Every file under `dir`, recursively; none when it does not exist. */
+const filesUnder = (dir: string): ReadonlyArray<string> =>
+  NodeFS.existsSync(dir)
+    ? NodeFS.readdirSync(dir, { recursive: true, withFileTypes: true })
+        .filter((entry) => entry.isFile())
+        .map((entry) => NodePath.join(entry.parentPath, entry.name))
+    : [];
+
 /**
- * Where each secret appears: the server log (except its pairing announcement) and every file
- * under the `recorded` directories. Reports name the secret's label and the file, never the value.
+ * Where each secret appears: the server log (except its pairing announcement), every file under
+ * the `recorded` and `uploaded` directories (zip archives entry by entry, as `<zip>:<entry>`),
+ * the single `files` and each metric export. Reports name the secret's label and the source,
+ * never the value.
  */
-const scanForSecrets = (input: {
+const scanForSecrets = async (input: {
   readonly secrets: ReadonlyArray<{
     readonly label: string;
     readonly value: string;
@@ -115,9 +130,12 @@ const scanForSecrets = (input: {
   }>;
   readonly serverLog: string;
   readonly recorded: ReadonlyArray<string>;
+  /** Artifact directories; zip archives in them (Playwright traces) are opened. */
+  readonly uploaded: ReadonlyArray<string>;
   /** Single files, e.g. the database and its write-ahead log. */
   readonly files: ReadonlyArray<string>;
-}): ReadonlyArray<string> => {
+  readonly metricExports: ReadonlyArray<string>;
+}): Promise<ReadonlyArray<string>> => {
   const sources: Array<{ readonly file: string; readonly text: string }> = [
     {
       file: "server log",
@@ -126,17 +144,22 @@ const scanForSecrets = (input: {
         .filter((line) => !PAIRING_ANNOUNCEMENT.test(line))
         .join("\n"),
     },
+    ...input.metricExports.map((text, index) => ({ file: `metric export ${index}`, text })),
   ];
-  for (const dir of input.recorded) {
-    if (!NodeFS.existsSync(dir)) continue;
-    for (const entry of NodeFS.readdirSync(dir, { recursive: true, withFileTypes: true })) {
-      if (!entry.isFile()) continue;
-      const file = NodePath.join(entry.parentPath, entry.name);
-      sources.push({ file, text: NodeFS.readFileSync(file, "latin1") });
+  const read = (file: string) => ({ file, text: NodeFS.readFileSync(file, "latin1") });
+  sources.push(...input.recorded.flatMap(filesUnder).map(read));
+  sources.push(...input.files.filter((file) => NodeFS.existsSync(file)).map(read));
+  for (const file of input.uploaded.flatMap(filesUnder)) {
+    if (!file.endsWith(".zip")) {
+      sources.push(read(file));
+      continue;
     }
-  }
-  for (const file of input.files) {
-    if (NodeFS.existsSync(file)) sources.push({ file, text: NodeFS.readFileSync(file, "latin1") });
+    const zip = await JSZip.loadAsync(NodeFS.readFileSync(file));
+    for (const entry of Object.values(zip.files)) {
+      if (entry.dir) continue;
+      const bytes = await entry.async("nodebuffer");
+      sources.push({ file: `${file}:${entry.name}`, text: bytes.toString("latin1") });
+    }
   }
   // Raw, URL-encoded and JSON-escaped forms.
   const forms = (value: string) => [
@@ -314,7 +337,7 @@ export const startOmpStack = async (options: OmpStackOptions = {}): Promise<OmpS
         (text, secret) => text.replaceAll(secret, "<redacted>"),
         NodeFS.readFileSync(logPath, "utf8").replaceAll(/#token=\S+/g, "#token=<redacted>"),
       ),
-    stop: async () => {
+    stop: async (stopOptions) => {
       const leftover = ompProcesses();
       server.kill("SIGTERM");
       const killTimer = setTimeout(() => server.kill("SIGKILL"), 15_000);
@@ -326,7 +349,7 @@ export const startOmpStack = async (options: OmpStackOptions = {}): Promise<OmpS
           process.kill(leaked.pid, "SIGKILL");
       }
       NodeFS.closeSync(log);
-      const leakedSecrets = scanForSecrets({
+      const leakedSecrets = await scanForSecrets({
         secrets: [
           {
             label: "pairing token",
@@ -338,16 +361,20 @@ export const startOmpStack = async (options: OmpStackOptions = {}): Promise<OmpS
           ...(vendor?.exchanged() ?? []).map((value) => ({ label: "OAuth code", value })),
         ],
         serverLog: logPath,
-        // Logs and traces, OMP's thread state, OMP's own sessions and logs.
+        // Logs and traces, OMP's thread state, OMP's own sessions and logs, and the workspace
+        // the agent worked in (its files, `.git` and any `.omp/` the run left).
         recorded: [
           NodePath.join(userdata, "logs"),
           NodePath.join(userdata, "omp"),
           NodePath.join(agentDir, "sessions"),
           NodePath.join(agentDir, "logs"),
+          workspace,
         ],
+        uploaded: stopOptions?.uploaded ?? [],
         files: ["statev2.sqlite", "statev2.sqlite-wal"].map((name) =>
           NodePath.join(userdata, name),
         ),
+        metricExports: metrics.exports(),
       });
       await model.close();
       await metrics.close();

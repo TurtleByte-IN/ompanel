@@ -902,6 +902,7 @@ describe("OmpControlService catalogs", () => {
         {
           name: "compact",
           source: "builtin",
+          aliases: ["c"],
           description: "Compact the context",
           input: { hint: "focus" },
         },

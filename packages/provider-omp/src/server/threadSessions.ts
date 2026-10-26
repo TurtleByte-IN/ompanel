@@ -139,9 +139,14 @@ export const writeOmpThreadOverlay = Effect.fn("writeOmpThreadOverlay")(function
   const write = Effect.gen(function* () {
     let next = content;
     if (options.ownsGuardKeys !== true) {
-      const current = yield* fileSystem
-        .readFileString(target)
-        .pipe(Effect.orElseSucceed(() => OMP_EMPTY_OVERLAY));
+      // Only an absent file reads as empty; any other read error fails the write rather than
+      // dropping both guards.
+      const current = yield* fileSystem.readFileString(target).pipe(
+        Effect.catchIf(
+          (error) => error._tag === "PlatformError" && error.reason._tag === "NotFound",
+          () => Effect.succeed(OMP_EMPTY_OVERLAY),
+        ),
+      );
       for (const key of OMP_GUARDED_TOOL_KEYS) {
         const kept = ompOverlayValue(current, key);
         if (ompOverlayValue(next, key) !== kept) next = yield* ompOverlayWith(next, key, kept);
