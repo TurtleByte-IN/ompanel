@@ -37,6 +37,8 @@ export const RelayAgentAwarenessPreferences = Schema.Struct({
   notifyOnInput: Schema.Boolean,
   notifyOnCompletion: Schema.Boolean,
   notifyOnFailure: Schema.Boolean,
+  /** Messages the agent sends the user mid-run (OMP `notify`). Absent from older clients: on. */
+  notifyOnAgentMessage: Schema.optional(Schema.Boolean),
 });
 export type RelayAgentAwarenessPreferences = typeof RelayAgentAwarenessPreferences.Type;
 
@@ -81,6 +83,7 @@ export const RelayClientDeviceRecord = Schema.Struct({
     notifyOnInput: Schema.Boolean,
     notifyOnCompletion: Schema.Boolean,
     notifyOnFailure: Schema.Boolean,
+    notifyOnAgentMessage: Schema.optional(Schema.Boolean),
   }),
   liveActivities: Schema.Struct({
     enabled: Schema.Boolean,
@@ -116,6 +119,14 @@ export const RelayDeviceUnregistrationParams = Schema.Struct({
 });
 export type RelayDeviceUnregistrationParams = typeof RelayDeviceUnregistrationParams.Type;
 
+/** The newest message the agent sent the user (OMP `notify`). */
+export const RelayAgentMessage = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  text: TrimmedNonEmptyString,
+  sentAt: TrimmedNonEmptyString,
+});
+export type RelayAgentMessage = typeof RelayAgentMessage.Type;
+
 export const RelayAgentActivityState = Schema.Struct({
   environmentId: EnvironmentId,
   threadId: ThreadId,
@@ -127,6 +138,8 @@ export const RelayAgentActivityState = Schema.Struct({
   modelTitle: TrimmedNonEmptyString,
   updatedAt: TrimmedNonEmptyString,
   deepLink: TrimmedNonEmptyString,
+  /** Relays alert when this changes while the agent works. Absent from older servers. */
+  agentMessage: Schema.optional(RelayAgentMessage),
 });
 export type RelayAgentActivityState = typeof RelayAgentActivityState.Type;
 

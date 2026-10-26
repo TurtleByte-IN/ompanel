@@ -71,7 +71,7 @@ function makeAgentActivityRows(
   overrides: Partial<AgentActivityRows.AgentActivityRows["Service"]> = {},
 ): AgentActivityRows.AgentActivityRows["Service"] {
   return {
-    upsert: () => Effect.void,
+    upsert: () => Effect.succeed(null),
     remove: () => Effect.void,
     pruneTerminal: () => Effect.void,
     listForUser: () => Effect.succeed([state]),
@@ -108,6 +108,7 @@ function makeApnsDeliveries(
   return {
     sendForTarget: () => Effect.succeed(null),
     sendPushNotificationForTarget: () => Effect.succeed(null),
+    sendAgentMessageForTarget: () => Effect.succeed(null),
     sendLiveActivity: () =>
       Effect.succeed({
         deviceId: "device",

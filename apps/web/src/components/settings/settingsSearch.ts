@@ -456,6 +456,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["notification toast popup completion input approval failure"],
   },
   {
+    id: "agent-message-notifications",
+    title: "Agent messages",
+    to: "/settings/general",
+    searchTerms: ["notification notify agent message omp push alert toast"],
+  },
+  {
     id: "time-format",
     title: "Time format",
     to: "/settings/general",

@@ -715,4 +715,139 @@ describe("AgentAwarenessRelay", () => {
       );
     }).pipe(Effect.scoped, Effect.provide(ProjectionStore.layerMemory)),
   );
+
+  it.effect("publishes an OMP notify as the thread's agent message while it works", () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const events = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
+      const pulls = yield* Queue.unbounded<void>();
+      const { relay, shellReads, publications } = yield* makeTestRelay({
+        readShell: (threadId) => store.getThreadShell(threadId).pipe(Effect.orDie),
+        domainEvents: Stream.fromEffectRepeat(
+          Queue.offer(pulls, undefined).pipe(Effect.andThen(Queue.take(events))),
+        ),
+      });
+      yield* relay.start();
+      yield* Queue.take(pulls);
+      const deliver = Effect.fnUntraced(function* (event: OrchestrationV2DomainEvent) {
+        yield* store.apply(event);
+        yield* Queue.offer(events, event);
+        yield* Queue.take(pulls);
+        yield* relay.drain;
+      });
+
+      const now = yield* DateTime.now;
+      const runId = RunId.make("run:notify");
+      const run = {
+        id: runId,
+        threadId: THREAD_ID,
+        ordinal: 1,
+        providerInstanceId: ProviderInstanceId.make("omp"),
+        modelSelection: { instanceId: ProviderInstanceId.make("omp"), model: "test-model" },
+        providerThreadId: null,
+        userMessageId: MessageId.make("message:notify"),
+        rootNodeId: null,
+        activeAttemptId: null,
+        status: "running" as const,
+        requestedAt: now,
+        startedAt: now,
+        completedAt: null,
+        checkpointId: null,
+        contextHandoffId: null,
+      };
+      // What provider-omp's mapper makes of `extension_ui_request` `notify` (mapper.test.ts).
+      const notification = (id: string, kind: "agent" | "system", summary: string) =>
+        ({
+          id: EventId.make(`event:${id}`),
+          type: "turn-item.updated",
+          threadId: THREAD_ID,
+          runId,
+          occurredAt: now,
+          payload: {
+            id: TurnItemId.make(id),
+            threadId: THREAD_ID,
+            runId,
+            nodeId: NodeId.make(`node:${id}`),
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 1,
+            title: null,
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            status: "completed",
+            type: "notification",
+            source: { kind },
+            outcome: "updated",
+            summary,
+          },
+        }) satisfies OrchestrationV2DomainEvent;
+
+      yield* deliver({
+        id: EventId.make("event:notify:thread"),
+        type: "thread.created",
+        threadId: THREAD_ID,
+        occurredAt: now,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: THREAD_ID,
+          projectId: PROJECT_ID,
+          title: "Thread",
+          providerInstanceId: ProviderInstanceId.make("omp"),
+          modelSelection: { instanceId: ProviderInstanceId.make("omp"), model: "test-model" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: { rootThreadId: THREAD_ID, parentThreadId: null, relationshipToParent: null },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+      yield* deliver({
+        id: EventId.make("event:notify:run"),
+        type: "run.created",
+        threadId: THREAD_ID,
+        runId,
+        occurredAt: now,
+        payload: run,
+      });
+      assert.deepEqual(
+        publications.map((publication) => publication.state?.agentMessage),
+        [undefined],
+      );
+
+      // Notices OMP itself prints never reach the relay; only the agent talking to the user does.
+      const readsBeforeNotice = shellReads.length;
+      yield* deliver(notification("notice:1", "system", "Context: 12% used"));
+      assert.equal(shellReads.length, readsBeforeNotice);
+
+      yield* deliver(notification("notify:1", "agent", "Build is green"));
+      assert.deepEqual(
+        publications.map((publication) => [
+          publication.state?.phase,
+          publication.state?.agentMessage?.id,
+          publication.state?.agentMessage?.text,
+        ]),
+        [
+          ["running", undefined, undefined],
+          ["running", "notify:1", "Build is green"],
+        ],
+      );
+      assert.equal(
+        publications[1]?.state?.agentMessage?.sentAt,
+        DateTime.formatIso(now),
+      );
+    }).pipe(Effect.scoped, Effect.provide(ProjectionStore.layerMemory)),
+  );
 });

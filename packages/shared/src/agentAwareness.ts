@@ -28,6 +28,12 @@ export interface AgentAwarenessState {
   readonly modelTitle: string;
   readonly updatedAt: string;
   readonly deepLink: string;
+  /** The newest message the agent sent the user; relays alert when its id changes. */
+  readonly agentMessage?: {
+    readonly id: string;
+    readonly text: string;
+    readonly sentAt: string;
+  };
 }
 
 function buildAgentAwarenessDeepLink(input: {
@@ -44,6 +50,7 @@ export interface ProjectThreadAwarenessV2Input {
     OrchestrationV2ThreadShell,
     | "activityRunStatus"
     | "id"
+    | "latestAgentNotification"
     | "lineage"
     | "latestRunStopRequested"
     | "modelSelection"
@@ -91,6 +98,15 @@ export function projectThreadAwarenessV2(
     modelTitle: thread.modelSelection.model,
     updatedAt: DateTime.formatIso(thread.updatedAt),
     deepLink: buildAgentAwarenessDeepLink({ environmentId, threadId: thread.id }),
+    ...(thread.latestAgentNotification == null
+      ? {}
+      : {
+          agentMessage: {
+            id: thread.latestAgentNotification.itemId,
+            text: thread.latestAgentNotification.summary,
+            sentAt: thread.latestAgentNotification.notifiedAt,
+          },
+        }),
   };
 }
 

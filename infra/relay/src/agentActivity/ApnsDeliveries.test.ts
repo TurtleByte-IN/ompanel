@@ -168,7 +168,7 @@ function layerFor(input: {
     Layer.provide(
       Layer.mergeAll(
         Layer.succeed(AgentActivityRows.AgentActivityRows, {
-          upsert: () => Effect.void,
+          upsert: () => Effect.succeed(null),
           remove: () => Effect.void,
           pruneTerminal: () => Effect.void,
           listForUser: () =>

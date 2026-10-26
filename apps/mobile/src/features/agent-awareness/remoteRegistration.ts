@@ -318,6 +318,7 @@ function registrationSignature(body: RelayDeviceRegistrationRequest): string {
     body.preferences.notifyOnInput,
     body.preferences.notifyOnCompletion,
     body.preferences.notifyOnFailure,
+    body.preferences.notifyOnAgentMessage,
   ].join("|");
 }
 

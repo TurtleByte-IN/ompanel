@@ -1169,6 +1169,8 @@ export const OrchestrationV2NotificationSource = kindUnionWithFallback(
     Schema.Struct({ kind: Schema.Literal("monitor") }),
     Schema.Struct({ kind: Schema.Literal("background_task") }),
     Schema.Struct({ kind: Schema.Literal("system") }),
+    /** The agent asked to tell the user something (OMP `notify`); clients alert on it. */
+    Schema.Struct({ kind: Schema.Literal("agent") }),
   ],
   (kind) => Schema.Struct({ kind }),
   () => ({ kind: "background_task" }),
@@ -1920,6 +1922,15 @@ export const OrchestrationV2LatestVisibleMessageSummary = Schema.Struct({
 export type OrchestrationV2LatestVisibleMessageSummary =
   typeof OrchestrationV2LatestVisibleMessageSummary.Type;
 
+/** The newest `agent`-sourced notification item in a thread. */
+export const OrchestrationV2AgentNotificationSummary = Schema.Struct({
+  itemId: TurnItemId,
+  summary: TrimmedNonEmptyString,
+  notifiedAt: IsoDateTime,
+});
+export type OrchestrationV2AgentNotificationSummary =
+  typeof OrchestrationV2AgentNotificationSummary.Type;
+
 export const OrchestrationV2ThreadShell = Schema.Struct({
   ...OrchestrationV2CreationFields,
   id: ThreadId,
@@ -1962,6 +1973,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   /** Excludes wakes and agent messages that advance latestUserMessageAt through the user role. */
   latestUserAuthoredMessageAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   hasActionableProposedPlan: Schema.Boolean,
+  /** The newest message the agent sent the user (OMP `notify`). Absent from older servers. */
+  latestAgentNotification: Schema.optional(Schema.NullOr(OrchestrationV2AgentNotificationSummary)),
   pendingBackgroundTasks: Schema.optional(Schema.Array(OrchestrationV2PendingBackgroundTask)).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),

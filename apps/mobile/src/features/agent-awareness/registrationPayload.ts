@@ -45,6 +45,7 @@ export function makeRelayDeviceRegistrationRequest(
       notifyOnInput: true,
       notifyOnCompletion: true,
       notifyOnFailure: true,
+      notifyOnAgentMessage: input.preferences.agentMessageNotificationsEnabled !== false,
     },
   };
 }

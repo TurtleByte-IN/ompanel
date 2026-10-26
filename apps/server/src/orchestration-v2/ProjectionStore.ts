@@ -17,6 +17,7 @@ import {
 } from "@t3tools/shared/orchestrationV2ThreadError";
 import { threadPullRequestsOf } from "../sourceControl/threadPullRequests.ts";
 import type {
+  OrchestrationV2AgentNotificationSummary,
   OrchestrationV2AppThread,
   OrchestrationV2Checkpoint,
   OrchestrationV2CheckpointScope,
@@ -1132,6 +1133,7 @@ type ShellThreadRow = {
   readonly latest_user_message_at: string | null;
   readonly latest_user_authored_message_at: string | null;
   readonly has_actionable_proposed_plan: number;
+  readonly latest_agent_notification_payload_json: string | null;
 };
 
 type ShellRunRow = {
@@ -1687,6 +1689,7 @@ export function threadShellFromProjection(
     hasActionableProposedPlan: projection.plans.some(
       (plan) => plan.kind === "proposed_plan" && plan.status === "active",
     ),
+    latestAgentNotification: latestAgentNotificationForShell(projection.turnItems),
     pendingBackgroundTasks: [...pendingBackgroundTasks],
     providerInstanceHistory: providerInstanceHistoryForShell({
       threadId: projection.thread.id,
@@ -1716,6 +1719,33 @@ export function threadShellFromProjection(
     limitRecovery: projection.thread.limitRecovery ?? null,
     deletedAt: projection.thread.deletedAt,
   };
+}
+
+function agentNotificationSummary(
+  item: OrchestrationV2TurnItem | null,
+): OrchestrationV2AgentNotificationSummary | null {
+  if (item?.type !== "notification" || item.source.kind !== "agent") return null;
+  return {
+    itemId: item.id,
+    summary: item.summary,
+    notifiedAt: DateTime.formatIso(item.updatedAt),
+  };
+}
+
+/** Mirrors latest_agent_notification_payload_json: newest updatedAt, then highest item id. */
+function latestAgentNotificationForShell(
+  turnItems: ReadonlyArray<OrchestrationV2TurnItem>,
+): OrchestrationV2AgentNotificationSummary | null {
+  let latest: OrchestrationV2TurnItem | null = null;
+  for (const item of turnItems) {
+    if (item.type !== "notification" || item.source.kind !== "agent") continue;
+    const newer =
+      latest === null
+        ? 1
+        : DateTime.toEpochMillis(item.updatedAt) - DateTime.toEpochMillis(latest.updatedAt);
+    if (newer > 0 || (newer === 0 && latest !== null && item.id > latest.id)) latest = item;
+  }
+  return agentNotificationSummary(latest);
 }
 
 function providerInstanceHistoryForShell(input: {
@@ -1795,6 +1825,7 @@ type ShellThreadState = {
   readonly latestUserMessageAt: DateTime.Utc | null;
   readonly latestUserAuthoredMessageAt: DateTime.Utc | null;
   readonly hasActionableProposedPlan: boolean;
+  readonly latestAgentNotification: OrchestrationV2AgentNotificationSummary | null;
   readonly pendingBackgroundTasks: OrchestrationV2ThreadShell["pendingBackgroundTasks"];
   readonly providerInstanceHistory: OrchestrationV2ThreadShell["providerInstanceHistory"];
   readonly goal: OrchestrationV2ThreadShell["goal"];
@@ -1953,6 +1984,7 @@ function shellFromState(input: {
     latestUserMessageAt: input.state.latestUserMessageAt,
     latestUserAuthoredMessageAt: input.state.latestUserAuthoredMessageAt,
     hasActionableProposedPlan: input.state.hasActionableProposedPlan,
+    latestAgentNotification: input.state.latestAgentNotification,
     pendingBackgroundTasks: input.state.pendingBackgroundTasks,
     providerInstanceHistory: input.state.providerInstanceHistory,
     goal: input.state.goal,
@@ -5926,7 +5958,17 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 WHERE plan.thread_id = t.thread_id
                   AND plan.kind = 'proposed_plan'
                   AND plan.status = 'active'
-              ) AS has_actionable_proposed_plan
+              ) AS has_actionable_proposed_plan,
+              (
+                -- Served by orchestration_v2_projection_turn_items_agent_notification_idx.
+                SELECT item.payload_json
+                FROM orchestration_v2_projection_turn_items item
+                WHERE item.thread_id = t.thread_id
+                  AND item.type = 'notification'
+                  AND json_extract(item.payload_json, '$.source.kind') = 'agent'
+                ORDER BY item.updated_at DESC, item.turn_item_id DESC
+                LIMIT 1
+              ) AS latest_agent_notification_payload_json
             FROM orchestration_v2_projection_threads t
             LEFT JOIN orchestration_v2_projection_runs active ON active.run_id = (
               SELECT r.run_id
@@ -6454,6 +6496,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ? null
               : DateTime.makeUnsafe(row.latest_user_authored_message_at),
           hasActionableProposedPlan: row.has_actionable_proposed_plan === 1,
+          latestAgentNotification:
+            row.latest_agent_notification_payload_json === null
+              ? null
+              : agentNotificationSummary(
+                  yield* decodeTurnItemPayload(row.latest_agent_notification_payload_json),
+                ),
           pendingBackgroundTasks,
           providerInstanceHistory: providerInstanceHistoryForShell({
             threadId: thread.id,

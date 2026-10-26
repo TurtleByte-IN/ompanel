@@ -159,6 +159,8 @@ export function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconNa
         return "zap";
       case "system":
         return "t3-code";
+      case "agent":
+        return "message-circle";
       default:
         source satisfies never;
         return "zap";

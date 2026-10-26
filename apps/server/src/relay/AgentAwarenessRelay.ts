@@ -73,6 +73,19 @@ function isTurnItemPayload(
   );
 }
 
+// The agent's messages to the user (OMP `notify`) reach the relay while it works (P-15).
+function isAgentNotificationPayload(payload: object): boolean {
+  return (
+    "type" in payload &&
+    payload.type === "notification" &&
+    "source" in payload &&
+    typeof payload.source === "object" &&
+    payload.source !== null &&
+    "kind" in payload.source &&
+    payload.source.kind === "agent"
+  );
+}
+
 function shouldPublishAgentAwarenessEvent(
   event: Pick<OrchestrationV2DomainEvent, "type"> & { readonly payload?: unknown },
 ): boolean {
@@ -125,7 +138,11 @@ function shouldPublishAgentAwarenessEvent(
     case "provider-session.detached":
     case "provider-turn.updated":
     case "turn-item.updated":
-      return isTurnItemPayload(event.payload) && turnItemUpdateCanEndBackgroundWork(event.payload);
+      return (
+        isTurnItemPayload(event.payload) &&
+        (turnItemUpdateCanEndBackgroundWork(event.payload) ||
+          isAgentNotificationPayload(event.payload))
+      );
     case "message.updated":
     case "plan.updated":
     case "checkpoint-scope.created":
@@ -183,12 +200,22 @@ function sanitizeRelayAgentActivityState(
   if (state === null) {
     return null;
   }
-  const { detail: _detail, ...rest } = state;
+  const { detail: _detail, agentMessage, ...rest } = state;
   const detail = (state.phase === "failed" ? REDACTED_RELAY_AGENT_FAILURE_DETAIL : state.detail)
     ?.trim()
     .slice(0, RELAY_AGENT_ACTIVITY_DETAIL_MAX_LENGTH)
     .trim();
-  return detail ? { ...rest, detail } : rest;
+  const agentMessageText = agentMessage?.text
+    .trim()
+    .slice(0, RELAY_AGENT_ACTIVITY_DETAIL_MAX_LENGTH)
+    .trim();
+  return {
+    ...rest,
+    ...(detail ? { detail } : {}),
+    ...(agentMessage && agentMessageText
+      ? { agentMessage: { ...agentMessage, text: agentMessageText } }
+      : {}),
+  };
 }
 
 function relayEnvironmentClient(token: string) {
