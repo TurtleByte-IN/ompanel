@@ -25,9 +25,12 @@ import * as Schema from "effect/Schema";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
+import { OMP_LOCK } from "../ompLock.ts";
 import { OmpSettings } from "../settings.ts";
 import { makeOmpAdapter } from "./adapter.ts";
 import { makeOmpControlService } from "./control.ts";
+import { makeOmpPidfiles } from "./pidfiles.ts";
+import { ompStateDirs } from "./session.ts";
 import { OMP_BUNDLED_SIDECAR_ENV } from "./sidecar.ts";
 import { makeOmpSidecarProvisioner } from "./sidecarInstall.ts";
 import { buildInitialOmpProviderSnapshot, ompProviderSnapshot } from "./status.ts";
@@ -133,6 +136,38 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
       ),
     );
 
+    // Session processes: pidfiles are swept at boot, so trees a crashed server left are killed.
+    const platform = yield* HostProcess.Platform;
+    const stateDirs = ompStateDirs(path, host.paths.stateDir);
+    const pidfiles = yield* makeOmpPidfiles({ dir: stateDirs.pidfiles, platform });
+    yield* pidfiles.sweep.pipe(
+      Effect.tap((entries) =>
+        entries.length === 0
+          ? Effect.void
+          : Effect.logInfo("Swept OMP processes left by an earlier server", {
+              outcomes: entries.map((entry) => entry.outcome),
+            }),
+      ),
+      Effect.forkDetach,
+    );
+    const orchestrationAdapter = yield* makeOmpAdapter({
+      instanceId,
+      profile: effectiveConfig.profile,
+      environment: processEnv,
+      platform,
+      defaultCwd: host.paths.cwd,
+      // Same provisioning resolver as the probe: re-hashed right before every spawn.
+      resolveBinary: resolver
+        .resolve({ overridePath: effectiveConfig.binaryPath, bundledPath, cacheDir })
+        .pipe(
+          Effect.provide(FetchHttpClient.layer),
+          Effect.map((sidecar) => sidecar.path),
+        ),
+      dirs: stateDirs,
+      pidfiles,
+      expectedContractVersion: OMP_LOCK.contract.version,
+    });
+
     return {
       instanceId,
       driverKind: DRIVER_KIND,
@@ -141,7 +176,7 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
       accentColor,
       enabled,
       snapshot,
-      orchestrationAdapter: makeOmpAdapter(instanceId),
+      orchestrationAdapter,
       textGeneration: makeOmpTextGeneration(),
     } satisfies ProviderInstance;
   }),
