@@ -98,6 +98,15 @@ import {
   type OmpDialogRequest,
 } from "./uiRequests.ts";
 import { OMP_REVIVE_CONTRACT, ompSubagentControls, ompTranscriptPage } from "./subagents.ts";
+import {
+  ompContractLabel,
+  ompErrorClass,
+  ompErrorsTotal,
+  ompFramesDroppedTotal,
+  ompSessionsTotal,
+  ompTurnsTotal,
+  recordOmpMetric,
+} from "./telemetry.ts";
 
 /** Streamed text is held this long so a burst of deltas becomes one update. */
 const STREAM_FLUSH = Duration.millis(50);
@@ -236,6 +245,11 @@ export interface OmpAdapterOptions {
   /** `contract.version` from `omp.lock`. */
   readonly expectedContractVersion: string;
   readonly readyTimeoutMs?: number;
+  /**
+   * `ompVersion` on this instance's metrics (`telemetry.ts`): the pinned tag for a verified
+   * sidecar, `custom` for a user-supplied binary. Defaults to `unknown`.
+   */
+  readonly ompVersion?: string;
   /** This instance's running thread sessions, shared with the settings engine. */
   readonly threadSessions: OmpThreadSessions;
   /** Where the instance's `omp` keeps its session files (`resolveOmpSessionsLocation`). */
@@ -335,7 +349,18 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
         cause,
       });
     const cwd = input.runtimePolicy.cwd ?? options.defaultCwd;
-    const binaryPath = yield* options.resolveBinary.pipe(Effect.mapError(openError));
+    const ompVersion = options.ompVersion ?? "unknown";
+    const recordStartFailure = (error: unknown) =>
+      recordOmpMetric(ompSessionsTotal, {
+        ompVersion,
+        ompContract: "unknown",
+        outcome: "failed",
+        errorClass: ompErrorClass(error),
+      });
+    const binaryPath = yield* options.resolveBinary.pipe(
+      Effect.tapError(recordStartFailure),
+      Effect.mapError(openError),
+    );
     // The role chip is read at startup, so the overlay must hold it before the process starts.
     yield* syncRoleOverlay(input.threadId, readOmpTraitSelection(input.modelSelection).role).pipe(
       Effect.mapError(openError),
@@ -356,8 +381,12 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
+      Effect.tapError(recordStartFailure),
       Effect.mapError(openError),
     );
+    // Version labels only: never content, paths or secrets (PRD §9, telemetry.ts).
+    const metricBase = { ompVersion, ompContract: ompContractLabel(process.contractVersion) };
+    yield* recordOmpMetric(ompSessionsTotal, { ...metricBase, outcome: "started" });
 
     const scope = yield* Effect.scope;
     // The journal (journal.ts, docs/omp/journal.md). A run the previous process saw start while
@@ -535,6 +564,11 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
 
     const finalize = Effect.fnUntraced(function* (outcome: OmpTurnOutcome, refresh: boolean) {
       autonomousTurn = false;
+      yield* recordOmpMetric(ompTurnsTotal, {
+        ...metricBase,
+        outcome: outcome.status,
+        ...(outcome.status === "failed" ? { errorClass: outcome.failure.class } : {}),
+      });
       // Usage and todos live in the session, not in `prompt_result`: read them once per turn.
       const read = <A, E>(effect: Effect.Effect<A, E>) =>
         refresh ? effect.pipe(Effect.option) : Effect.succeed(Option.none<A>());
@@ -585,6 +619,10 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       if (opened === null) {
         // Nobody can answer a dialog with no id or no choices: close it so OMP moves on.
         yield* Effect.logWarning("omp dialog request dropped", { method: frame.method });
+        yield* recordOmpMetric(ompFramesDroppedTotal, {
+          ...metricBase,
+          reason: "dialog_unanswerable",
+        });
         if (typeof frame.id === "string") {
           yield* process
             .send({ type: "extension_ui_response", id: frame.id, cancelled: true })
@@ -611,6 +649,9 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
     const mapFrame = Effect.fnUntraced(function* (frame: { readonly type: string }) {
       const result = mapper.handleFrame(frame, yield* DateTime.now);
       yield* emit(result.events);
+      if (result.dropped !== null) {
+        yield* recordOmpMetric(ompFramesDroppedTotal, { ...metricBase, reason: result.dropped });
+      }
       if (result.streaming && !flushScheduled) {
         flushScheduled = true;
         yield* scheduleFlush;
@@ -681,6 +722,10 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       if (isOmpDialogRequest(frame) || isOmpCancelRequest(frame)) {
         return yield* handleDialogFrame(frame);
       }
+      // Only the fact: the extension's path and message stay out of telemetry.
+      if (frame.type === "extension_error") {
+        yield* recordOmpMetric(ompErrorsTotal, { ...metricBase, errorClass: "extension" });
+      }
       if (frame.type === "subagent_lifecycle" || frame.type === "subagent_progress") {
         yield* emit(subagents.handleFrame(frame, mapper.subagentScope, yield* DateTime.now));
         return;
@@ -741,7 +786,10 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
         ),
       ),
       Effect.matchEffect({
-        onFailure: (error) => exclusive(settle("error", error.message)),
+        onFailure: (error) =>
+          recordOmpMetric(ompErrorsTotal, { ...metricBase, errorClass: ompErrorClass(error) }).pipe(
+            Effect.andThen(exclusive(settle("error", error.message))),
+          ),
         onSuccess: () => exclusive(settle("stopped", null)),
       }),
       Effect.forkScoped,

@@ -618,17 +618,31 @@ describe("OmpThreadMapper", () => {
     assert.strictEqual(new Set(items.map((item) => item.id)).size, 3);
   });
 
-  it("ignores unknown frames and frames outside a turn", () => {
+  it("ignores unknown frames and reports frames dropped outside a turn", () => {
     const { mapper } = startedTurn();
     assert.deepStrictEqual(
       mapper.handleFrame({ type: "frame_from_the_future", payload: 1 } as never, at(1)),
-      { events: [], streaming: false, settled: null, confirmIdle: false },
+      { events: [], streaming: false, settled: null, confirmIdle: false, dropped: null },
+    );
+    assert.strictEqual(
+      mapper.handleFrame(
+        {
+          type: "rpc_frame_error",
+          error: "too large",
+          originalType: "tool_execution_end",
+        } as never,
+        at(1),
+      ).dropped,
+      "sidecar_oversize",
     );
     mapper.finalizeTurn({ status: "completed" }, {}, at(2));
-    assert.deepStrictEqual(
-      mapper.handleFrame({ type: "notice", level: "info", message: "late" } as never, at(3)).events,
-      [],
+    const late = mapper.handleFrame(
+      { type: "notice", level: "info", message: "late" } as never,
+      at(3),
     );
+    assert.deepStrictEqual([late.events, late.dropped], [[], "out_of_turn"]);
+    // Session-level frames outside a turn are not drops.
+    assert.strictEqual(mapper.handleFrame({ type: "agent_start" } as never, at(3)).dropped, null);
   });
 
   it("settles on prompt_result for its own prompt and reports failures", () => {

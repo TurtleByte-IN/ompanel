@@ -423,6 +423,25 @@ started from a delivery is its own `ScheduledTaskService.runWebhookDelivery` tra
 the relay forwarded, the span also goes to the Ompanel Connect trace export as a child of the relay's
 span; requests that reach the environment directly never join a sender's trace.
 
+The OMP driver has its own families, labelled only with `provider` (`omp`), `ompVersion` (the
+pinned fork tag such as `18.12.6-ompanel.3`, or `custom` for a configured binary path) and
+`ompContract` (the RPC contract the sidecar reported):
+
+- `t3_omp_sessions_total` by `outcome` (`started`, `failed`) and, for failures, `errorClass`
+  (`sidecar`, `spawn`, `ready`, `negotiate`, `contract_mismatch`).
+- `t3_omp_turns_total` by `outcome` (`completed`, `interrupted`, `failed`) and, for failed turns,
+  `errorClass` (the provider failure class: `usage_limit`, `provider_error`, `transport_error`, …).
+- `t3_omp_errors_total` by `errorClass` for a session that lost its transport (`closed`,
+  `protocol`, `framing_*`, `write`) or an OMP extension that failed (`extension`).
+- `t3_omp_frames_dropped_total` by `reason`: `sidecar_oversize` (OMP sent `rpc_frame_error`
+  instead of an event too large for the transport), `out_of_turn` (a turn frame with no turn to
+  take it), `dialog_unanswerable` (a dialog with no id or choices, cancelled).
+
+No OMP label ever carries a prompt, reply, tool output, path or secret: keys and values are
+allow-listed in `packages/provider-omp/src/server/telemetry.ts`, and `telemetry.test.ts` fails if
+an attribute outside the list, or one carrying turn content, is recorded. OMP's own telemetry is
+governed by OMP's settings, not by Ompanel.
+
 Use metrics when the question is:
 
 - "is this always slow?"
@@ -681,6 +700,7 @@ Current high-value span and metric boundaries include:
 - startup phases
 - orchestration command processing
 - provider session and turn operations
+- OMP driver sessions, turn outcomes, errors and frame drops (`t3_omp_*`)
 - git command execution and git hook events
 - terminal session lifecycle
 - sqlite query execution, except the statements inside `orchestrationV2.EventSink.write`, which

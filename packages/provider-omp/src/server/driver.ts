@@ -47,6 +47,7 @@ import { OMP_BUNDLED_SIDECAR_ENV } from "./sidecar.ts";
 import { makeOmpSidecarProvisioner } from "./sidecarInstall.ts";
 import { buildInitialOmpProviderSnapshot, ompProviderSnapshot } from "./status.ts";
 import { makeOmpTextGeneration } from "./textGeneration.ts";
+import { ompLockVersionLabel } from "./telemetry.ts";
 import { ompUsageReader, type OmpUsageReaderEnv } from "./usage.ts";
 import { makeOmpUsageController } from "./usageController.ts";
 import { makeOmpPluginsController } from "./pluginsController.ts";
@@ -217,6 +218,9 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv, OmpUsageReader
       dirs: stateDirs,
       pidfiles,
       expectedContractVersion: OMP_LOCK.contract.version,
+      // An override path is the only binary not hash-checked against `omp.lock`.
+      ompVersion:
+        effectiveConfig.binaryPath.trim().length > 0 ? "custom" : ompLockVersionLabel(OMP_LOCK),
       threadSessions,
       sessions: sessionsLocation,
       commands: catalog,

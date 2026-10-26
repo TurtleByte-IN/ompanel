@@ -48,6 +48,7 @@ import {
   ttsrNotice,
 } from "./ompCards.ts";
 import type { OmpSubagentScope } from "./subagents.ts";
+import type { OmpFrameDropReason } from "./telemetry.ts";
 import { OMP_HOST_TERMINAL_TOOL } from "./hostTools.ts";
 import { OmpAnsi } from "./ompAnsi.ts";
 
@@ -98,7 +99,34 @@ export interface OmpFrameResult {
   readonly settled: OmpTurnOutcome | null;
   /** A held turn may be over: ask OMP (`get_state` with its reply echoed) whether it is idle. */
   readonly confirmIdle: boolean;
+  /** The frame reached nothing, and why (`t3_omp_frames_dropped_total`). */
+  readonly dropped: OmpFrameDropReason | null;
 }
+
+/** Frames that only mean something inside a turn; outside one they are dropped. */
+const TURN_SCOPED_FRAME_TYPES: Readonly<Record<string, true>> = {
+  prompt_result: true,
+  message_start: true,
+  message_update: true,
+  message_end: true,
+  auto_compaction_start: true,
+  manual_compaction_start: true,
+  auto_compaction_end: true,
+  manual_compaction_end: true,
+  ttsr_triggered: true,
+  retry_fallback_applied: true,
+  tool_execution_start: true,
+  tool_execution_update: true,
+  tool_execution_end: true,
+  notice: true,
+  command_output: true,
+};
+/** `extension_ui_request` methods the mapper turns into cards on the active turn. */
+const TURN_SCOPED_UI_METHODS: Readonly<Record<string, true>> = {
+  notify: true,
+  open_url: true,
+  set_editor_text: true,
+};
 
 /** Where a runtime request OMP raised belongs: the active turn, or only the thread. */
 export interface OmpRequestPlacement {
@@ -1006,10 +1034,20 @@ export class OmpThreadMapper {
         // `setStatus`, `setWidget` and `setTitle` style OMP's own TUI (footer, widgets, terminal
         // title); T has no such surface and keeps its own thread title. Dialogs are the adapter's.
         break;
+      case "rpc_frame_error":
+        // OMP dropped an event too large for the transport; only the fact is kept.
+        return { events, streaming, settled, confirmIdle, dropped: "sidecar_oversize" };
       default:
         break;
     }
-    return { events, streaming, settled, confirmIdle };
+    const method = f["method"];
+    const outOfTurn =
+      turn === null &&
+      (Object.hasOwn(TURN_SCOPED_FRAME_TYPES, frame.type) ||
+        (frame.type === "extension_ui_request" &&
+          typeof method === "string" &&
+          Object.hasOwn(TURN_SCOPED_UI_METHODS, method)));
+    return { events, streaming, settled, confirmIdle, dropped: outOfTurn ? "out_of_turn" : null };
   }
 
   /** Emits held text of streaming items. */
