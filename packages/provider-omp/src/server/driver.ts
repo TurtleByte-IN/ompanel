@@ -22,6 +22,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -29,6 +30,7 @@ import { OMP_LOCK } from "../ompLock.ts";
 import { OmpSettings } from "../settings.ts";
 import { makeOmpAdapter } from "./adapter.ts";
 import { makeOmpAccountsController } from "./accountsController.ts";
+import { makeOmpCommandCatalog } from "./commands.ts";
 import { makeOmpAgentFilesController } from "./agentFiles.ts";
 import { makeOmpControlService } from "./control.ts";
 import { makeOmpPidfiles } from "./pidfiles.ts";
@@ -99,6 +101,20 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
     // Downloads the pinned sidecar into the cache on first use when none is bundled or cached.
     const resolver = yield* makeOmpSidecarProvisioner();
     const control = yield* makeOmpControlService();
+    const resolveBinary = resolver
+      .resolve({ overridePath: effectiveConfig.binaryPath, bundledPath, cacheDir })
+      .pipe(Effect.provide(FetchHttpClient.layer));
+    const controlTarget = (cwd: string) =>
+      resolveBinary.pipe(
+        Effect.map((sidecar) => ({
+          binaryPath: sidecar.path,
+          binaryIdentity: sidecar.identity,
+          profile: effectiveConfig.profile,
+          environment: processEnv,
+          cwd,
+        })),
+      );
+    const catalog = yield* makeOmpCommandCatalog({ control, target: controlTarget });
     const checkProvider = Effect.gen(function* () {
       if (!effectiveConfig.enabled) return yield* buildInitialOmpProviderSnapshot(effectiveConfig);
       // Resolve (and re-hash) right before every probe; a resolved path is never reused.
@@ -135,6 +151,18 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
       initialSnapshot: (settings) =>
         buildInitialOmpProviderSnapshot(settings.provider).pipe(Effect.map(stampIdentity)),
       checkProvider,
+      // Each directory's `/` and `$` catalog rides on the snapshot, so a list a thread's server
+      // pushes reaches the composer without a rescan.
+      enrichSnapshot: ({ getSnapshot, publishSnapshot }) =>
+        catalog.workspaceSnapshots.pipe(
+          Stream.runForEach((workspaceSnapshots) =>
+            workspaceSnapshots.length === 0
+              ? Effect.void
+              : getSnapshot.pipe(
+                  Effect.flatMap((current) => publishSnapshot({ ...current, workspaceSnapshots })),
+                ),
+          ),
+        ),
     }).pipe(
       Effect.mapError(
         (cause) =>
@@ -165,9 +193,6 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
       ),
       Effect.forkDetach,
     );
-    const resolveBinary = resolver
-      .resolve({ overridePath: effectiveConfig.binaryPath, bundledPath, cacheDir })
-      .pipe(Effect.provide(FetchHttpClient.layer));
     // Running threads, shared by the adapter (which registers them) and the settings engine.
     const threadSessions = makeOmpThreadSessions();
     // Threads map 1:1 to OMP's own session files, so terminal and Ompanel share them.
@@ -190,6 +215,7 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
       expectedContractVersion: OMP_LOCK.contract.version,
       threadSessions,
       sessions: sessionsLocation,
+      commands: catalog,
     });
     // Text generation runs in its own empty directory, never the checkout or `launcher`.
     const textGenerationCwd = path.join(stateDirs.launcher, "text-generation");
@@ -204,16 +230,6 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
         threadsDir: stateDirs.threads,
       }),
     });
-    const controlTarget = (cwd: string) =>
-      resolveBinary.pipe(
-        Effect.map((sidecar) => ({
-          binaryPath: sidecar.path,
-          binaryIdentity: sidecar.identity,
-          profile: effectiveConfig.profile,
-          environment: processEnv,
-          cwd,
-        })),
-      );
 
     return {
       instanceId,
@@ -223,6 +239,26 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
       accentColor,
       enabled,
       snapshot,
+      snapshotForCwd: (workspaceCwd) =>
+        !effectiveConfig.enabled
+          ? snapshot.getSnapshot
+          : Effect.all([snapshot.getSnapshot, catalog.forCwd(workspaceCwd)]).pipe(
+              Effect.map(([machineSnapshot, workspace]) => ({
+                ...machineSnapshot,
+                ...workspace,
+                slashCommandsPending: false,
+              })),
+              Effect.mapError(
+                (cause) =>
+                  new ProviderDriverError({
+                    driver: DRIVER_KIND,
+                    instanceId,
+                    detail: "Failed to list OMP commands and skills for the workspace.",
+                    cause,
+                  }),
+              ),
+            ),
+      invalidateCaches: catalog.invalidate,
       orchestrationAdapter,
       textGeneration: yield* makeOmpTextGeneration({
         // Same provisioning resolver as the probe: re-hashed right before every spawn.

@@ -146,12 +146,14 @@ Every short-lived `omp` process Ompanel starts outside a thread goes through
 `OmpControlService` (`packages/provider-omp/src/server/control.ts`). Each has a
 hard deadline from spawn to exit:
 
-| Operation                                          | Limit |
-| -------------------------------------------------- | ----- |
-| `omp --version`                                    | 4 s   |
-| Status RPC server: `ready` + `get_login_providers` | 10 s  |
-| `omp usage --json`                                 | 10 s  |
-| RPC `login` session                                | 60 s  |
+| Operation                                              | Limit |
+| ------------------------------------------------------ | ----- |
+| `omp --version`                                        | 4 s   |
+| Status RPC server: `ready` + `get_login_providers`     | 10 s  |
+| `omp usage --json`                                     | 10 s  |
+| RPC `login` session                                    | 60 s  |
+| `omp skill list <dir> --json`                          | 10 s  |
+| Command RPC server: `ready` + `get_available_commands` | 10 s  |
 
 On a deadline the process group gets SIGTERM and, 1 s later, SIGKILL, so a
 hung omp and its children never outlive the call. Probe and usage results are
@@ -164,7 +166,8 @@ RPC control processes run `omp --mode rpc --no-session --no-tools
 --no-extensions --no-skills --no-rules --no-lsp --no-title` (plus
 `--profile <name>` when the instance sets one). `--no-tools` also keeps MCP
 servers from starting. Login providers that extensions contribute are
-therefore not listed.
+therefore not listed, and neither are extension, custom or MCP prompt commands
+(see [commands.md](./commands.md)).
 
 ## Status checks
 

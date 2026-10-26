@@ -24,6 +24,7 @@ import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import type { RpcServerFrame, SessionState } from "../../contract/src/wire.generated.ts";
+import type { OmpCommandHooks } from "./commands.ts";
 import { makeOmpHostBridge } from "./hostTools.ts";
 import { ompApprovalModeFor } from "./launch.ts";
 import { OMP_PROVIDER, OmpThreadMapper, type OmpTurnOutcome } from "./mapper.ts";
@@ -191,6 +192,8 @@ export interface OmpAdapterOptions {
   readonly threadSessions: OmpThreadSessions;
   /** Where the instance's `omp` keeps its session files (`resolveOmpSessionsLocation`). */
   readonly sessions: OmpSessionsLocation;
+  /** The instance's `/` and `$` catalog: pushed command lists in, `$skill` prompt rewrite out. */
+  readonly commands?: OmpCommandHooks;
 }
 
 /** Operations other Ompanel items wire up; this build refuses them. */
@@ -477,6 +480,12 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
         yield* emit(subagents.handleFrame(frame, mapper.subagentScope, yield* DateTime.now));
         return;
       }
+      if (frame.type === "available_commands_update") {
+        if (options.commands !== undefined) {
+          yield* options.commands.onAvailableCommands(cwd, frame.commands);
+        }
+        return;
+      }
       if (yield* hostBridge.handleFrame(frame)) return;
       const result = mapper.handleFrame(frame, yield* DateTime.now);
       yield* emit(result.events);
@@ -717,6 +726,11 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
         );
       }
       yield* applyApprovalMode(turnInput.runtimePolicy);
+      // OMP expands a skill only as `/skill:<name>`; the composer writes `$<name>`.
+      const promptText =
+        options.commands === undefined
+          ? turnInput.message.text
+          : yield* options.commands.resolvePrompt(cwd, turnInput.message.text);
       // T3 names the thread; OMP keeps it as a user-set title, which its own titling respects.
       const title = turnInput.appThread.title;
       if (title !== appliedSessionName) {
@@ -746,11 +760,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       // The reply is echoed onto the frame stream, behind any `command_output` the prompt
       // produced, and settles the turn there. A prompt that never reached OMP settles here.
       yield* process
-        .request(
-          "prompt",
-          { message: turnInput.message.text },
-          { timeoutMs: null, echoResponse: true },
-        )
+        .request("prompt", { message: promptText }, { timeoutMs: null, echoResponse: true })
         .pipe(
           Effect.catchTags({
             OmpRpcError: (error) =>

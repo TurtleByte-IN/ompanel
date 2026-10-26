@@ -13,6 +13,7 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as TestClock from "effect/testing/TestClock";
 
+import type { CliSkillList } from "../../contract/src/cli.generated.ts";
 import type { ExtensionUiRequest } from "../../contract/src/wire.generated.ts";
 import {
   makeOmpControlService,
@@ -24,6 +25,7 @@ import {
   type OmpControlError,
   type OmpControlService,
   type OmpControlTarget,
+  type OmpSkillList,
 } from "./control.ts";
 
 const encoder = new TextEncoder();
@@ -54,6 +56,20 @@ const USAGE_JSON = JSON.stringify(
   null,
   2,
 );
+const SKILL_LIST = {
+  skills: [
+    {
+      name: "tdd",
+      description: "Test first",
+      filePath: "/workspace/.omp/skills/tdd/SKILL.md",
+      baseDir: "/workspace/.omp/skills/tdd",
+      source: "native:project",
+      hide: false,
+    },
+  ],
+  warnings: [{ skillPath: "/workspace/.omp/skills/bad", message: "missing description" }],
+} satisfies CliSkillList & OmpSkillList;
+const SKILL_LIST_JSON = `${JSON.stringify(SKILL_LIST)}\n`;
 
 /** Answers one inbound RPC frame with the frames OMP would write. */
 type RpcServer = (frame: Record<string, unknown>) => ReadonlyArray<unknown>;
@@ -138,6 +154,7 @@ function fakeOmp(
     readonly usage?: Behaviour;
     readonly rpc?: Behaviour;
     readonly config?: Behaviour;
+    readonly skills?: Behaviour;
   } = {},
 ): FakeOmp {
   const launches: Array<ChildProcess.StandardCommand> = [];
@@ -151,7 +168,9 @@ function fakeOmp(
         ? (input.usage ?? { stdout: USAGE_JSON, exitCode: 0 })
         : command.args.includes("config")
           ? (input.config ?? { stdout: "{}\n", exitCode: 0 })
-          : (input.rpc ?? { rpc: answerLoginProviders });
+          : command.args.includes("skill")
+            ? (input.skills ?? { stdout: SKILL_LIST_JSON, exitCode: 0 })
+            : (input.rpc ?? { rpc: answerLoginProviders });
     // The real spawner stops the process group when this scope closes.
     return Effect.addFinalizer(() => Effect.sync(() => void stopped++)).pipe(
       Effect.as(handle(command, behaviour)),
@@ -289,6 +308,7 @@ describe("OmpControlService deadlines", () => {
       run: (c) => c.login(TARGET, "anthropic", () => Effect.succeed(undefined)),
     },
     { budget: "config", behaviour: { config: "hang" }, run: (c) => c.configList(TARGET) },
+    { budget: "catalog", behaviour: { skills: "hang" }, run: (c) => c.skillList(TARGET) },
   ];
 
   it.effect.each(cases)("stops a hung $budget at its deadline", ({ budget, behaviour, run }) =>
@@ -586,3 +606,108 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
     );
   },
 );
+
+describe("OmpControlService catalogs", () => {
+  it.effect("lists the target directory's skills with `omp skill list <dir> --json`", () =>
+    Effect.gen(function* () {
+      const omp = fakeOmp();
+      const list = yield* withControl(omp, (control) =>
+        control.skillList({ ...TARGET, profile: "work" }),
+      );
+      assert.deepStrictEqual(list, SKILL_LIST);
+      assert.deepStrictEqual(omp.launches[0]?.args, [
+        "--profile",
+        "work",
+        "skill",
+        "list",
+        "/workspace",
+        "--json",
+      ]);
+      assert.strictEqual(omp.stopped, 1);
+    }),
+  );
+
+  it.effect("reports a failing or unreadable skill list", () =>
+    Effect.gen(function* () {
+      const failed = yield* withControl(fakeOmp({ skills: { stdout: "", exitCode: 2 } }), (c) =>
+        c.skillList(TARGET).pipe(Effect.flip),
+      );
+      assert.deepStrictEqual(
+        [failed.operation, failed.reason, failed.exitCode],
+        ["skill_list", "exit", 2],
+      );
+      const invalid = yield* withControl(
+        fakeOmp({ skills: { stdout: '{"skills":[{"name":1}]}', exitCode: 0 } }),
+        (c) => c.skillList(TARGET).pipe(Effect.flip),
+      );
+      assert.strictEqual(invalid.reason, "invalid");
+    }),
+  );
+
+  it.effect("reads `get_available_commands` from a control server in the directory", () =>
+    Effect.gen(function* () {
+      const omp = fakeOmp({
+        rpc: {
+          rpc: (frame) =>
+            frame["type"] === "get_available_commands"
+              ? [
+                  { type: "available_commands_update", commands: [] },
+                  {
+                    type: "response",
+                    id: frame["id"],
+                    command: "get_available_commands",
+                    success: true,
+                    data: {
+                      commands: [
+                        {
+                          name: "compact",
+                          source: "builtin",
+                          aliases: ["c"],
+                          description: "Compact the context",
+                          input: { hint: "focus" },
+                          subcommands: [{ name: "now" }],
+                        },
+                        { name: "deploy", source: "file" },
+                      ],
+                    },
+                  },
+                ]
+              : [],
+        },
+      });
+      const commands = yield* withControl(omp, (control) => control.availableCommands(TARGET));
+      assert.deepStrictEqual(commands, [
+        {
+          name: "compact",
+          source: "builtin",
+          description: "Compact the context",
+          input: { hint: "focus" },
+        },
+        { name: "deploy", source: "file" },
+      ]);
+      assert.deepStrictEqual(omp.launches[0]?.args, [...OMP_CONTROL_RPC_ARGS]);
+      assert.strictEqual(omp.launches[0]?.options.cwd, "/workspace");
+      assert.strictEqual(omp.stopped, 1);
+    }),
+  );
+
+  it.effect("stops a control server that never lists its commands", () =>
+    Effect.gen(function* () {
+      const omp = fakeOmp({ rpc: { rpc: () => [] } });
+      yield* withControl(omp, (control) =>
+        Effect.gen(function* () {
+          const running = yield* control
+            .availableCommands(TARGET)
+            .pipe(Effect.flip, Effect.forkChild);
+          yield* TestClock.adjust(OMP_CONTROL_TIMEOUTS_MS.catalog);
+          const error = yield* Fiber.join(running);
+          assert.deepStrictEqual(
+            [error.operation, error.reason],
+            ["available_commands", "timeout"],
+          );
+          assert.strictEqual(omp.stopped, 1);
+        }),
+      );
+    }),
+  );
+});

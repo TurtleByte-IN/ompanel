@@ -32,6 +32,19 @@ const layerTest = TestProviderHost.layer({
 }).pipe(Layer.provideMerge(NodeServices.layer));
 
 const encoder = new TextEncoder();
+const SKILL_LIST = {
+  skills: [
+    {
+      name: "tdd",
+      description: "Test first",
+      filePath: "/repo/.omp/skills/tdd/SKILL.md",
+      baseDir: "/repo/.omp/skills/tdd",
+      source: "native:project",
+      hide: false,
+    },
+  ],
+  warnings: [],
+};
 
 const fakeOmp = (contractVersion: string | undefined) => {
   const launches: Array<ChildProcess.StandardCommand> = [];
@@ -44,20 +57,32 @@ const fakeOmp = (contractVersion: string | undefined) => {
       ...(contractVersion ? { contractVersion } : {}),
     };
     const stdin = command.options.stdin;
-    // The RPC server answers each command: here only `get_login_providers`, with no providers.
+    // The RPC server answers each command: `get_available_commands` with two commands, anything
+    // else (`get_login_providers`) with no providers.
     const responses = (Stream.isStream(stdin) ? stdin : Stream.empty).pipe(
       Stream.decodeText(),
       Stream.splitLines,
       Stream.map((line) => {
         const { id, type } = JSON.parse(line) as { id: string; type: string };
-        return { type: "response", id, command: type, success: true, data: { providers: [] } };
+        const data =
+          type === "get_available_commands"
+            ? {
+                commands: [
+                  { name: "compact", source: "builtin", description: "Compact the context" },
+                  { name: "skill:tdd", source: "skill" },
+                ],
+              }
+            : { providers: [] };
+        return { type: "response", id, command: type, success: true, data };
       }),
     );
     const stdout = command.args.includes("--version")
       ? Stream.succeed("omp/18.12.6\n")
-      : Stream.concat(Stream.succeed(ready), responses).pipe(
-          Stream.map((frame) => `${JSON.stringify(frame)}\n`),
-        );
+      : command.args.includes("skill")
+        ? Stream.succeed(`${JSON.stringify(SKILL_LIST)}\n`)
+        : Stream.concat(Stream.succeed(ready), responses).pipe(
+            Stream.map((frame) => `${JSON.stringify(frame)}\n`),
+          );
     return Effect.succeed(
       ChildProcessSpawner.makeHandle({
         // Outside the valid PID range, so cleanup cannot signal a real process.
@@ -121,6 +146,56 @@ it.layer(layerTest)("OmpDriver", (it) => {
       assert.notInclude(snapshot.supportedRuntimeModes ?? [], "auto");
       assert.isTrue(omp.launches.every((launch) => launch.command === binaryPath));
       assert.includeMembers([...(omp.launches.at(-1)?.args ?? [])], ["--profile", "work"]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("lists a workspace's commands and skills once and puts them on the snapshot", () =>
+    Effect.gen(function* () {
+      const omp = fakeOmp(OMP_LOCK.contract.version);
+      const binaryPath = yield* overrideBinary;
+      const instance = yield* create({ binaryPath }).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, omp.spawner),
+      );
+      yield* instance.snapshot.refresh;
+      const before = omp.launches.length;
+      const publishedSnapshot = yield* instance.snapshot.streamChanges.pipe(
+        Stream.filter((snapshot) => snapshot.workspaceSnapshots !== undefined),
+        Stream.runHead,
+        Effect.forkChild({ startImmediately: true }),
+      );
+      const workspace = yield* instance.snapshotForCwd!("/repo");
+      assert.deepStrictEqual(workspace.slashCommands, [
+        { name: "compact", description: "Compact the context" },
+      ]);
+      assert.deepStrictEqual(workspace.skills, [
+        {
+          name: "tdd",
+          path: "/repo/.omp/skills/tdd/SKILL.md",
+          enabled: true,
+          description: "Test first",
+          scope: "project",
+        },
+      ]);
+      assert.strictEqual(workspace.slashCommandsPending, false);
+      const catalogLaunches = omp.launches.slice(before);
+      // Both run at once, each behind its own sidecar check, so their order is not fixed.
+      assert.sameDeepMembers(
+        catalogLaunches.map((launch) => [launch.args.includes("skill"), launch.options.cwd]),
+        [
+          [false, "/repo"],
+          [true, "/repo"],
+        ],
+      );
+      yield* instance.snapshotForCwd!("/repo");
+      assert.strictEqual(omp.launches.length, before + 2, "the same workspace reuses its lists");
+
+      const published = yield* Fiber.join(publishedSnapshot);
+      assert.deepStrictEqual(
+        published._tag === "Some"
+          ? published.value.workspaceSnapshots?.map((entry) => entry.cwd)
+          : null,
+        ["/repo"],
+      );
     }).pipe(Effect.scoped),
   );
 
