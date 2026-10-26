@@ -3,8 +3,8 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodeHttp from "node:http";
 import * as NodeModule from "node:module";
-import type { AddressInfo } from "node:net";
-import * as NodeOs from "node:os";
+import * as NodeNet from "node:net";
+import * as NodeOS from "node:os";
 
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -510,7 +510,7 @@ function listenMcpServer() {
     readonly seenAuth: ReadonlyArray<string>;
   }>();
   http.listen(0, "127.0.0.1", () => {
-    const { port } = http.address() as AddressInfo;
+    const { port } = http.address() as NodeNet.AddressInfo;
     resolve({ url: `http://127.0.0.1:${port}/mcp`, http, seenAuth });
   });
   return promise;
@@ -583,8 +583,10 @@ describe("ProviderHostToolsLive MCP client", () => {
   );
 });
 
+// The shell the server would start for this user, with their real rc files; Windows has none.
+const loginShell = NodeOS.userInfo().shell;
 const nodePtyLoads = (() => {
-  if (process.platform === "win32") return false;
+  if (loginShell === null) return false;
   try {
     NodeModule.createRequire(import.meta.url)("node-pty");
     return true;
@@ -604,15 +606,16 @@ const makeLiveTools = Effect.gen(function* () {
   const manager = yield* TerminalManager.makeWithOptions({
     logsDir: `${baseDir}/logs`,
     ptyAdapter: yield* PtyAdapter.PtyAdapter,
-    shellResolver: () => loginShell,
+    shellResolver: () => loginShell ?? "/bin/sh",
   });
-  const { tools } = yield* makeHarness({ terminalManager: manager, shell: loginShell });
+  const { tools } = yield* makeHarness({
+    terminalManager: manager,
+    shell: loginShell ?? "/bin/sh",
+  });
   return { manager, tools, cwd: baseDir };
 });
 
-// The shell the server would start for this user, with their real rc files.
-const loginShell = NodeOs.userInfo().shell ?? "/bin/sh";
-
+// Skipped without a posix login shell (Windows) or a loadable node-pty: no real PTY to drive.
 describe.runIf(nodePtyLoads)("ProviderHostToolsLive with a real PTY", () => {
   const layerLive = Layer.mergeAll(
     NodeServices.layer,
@@ -620,51 +623,49 @@ describe.runIf(nodePtyLoads)("ProviderHostToolsLive with a real PTY", () => {
     NodePtyAdapter.layer.pipe(Layer.provide(NodeServices.layer)),
   );
 
-  it.live(
-    "runs a command in the user's shell and reports its exit code",
-    () =>
-      Effect.gen(function* () {
-        const { tools, cwd } = yield* makeLiveTools;
-        const result = yield* tools.runTerminalCommand({
-          threadId,
-          cwd,
-          command: "printf 'a\\nb\\n'; exit 3",
-          timeoutMs: 30_000,
-        });
-        console.log(`[real PTY] result: ${JSON.stringify(result)}`);
-        expect(result.exitCode).toBe(3);
-        expect(result.timedOut).toBe(false);
-        expect(result.output.split("\n")).toEqual(expect.arrayContaining(["a", "b"]));
-      }).pipe(Effect.scoped, Effect.provide(layerLive)),
-    60_000,
+  it.live("runs a command in the user's shell and reports its exit code", () =>
+    Effect.gen(function* () {
+      const { tools, cwd } = yield* makeLiveTools;
+      const result = yield* tools.runTerminalCommand({
+        threadId,
+        cwd,
+        command: "printf 'a\\nb\\n'; exit 3",
+        timeoutMs: 30_000,
+      });
+      console.log(`[real PTY] result: ${JSON.stringify(result)}`);
+      expect(result.exitCode).toBe(3);
+      expect(result.timedOut).toBe(false);
+      expect(result.output.split("\n")).toEqual(expect.arrayContaining(["a", "b"]));
+    }).pipe(Effect.scoped, Effect.provide(layerLive)),
   );
 
+  // Skipped unless sudo would really prompt: with an askpass helper, cached credentials or
+  // passwordless sudo (CI runners) there is no password prompt to observe.
   it.live.runIf(sudoAsksForPassword)(
     "leaves a sudo password prompt waiting in the terminal until Ctrl-C",
     () =>
       Effect.gen(function* () {
         const { manager, tools, cwd } = yield* makeLiveTools;
         let transcript = "";
-        const unsubscribe = yield* manager.subscribe((event) =>
-          Effect.sync(() => {
-            if (event.terminalId === terminalId && event.type === "output") {
-              transcript += event.data;
-            }
-          }),
-        );
+        const prompted = yield* Deferred.make<void>();
+        const unsubscribe = yield* manager.subscribe((event) => {
+          if (event.terminalId !== terminalId || event.type !== "output") return Effect.void;
+          transcript += event.data;
+          return /[Pp]assword/.test(transcript)
+            ? Deferred.succeed(prompted, undefined).pipe(Effect.asVoid)
+            : Effect.void;
+        });
         yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
 
         const sudo = yield* tools
           .runTerminalCommand({ threadId, cwd, command: "sudo -k && sudo -v", timeoutMs: 60_000 })
           .pipe(Effect.forkChild);
-        for (let waited = 0; !/[Pp]assword/.test(transcript) && waited < 30_000; waited += 100) {
-          yield* Effect.sleep("100 millis");
-        }
-        // Give a wrongly finished command time to show up as done.
-        yield* Effect.sleep("1 second");
+        yield* Deferred.await(prompted);
         const promptTranscript = stripTerminalControl(transcript);
         console.log(`[real PTY] terminal output while sudo waits:\n${promptTranscript}`);
         expect(promptTranscript).toMatch(/[Pp]assword/);
+        // The wrapper's exit-code sentinel has not been printed: the command is still running.
+        expect(promptTranscript).not.toMatch(/__T3_AGENT_DONE___[0-9a-f]+:\d/);
         expect(sudo.pollUnsafe()).toBeUndefined();
 
         yield* Fiber.interrupt(sudo);
@@ -681,6 +682,5 @@ describe.runIf(nodePtyLoads)("ProviderHostToolsLive with a real PTY", () => {
         expect(after).toMatchObject({ exitCode: 0, timedOut: false });
         expect(after.output.split("\n")).toContain("after-sudo");
       }).pipe(Effect.scoped, Effect.provide(layerLive)),
-    90_000,
   );
 });

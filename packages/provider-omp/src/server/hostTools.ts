@@ -1,20 +1,7 @@
 /**
- * What a thread's OMP gets from T3 besides the prompt (K-08): its shell commands run in the
- * thread's T3 terminal, T3's MCP toolkits (preview, orchestration/delegation, worktree, …) appear
- * as OMP host tools, and `/wt` creates a T3 worktree.
- *
- * - Terminal: OMP's built-in `bash` is disabled with `set_tool_enabled` and a host tool named
- *   `terminal` takes its place. A host tool cannot reuse the name of a built-in, even a disabled
- *   one, so it has its own name. OMP's approval gate treats it like any `exec` tool, so the
- *   thread's permission mode (`--approval-mode`) decides whether a command asks first.
- * - MCP: every tool on the thread's T3 MCP server is registered with `set_host_tools` under its
- *   own name; a call goes to T3 over the thread's MCP credential.
- * - Worktrees: with `set_host_cwd_change` on, OMP sends `host_cwd_change_request` for `/wt` and
- *   `/move`. `/wt` gets a T3 worktree; `/move` is refused, because a T3 thread stays in its
- *   project or worktree.
- *
- * `set_tool_enabled` needs RPC contract 1.1.0 and `set_host_cwd_change` 1.5.0 (oh-my-pi#38);
- * against an older pinned contract the bridge leaves those features off.
+ * T3 for a thread's OMP (K-08; docs/omp/host-tools.md): a `terminal` host tool in place of the
+ * disabled `bash`, the thread's T3 MCP tools as host tools, and `/wt` via `host_cwd_change_request`.
+ * Features the pinned contract lacks stay off.
  */
 import type { ThreadId } from "@t3tools/contracts";
 import type { McpProviderSessionConfig } from "@t3tools/provider-core/server/mcpSession";
@@ -285,16 +272,15 @@ export const makeOmpHostBridge = Effect.fn("makeOmpHostBridge")(function* (
         : DEFAULT_TIMEOUT_SECONDS;
     let streamed = "";
     let lastUpdateMs = 0;
-    const onOutputLine = (line: string) =>
-      Effect.gen(function* () {
-        streamed = `${streamed}${line}\n`.slice(-UPDATE_TAIL_CHARS);
-        const now = yield* Clock.currentTimeMillis;
-        if (now - lastUpdateMs < UPDATE_INTERVAL_MS) return;
-        lastUpdateMs = now;
-        yield* process
-          .send({ type: "host_tool_update", id: call.id, partialResult: text(streamed) })
-          .pipe(Effect.ignore);
-      });
+    const onOutputLine = Effect.fn("OmpHostBridge.onOutputLine")(function* (line: string) {
+      streamed = `${streamed}${line}\n`.slice(-UPDATE_TAIL_CHARS);
+      const now = yield* Clock.currentTimeMillis;
+      if (now - lastUpdateMs < UPDATE_INTERVAL_MS) return;
+      lastUpdateMs = now;
+      yield* process
+        .send({ type: "host_tool_update", id: call.id, partialResult: text(streamed) })
+        .pipe(Effect.ignore);
+    });
     const result = yield* hostTools.runTerminalCommand({
       threadId,
       cwd,
@@ -341,68 +327,68 @@ export const makeOmpHostBridge = Effect.fn("makeOmpHostBridge")(function* (
     return process.send(inbound).pipe(Effect.ignore);
   };
 
-  const handleCwdChange = (request: OmpHostCwdChangeRequest) =>
-    Effect.gen(function* () {
-      if (request.reason === "move") {
-        return yield* answerCwdChange(request, {
-          accepted: false,
-          error:
-            "a T3 thread stays in its project or worktree; start a new thread in that directory instead",
-        });
-      }
-      const branch = request.branch?.trim() ?? "";
-      if (branch.length === 0) {
-        return yield* answerCwdChange(request, { accepted: false, error: "no branch name" });
-      }
-      const created = yield* hostTools
-        .createThreadWorktree({ threadId, branch })
-        .pipe(Effect.result);
-      if (created._tag === "Failure") {
-        return yield* answerCwdChange(request, { accepted: false, error: created.failure.message });
-      }
-      const worktree = created.success;
-      // Answer first: binding the thread detaches this session, and OMP finishes moving its
-      // session into the worktree while it drains before exiting.
-      yield* answerCwdChange(request, { accepted: true, cwd: worktree.path });
-      cwd = worktree.path;
-      yield* hostTools.bindThreadWorktree({ threadId, worktree }).pipe(
-        Effect.catch((error) =>
-          Effect.logWarning("OMP moved into a T3 worktree the thread could not be bound to", {
-            worktreePath: worktree.path,
-            detail: error.message,
-          }),
-        ),
-      );
-    });
+  const handleCwdChange = Effect.fn("OmpHostBridge.handleCwdChange")(function* (
+    request: OmpHostCwdChangeRequest,
+  ) {
+    if (request.reason === "move") {
+      return yield* answerCwdChange(request, {
+        accepted: false,
+        error:
+          "a T3 thread stays in its project or worktree; start a new thread in that directory instead",
+      });
+    }
+    const branch = request.branch?.trim() ?? "";
+    if (branch.length === 0) {
+      return yield* answerCwdChange(request, { accepted: false, error: "no branch name" });
+    }
+    const created = yield* hostTools.createThreadWorktree({ threadId, branch }).pipe(Effect.result);
+    if (created._tag === "Failure") {
+      return yield* answerCwdChange(request, { accepted: false, error: created.failure.message });
+    }
+    const worktree = created.success;
+    // Answer first: binding the thread detaches this session, and OMP finishes moving its
+    // session into the worktree while it drains before exiting.
+    yield* answerCwdChange(request, { accepted: true, cwd: worktree.path });
+    cwd = worktree.path;
+    yield* hostTools.bindThreadWorktree({ threadId, worktree }).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("OMP moved into a T3 worktree the thread could not be bound to", {
+          worktreePath: worktree.path,
+          detail: error.message,
+        }),
+      ),
+    );
+  });
 
-  const handleFrame = (frame: RpcServerFrame): Effect.Effect<boolean> =>
-    Effect.gen(function* () {
-      if (frame.type === "host_tool_call") {
-        yield* FiberMap.run(calls, frame.id, handleToolCall(frame));
-        return true;
-      }
-      if (frame.type === "host_tool_cancel") {
-        yield* FiberMap.remove(calls, frame.targetId);
-        return true;
-      }
-      const unknownFrame: unknown = frame;
-      if (isHostCwdChangeRequest(unknownFrame)) {
-        yield* FiberMap.run(calls, unknownFrame.id, handleCwdChange(unknownFrame));
-        return true;
-      }
-      if (
-        typeof unknownFrame === "object" &&
-        unknownFrame !== null &&
-        "type" in unknownFrame &&
-        unknownFrame.type === "host_cwd_change_cancel" &&
-        "targetId" in unknownFrame &&
-        typeof unknownFrame.targetId === "string"
-      ) {
-        yield* FiberMap.remove(calls, unknownFrame.targetId);
-        return true;
-      }
-      return false;
-    });
+  const handleFrame = Effect.fn("OmpHostBridge.handleFrame")(function* (
+    frame: RpcServerFrame,
+  ): Effect.fn.Return<boolean> {
+    if (frame.type === "host_tool_call") {
+      yield* FiberMap.run(calls, frame.id, handleToolCall(frame));
+      return true;
+    }
+    if (frame.type === "host_tool_cancel") {
+      yield* FiberMap.remove(calls, frame.targetId);
+      return true;
+    }
+    const unknownFrame: unknown = frame;
+    if (isHostCwdChangeRequest(unknownFrame)) {
+      yield* FiberMap.run(calls, unknownFrame.id, handleCwdChange(unknownFrame));
+      return true;
+    }
+    if (
+      typeof unknownFrame === "object" &&
+      unknownFrame !== null &&
+      "type" in unknownFrame &&
+      unknownFrame.type === "host_cwd_change_cancel" &&
+      "targetId" in unknownFrame &&
+      typeof unknownFrame.targetId === "string"
+    ) {
+      yield* FiberMap.remove(calls, unknownFrame.targetId);
+      return true;
+    }
+    return false;
+  });
 
   return { setup, handleFrame } satisfies OmpHostBridge;
 });

@@ -1,12 +1,6 @@
 /**
- * Server implementation of `ProviderHostTools`: the thread's agent terminal, T3 worktrees and a
- * client for the thread's T3 MCP server, handed to provider drivers.
- *
- * Drivers are constructed while the provider instance registry is built, and the thread
- * services this needs (thread management, setup scripts) are themselves built on that registry.
- * So drivers get a forwarding service (`layer`) whose calls wait for the real implementation,
- * which `layerBind` publishes once the runtime is up. Both share `layerBinding` by reference,
- * so layer memoization gives them one binding per server build.
+ * `ProviderHostTools` for drivers. Drivers are built before the thread services this needs, so
+ * `layer` forwards to the implementation `layerBind` publishes later through `layerBinding`.
  */
 import { CommandId, type ProjectId, type ThreadId } from "@t3tools/contracts";
 import type { McpProviderSessionConfig } from "@t3tools/provider-core/server/mcpSession";
