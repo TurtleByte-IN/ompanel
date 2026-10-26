@@ -22,6 +22,10 @@ import type {
   OmpSignInState,
   OmpSignOutAccounts,
   OmpSignOutResult,
+  OmpAgentFile,
+  OmpAgentFileRef,
+  OmpAgentFilesList,
+  OmpAgentFilesOperationError,
   ThreadId,
 } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
@@ -96,6 +100,30 @@ export interface ProviderInstance {
   readonly ompAccounts?: ProviderOmpAccountsController;
   /** OMP's on-disk sessions (`<agent dir>/sessions`), listed for import as threads. */
   readonly ompSessions?: ProviderOmpSessionsController;
+  /** Files in OMP's agent directory: the `WATCHDOG.yml` advisor roster and `agents/*.md`. */
+  readonly ompAgentFiles?: ProviderOmpAgentFilesController;
+}
+
+/**
+ * Reads and writes files in the instance's OMP agent directory, resolved per call with
+ * `omp config path` so the instance's profile picks the directory. Nothing outside it is reached:
+ * names are plain, and links leading out of the directory are refused.
+ */
+export interface ProviderOmpAgentFilesController {
+  readonly list: Effect.Effect<OmpAgentFilesList, OmpAgentFilesOperationError>;
+  readonly read: (
+    file: OmpAgentFileRef,
+  ) => Effect.Effect<OmpAgentFile, OmpAgentFilesOperationError>;
+  /** Fails `conflict` unless the file is still at `baseVersion` (absent: does not exist). */
+  readonly write: (input: {
+    readonly file: OmpAgentFileRef;
+    readonly content: string;
+    readonly baseVersion: string | undefined;
+  }) => Effect.Effect<OmpAgentFile, OmpAgentFilesOperationError>;
+  readonly remove: (input: {
+    readonly file: OmpAgentFileRef;
+    readonly baseVersion: string;
+  }) => Effect.Effect<OmpAgentFilesList, OmpAgentFilesOperationError>;
 }
 
 /**

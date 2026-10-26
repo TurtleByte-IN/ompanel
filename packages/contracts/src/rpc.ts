@@ -98,6 +98,15 @@ import {
   OmpListSessionsResult,
   OmpSessionsOperationError,
 } from "./ompSessions.ts";
+import {
+  OmpAgentFile,
+  OmpAgentFileDeleteInput,
+  OmpAgentFileReadInput,
+  OmpAgentFilesList,
+  OmpAgentFilesListInput,
+  OmpAgentFilesOperationError,
+  OmpAgentFileWriteInput,
+} from "./ompAgentFiles.ts";
 import { ExternalLauncherError, LaunchEditorInput } from "./editor.ts";
 import {
   AuthAccessStreamError,
@@ -547,6 +556,10 @@ export const WS_METHODS = {
   serverOmpSignOut: "server.ompSignOut",
   serverListOmpSessions: "server.listOmpSessions",
   serverImportOmpSession: "server.importOmpSession",
+  serverListOmpAgentFiles: "server.listOmpAgentFiles",
+  serverReadOmpAgentFile: "server.readOmpAgentFile",
+  serverWriteOmpAgentFile: "server.writeOmpAgentFile",
+  serverDeleteOmpAgentFile: "server.deleteOmpAgentFile",
   serverGetTraceDiagnostics: "server.getTraceDiagnostics",
   serverGetProcessDiagnostics: "server.getProcessDiagnostics",
   serverGetHostResources: "server.getHostResources",
@@ -1006,6 +1019,35 @@ export const WsServerImportOmpSessionRpc = Rpc.make(WS_METHODS.serverImportOmpSe
   payload: OmpImportSessionInput,
   success: OmpImportSessionResult,
   error: OmpSessionsRpcError,
+});
+
+const OmpAgentFilesRpcError = Schema.Union([
+  OmpAgentFilesOperationError,
+  EnvironmentAuthorizationError,
+]);
+
+const WsServerListOmpAgentFilesRpc = Rpc.make(WS_METHODS.serverListOmpAgentFiles, {
+  payload: OmpAgentFilesListInput,
+  success: OmpAgentFilesList,
+  error: OmpAgentFilesRpcError,
+});
+
+const WsServerReadOmpAgentFileRpc = Rpc.make(WS_METHODS.serverReadOmpAgentFile, {
+  payload: OmpAgentFileReadInput,
+  success: OmpAgentFile,
+  error: OmpAgentFilesRpcError,
+});
+
+const WsServerWriteOmpAgentFileRpc = Rpc.make(WS_METHODS.serverWriteOmpAgentFile, {
+  payload: OmpAgentFileWriteInput,
+  success: OmpAgentFile,
+  error: OmpAgentFilesRpcError,
+});
+
+const WsServerDeleteOmpAgentFileRpc = Rpc.make(WS_METHODS.serverDeleteOmpAgentFile, {
+  payload: OmpAgentFileDeleteInput,
+  success: OmpAgentFilesList,
+  error: OmpAgentFilesRpcError,
 });
 
 const WsServerGetTraceDiagnosticsRpc = Rpc.make(WS_METHODS.serverGetTraceDiagnostics, {
@@ -2133,6 +2175,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerOmpSignOutRpc,
   WsServerListOmpSessionsRpc,
   WsServerImportOmpSessionRpc,
+  WsServerListOmpAgentFilesRpc,
+  WsServerReadOmpAgentFileRpc,
+  WsServerWriteOmpAgentFileRpc,
+  WsServerDeleteOmpAgentFileRpc,
   WsServerGetTraceDiagnosticsRpc,
   WsServerGetProcessDiagnosticsRpc,
   WsServerGetHostResourcesRpc,

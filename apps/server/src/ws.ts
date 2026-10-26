@@ -24,6 +24,7 @@ import { subscribeCodexAuthCallback } from "./provider/CodexAuthCallback.ts";
 import {
   AcpRegistryOperationError,
   OmpAccountsOperationError,
+  OmpAgentFilesOperationError,
   OmpSettingsOperationError,
   OmpSessionsOperationError,
   type OmpImportSessionInput,
@@ -1521,6 +1522,25 @@ export const layerWsRpc = (
         return instance.ompAccounts;
       });
 
+      const ompAgentFilesController = Effect.fn("ws.ompAgentFiles.controller")(function* (
+        instanceId: ProviderInstanceId,
+      ) {
+        const instance = yield* providerInstances.getInstance(instanceId);
+        if (instance === undefined) {
+          return yield* new OmpAgentFilesOperationError({
+            reason: "instance_not_found",
+            message: `Provider instance ${instanceId} was not found.`,
+          });
+        }
+        if (instance.ompAgentFiles === undefined) {
+          return yield* new OmpAgentFilesOperationError({
+            reason: "unsupported",
+            message: `Provider instance ${instanceId} has no OMP agent directory.`,
+          });
+        }
+        return instance.ompAgentFiles;
+      });
+
       const importedAcpThreadId = (input: {
         readonly driver: ProviderDriverKind;
         readonly instanceId: ProviderInstanceId;
@@ -2731,6 +2751,44 @@ export const layerWsRpc = (
             "provider.instance_id": input.instanceId,
             "omp.session_id": input.sessionId,
           }).pipe(Effect.andThen(importOmpSession(input))),
+        // File contents stay off spans; only which file is touched is recorded.
+        [WS_METHODS.serverListOmpAgentFiles]: (input) =>
+          Effect.annotateCurrentSpan({ "provider.instance_id": input.instanceId }).pipe(
+            Effect.andThen(ompAgentFilesController(input.instanceId)),
+            Effect.flatMap((files) => files.list),
+          ),
+        [WS_METHODS.serverReadOmpAgentFile]: (input) =>
+          Effect.annotateCurrentSpan({
+            "provider.instance_id": input.instanceId,
+            "omp.agent_file": input.file.kind === "agent" ? input.file.name : input.file.kind,
+          }).pipe(
+            Effect.andThen(ompAgentFilesController(input.instanceId)),
+            Effect.flatMap((files) => files.read(input.file)),
+          ),
+        [WS_METHODS.serverWriteOmpAgentFile]: (input) =>
+          Effect.annotateCurrentSpan({
+            "provider.instance_id": input.instanceId,
+            "omp.agent_file": input.file.kind === "agent" ? input.file.name : input.file.kind,
+          }).pipe(
+            Effect.andThen(ompAgentFilesController(input.instanceId)),
+            Effect.flatMap((files) =>
+              files.write({
+                file: input.file,
+                content: input.content,
+                baseVersion: input.baseVersion,
+              }),
+            ),
+          ),
+        [WS_METHODS.serverDeleteOmpAgentFile]: (input) =>
+          Effect.annotateCurrentSpan({
+            "provider.instance_id": input.instanceId,
+            "omp.agent_file": input.file.kind === "agent" ? input.file.name : input.file.kind,
+          }).pipe(
+            Effect.andThen(ompAgentFilesController(input.instanceId)),
+            Effect.flatMap((files) =>
+              files.remove({ file: input.file, baseVersion: input.baseVersion }),
+            ),
+          ),
         [WS_METHODS.serverRefreshProviders]:
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(function* (input) {

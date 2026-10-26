@@ -1547,6 +1547,22 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:omp-accounts:sign-out",
       tag: WS_METHODS.serverOmpSignOut,
     }),
+    listOmpAgentFiles: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:omp-agent-files:list",
+      tag: WS_METHODS.serverListOmpAgentFiles,
+    }),
+    readOmpAgentFile: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:omp-agent-files:read",
+      tag: WS_METHODS.serverReadOmpAgentFile,
+    }),
+    writeOmpAgentFile: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:omp-agent-files:write",
+      tag: WS_METHODS.serverWriteOmpAgentFile,
+    }),
+    deleteOmpAgentFile: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:omp-agent-files:delete",
+      tag: WS_METHODS.serverDeleteOmpAgentFile,
+    }),
     signalProcess: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:signal-process",
       tag: WS_METHODS.serverSignalProcess,

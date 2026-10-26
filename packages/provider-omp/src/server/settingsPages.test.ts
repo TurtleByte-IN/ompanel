@@ -8,8 +8,14 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type { OmpConfigType } from "@t3tools/contracts";
 
 import { OMP_SETTING_KEYS } from "../ompSettingKeys.generated.ts";
-import { OMP_PATH_SCOPED_KEYS, OMP_SETTINGS_PAGES, ompSettingsPageForm } from "../settingsPages.ts";
+import {
+  OMP_APPROVAL_MODES,
+  OMP_PATH_SCOPED_KEYS,
+  OMP_SETTINGS_PAGES,
+  ompSettingsPageForm,
+} from "../settingsPages.ts";
 import { makeOmpControlService, type OmpControlTarget } from "./control.ts";
+import { ompApprovalModeFor } from "./launch.ts";
 import { makeOmpSettingsEngine } from "./settingsEngine.ts";
 
 const encoder = new TextEncoder();
@@ -23,6 +29,12 @@ const SETTINGS: Readonly<Record<string, { type: OmpConfigType; default: unknown 
   "thinkingBudgets.high": { type: "number", default: 16384 },
   defaultThinkingLevel: { type: "enum", default: "high" },
   "compaction.enabled": { type: "boolean", default: true },
+  "advisor.enabled": { type: "boolean", default: false },
+  "task.agentAdvisor": { type: "record", default: {} },
+  temperature: { type: "number", default: -1 },
+  "tier.openai": { type: "enum", default: "none" },
+  "tools.approval": { type: "record", default: {} },
+  "bash.patterns": { type: "array", default: [] },
 };
 
 /** A scripted `omp config` holding one global layer; `get` prints like `omp config get --json`. */
@@ -110,6 +122,13 @@ describe("OMP settings pages", () => {
         { page: OMP_SETTINGS_PAGES.models, key: "modelRoles", value: { smol: "anthropic/haiku" } },
         { page: OMP_SETTINGS_PAGES.routing, key: "retry.maxRetries", value: 7 },
         { page: OMP_SETTINGS_PAGES.thinking, key: "thinkingBudgets.high", value: 32000 },
+        { page: OMP_SETTINGS_PAGES.advisor, key: "task.agentAdvisor", value: { task: "on" } },
+        { page: OMP_SETTINGS_PAGES.sampling, key: "temperature", value: 0.2 },
+        {
+          page: OMP_SETTINGS_PAGES.approvals,
+          key: "bash.patterns",
+          value: [{ match: "git status*", approval: "allow" }],
+        },
       ];
       yield* makeOmpControlService().pipe(
         Effect.flatMap((control) => {
@@ -192,5 +211,21 @@ describe("OMP settings pages", () => {
         assert.strictEqual(field.readOnly, OMP_PATH_SCOPED_KEYS.includes(field.key), field.key);
       }
     }
+  });
+
+  it("state the approval mode each Ompanel permission mode launches threads with", () => {
+    const launched = {
+      Supervised: ompApprovalModeFor("approval-required"),
+      "Auto-accept edits": ompApprovalModeFor("auto-accept-edits"),
+      "Full access": ompApprovalModeFor("full-access"),
+    };
+    assert.deepStrictEqual(
+      Object.fromEntries(
+        OMP_APPROVAL_MODES.flatMap(({ mode, ompanelMode }) =>
+          ompanelMode === undefined ? [] : [[ompanelMode, mode]],
+        ),
+      ),
+      launched,
+    );
   });
 });

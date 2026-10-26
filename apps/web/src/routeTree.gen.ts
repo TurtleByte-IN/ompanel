@@ -29,8 +29,11 @@ import { Route as ChatSettingsProvidersRouteImport } from './routes/_chat.settin
 import { Route as ChatSettingsProjectsRouteImport } from './routes/_chat.settings.projects'
 import { Route as ChatSettingsOpenSourceLicensesRouteImport } from './routes/_chat.settings.open-source-licenses'
 import { Route as ChatSettingsOmpThinkingRouteImport } from './routes/_chat.settings.omp-thinking'
+import { Route as ChatSettingsOmpSamplingRouteImport } from './routes/_chat.settings.omp-sampling'
 import { Route as ChatSettingsOmpRoutingRouteImport } from './routes/_chat.settings.omp-routing'
 import { Route as ChatSettingsOmpModelsRouteImport } from './routes/_chat.settings.omp-models'
+import { Route as ChatSettingsOmpApprovalsRouteImport } from './routes/_chat.settings.omp-approvals'
+import { Route as ChatSettingsOmpAdvisorRouteImport } from './routes/_chat.settings.omp-advisor'
 import { Route as ChatSettingsKeybindingsRouteImport } from './routes/_chat.settings.keybindings'
 import { Route as ChatSettingsIntegrationsRouteImport } from './routes/_chat.settings.integrations'
 import { Route as ChatSettingsGeneralRouteImport } from './routes/_chat.settings.general'
@@ -144,6 +147,11 @@ const ChatSettingsOmpThinkingRoute = ChatSettingsOmpThinkingRouteImport.update({
   path: '/omp-thinking',
   getParentRoute: () => ChatSettingsRoute,
 } as any)
+const ChatSettingsOmpSamplingRoute = ChatSettingsOmpSamplingRouteImport.update({
+  id: '/omp-sampling',
+  path: '/omp-sampling',
+  getParentRoute: () => ChatSettingsRoute,
+} as any)
 const ChatSettingsOmpRoutingRoute = ChatSettingsOmpRoutingRouteImport.update({
   id: '/omp-routing',
   path: '/omp-routing',
@@ -152,6 +160,17 @@ const ChatSettingsOmpRoutingRoute = ChatSettingsOmpRoutingRouteImport.update({
 const ChatSettingsOmpModelsRoute = ChatSettingsOmpModelsRouteImport.update({
   id: '/omp-models',
   path: '/omp-models',
+  getParentRoute: () => ChatSettingsRoute,
+} as any)
+const ChatSettingsOmpApprovalsRoute =
+  ChatSettingsOmpApprovalsRouteImport.update({
+    id: '/omp-approvals',
+    path: '/omp-approvals',
+    getParentRoute: () => ChatSettingsRoute,
+  } as any)
+const ChatSettingsOmpAdvisorRoute = ChatSettingsOmpAdvisorRouteImport.update({
+  id: '/omp-advisor',
+  path: '/omp-advisor',
   getParentRoute: () => ChatSettingsRoute,
 } as any)
 const ChatSettingsKeybindingsRoute = ChatSettingsKeybindingsRouteImport.update({
@@ -229,8 +248,11 @@ export interface FileRoutesByFullPath {
   '/settings/general': typeof ChatSettingsGeneralRoute
   '/settings/integrations': typeof ChatSettingsIntegrationsRoute
   '/settings/keybindings': typeof ChatSettingsKeybindingsRoute
+  '/settings/omp-advisor': typeof ChatSettingsOmpAdvisorRoute
+  '/settings/omp-approvals': typeof ChatSettingsOmpApprovalsRoute
   '/settings/omp-models': typeof ChatSettingsOmpModelsRoute
   '/settings/omp-routing': typeof ChatSettingsOmpRoutingRoute
+  '/settings/omp-sampling': typeof ChatSettingsOmpSamplingRoute
   '/settings/omp-thinking': typeof ChatSettingsOmpThinkingRoute
   '/settings/open-source-licenses': typeof ChatSettingsOpenSourceLicensesRoute
   '/settings/projects': typeof ChatSettingsProjectsRoute
@@ -262,8 +284,11 @@ export interface FileRoutesByTo {
   '/settings/general': typeof ChatSettingsGeneralRoute
   '/settings/integrations': typeof ChatSettingsIntegrationsRoute
   '/settings/keybindings': typeof ChatSettingsKeybindingsRoute
+  '/settings/omp-advisor': typeof ChatSettingsOmpAdvisorRoute
+  '/settings/omp-approvals': typeof ChatSettingsOmpApprovalsRoute
   '/settings/omp-models': typeof ChatSettingsOmpModelsRoute
   '/settings/omp-routing': typeof ChatSettingsOmpRoutingRoute
+  '/settings/omp-sampling': typeof ChatSettingsOmpSamplingRoute
   '/settings/omp-thinking': typeof ChatSettingsOmpThinkingRoute
   '/settings/open-source-licenses': typeof ChatSettingsOpenSourceLicensesRoute
   '/settings/projects': typeof ChatSettingsProjectsRoute
@@ -297,8 +322,11 @@ export interface FileRoutesById {
   '/_chat/settings/general': typeof ChatSettingsGeneralRoute
   '/_chat/settings/integrations': typeof ChatSettingsIntegrationsRoute
   '/_chat/settings/keybindings': typeof ChatSettingsKeybindingsRoute
+  '/_chat/settings/omp-advisor': typeof ChatSettingsOmpAdvisorRoute
+  '/_chat/settings/omp-approvals': typeof ChatSettingsOmpApprovalsRoute
   '/_chat/settings/omp-models': typeof ChatSettingsOmpModelsRoute
   '/_chat/settings/omp-routing': typeof ChatSettingsOmpRoutingRoute
+  '/_chat/settings/omp-sampling': typeof ChatSettingsOmpSamplingRoute
   '/_chat/settings/omp-thinking': typeof ChatSettingsOmpThinkingRoute
   '/_chat/settings/open-source-licenses': typeof ChatSettingsOpenSourceLicensesRoute
   '/_chat/settings/projects': typeof ChatSettingsProjectsRoute
@@ -332,8 +360,11 @@ export interface FileRouteTypes {
     | '/settings/general'
     | '/settings/integrations'
     | '/settings/keybindings'
+    | '/settings/omp-advisor'
+    | '/settings/omp-approvals'
     | '/settings/omp-models'
     | '/settings/omp-routing'
+    | '/settings/omp-sampling'
     | '/settings/omp-thinking'
     | '/settings/open-source-licenses'
     | '/settings/projects'
@@ -365,8 +396,11 @@ export interface FileRouteTypes {
     | '/settings/general'
     | '/settings/integrations'
     | '/settings/keybindings'
+    | '/settings/omp-advisor'
+    | '/settings/omp-approvals'
     | '/settings/omp-models'
     | '/settings/omp-routing'
+    | '/settings/omp-sampling'
     | '/settings/omp-thinking'
     | '/settings/open-source-licenses'
     | '/settings/projects'
@@ -399,8 +433,11 @@ export interface FileRouteTypes {
     | '/_chat/settings/general'
     | '/_chat/settings/integrations'
     | '/_chat/settings/keybindings'
+    | '/_chat/settings/omp-advisor'
+    | '/_chat/settings/omp-approvals'
     | '/_chat/settings/omp-models'
     | '/_chat/settings/omp-routing'
+    | '/_chat/settings/omp-sampling'
     | '/_chat/settings/omp-thinking'
     | '/_chat/settings/open-source-licenses'
     | '/_chat/settings/projects'
@@ -563,6 +600,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatSettingsOmpThinkingRouteImport
       parentRoute: typeof ChatSettingsRoute
     }
+    '/_chat/settings/omp-sampling': {
+      id: '/_chat/settings/omp-sampling'
+      path: '/omp-sampling'
+      fullPath: '/settings/omp-sampling'
+      preLoaderRoute: typeof ChatSettingsOmpSamplingRouteImport
+      parentRoute: typeof ChatSettingsRoute
+    }
     '/_chat/settings/omp-routing': {
       id: '/_chat/settings/omp-routing'
       path: '/omp-routing'
@@ -575,6 +619,20 @@ declare module '@tanstack/react-router' {
       path: '/omp-models'
       fullPath: '/settings/omp-models'
       preLoaderRoute: typeof ChatSettingsOmpModelsRouteImport
+      parentRoute: typeof ChatSettingsRoute
+    }
+    '/_chat/settings/omp-approvals': {
+      id: '/_chat/settings/omp-approvals'
+      path: '/omp-approvals'
+      fullPath: '/settings/omp-approvals'
+      preLoaderRoute: typeof ChatSettingsOmpApprovalsRouteImport
+      parentRoute: typeof ChatSettingsRoute
+    }
+    '/_chat/settings/omp-advisor': {
+      id: '/_chat/settings/omp-advisor'
+      path: '/omp-advisor'
+      fullPath: '/settings/omp-advisor'
+      preLoaderRoute: typeof ChatSettingsOmpAdvisorRouteImport
       parentRoute: typeof ChatSettingsRoute
     }
     '/_chat/settings/keybindings': {
@@ -659,8 +717,11 @@ interface ChatSettingsRouteChildren {
   ChatSettingsGeneralRoute: typeof ChatSettingsGeneralRoute
   ChatSettingsIntegrationsRoute: typeof ChatSettingsIntegrationsRoute
   ChatSettingsKeybindingsRoute: typeof ChatSettingsKeybindingsRoute
+  ChatSettingsOmpAdvisorRoute: typeof ChatSettingsOmpAdvisorRoute
+  ChatSettingsOmpApprovalsRoute: typeof ChatSettingsOmpApprovalsRoute
   ChatSettingsOmpModelsRoute: typeof ChatSettingsOmpModelsRoute
   ChatSettingsOmpRoutingRoute: typeof ChatSettingsOmpRoutingRoute
+  ChatSettingsOmpSamplingRoute: typeof ChatSettingsOmpSamplingRoute
   ChatSettingsOmpThinkingRoute: typeof ChatSettingsOmpThinkingRoute
   ChatSettingsOpenSourceLicensesRoute: typeof ChatSettingsOpenSourceLicensesRoute
   ChatSettingsProjectsRoute: typeof ChatSettingsProjectsRoute
@@ -680,8 +741,11 @@ const ChatSettingsRouteChildren: ChatSettingsRouteChildren = {
   ChatSettingsGeneralRoute: ChatSettingsGeneralRoute,
   ChatSettingsIntegrationsRoute: ChatSettingsIntegrationsRoute,
   ChatSettingsKeybindingsRoute: ChatSettingsKeybindingsRoute,
+  ChatSettingsOmpAdvisorRoute: ChatSettingsOmpAdvisorRoute,
+  ChatSettingsOmpApprovalsRoute: ChatSettingsOmpApprovalsRoute,
   ChatSettingsOmpModelsRoute: ChatSettingsOmpModelsRoute,
   ChatSettingsOmpRoutingRoute: ChatSettingsOmpRoutingRoute,
+  ChatSettingsOmpSamplingRoute: ChatSettingsOmpSamplingRoute,
   ChatSettingsOmpThinkingRoute: ChatSettingsOmpThinkingRoute,
   ChatSettingsOpenSourceLicensesRoute: ChatSettingsOpenSourceLicensesRoute,
   ChatSettingsProjectsRoute: ChatSettingsProjectsRoute,

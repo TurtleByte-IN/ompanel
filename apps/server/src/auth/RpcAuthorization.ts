@@ -108,6 +108,9 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverListOmpSignOutAccounts]: AuthProvidersManageScope,
   [WS_METHODS.serverListOmpSessions]: AuthOrchestrationReadScope,
   [WS_METHODS.serverImportOmpSession]: AuthOrchestrationOperateScope,
+  // Agent prompts and advisor instructions are provider configuration, read only by its managers.
+  [WS_METHODS.serverListOmpAgentFiles]: AuthProvidersManageScope,
+  [WS_METHODS.serverReadOmpAgentFile]: AuthProvidersManageScope,
   [WS_METHODS.serverDiscoverSourceControl]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetTraceDiagnostics]: AuthDiagnosticsReadScope,
   [WS_METHODS.serverGetProcessDiagnostics]: AuthDiagnosticsReadScope,

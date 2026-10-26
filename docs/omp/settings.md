@@ -107,7 +107,8 @@ are `OmpSettingsOperationError` and never carry `omp` output.
 
 ## Settings pages
 
-Settings → OMP Models & Roles, OMP Routing and OMP Thinking each show a slice of
+Settings → OMP Models & Roles, Routing, Thinking, Advisor & Agents, Sampling and
+Approvals & Tools each show a slice of
 the engine's form for the primary environment's OMP instance (a picker appears
 when it runs several). The pages write the global layer and add no write path
 of their own; env-set keys stay read-only and credentials reset-only. The key
@@ -115,11 +116,14 @@ lists live in `OMP_SETTINGS_PAGES` (`packages/provider-omp/src/settingsPages.ts`
 a key ending in `.` takes the whole group. A test checks every listed key
 against the pinned registry.
 
-| Page           | Keys                                                                                                                                                                                                         |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Models & Roles | `modelRoles` (one field per role), `modelRoleStorage`, `modelTags`, `modelProviderOrder`, `cycleOrder`, `enabledModels`, `disabledProviders`, `includeModelInPrompt`                                         |
-| Routing        | `retry.*` (incl. `retry.fallbackChains`), `auth.accountPolicies`, `task.agentAccountPools`, `enabledModels` / `enabledProviders` / `disabledProviders` (read-only), `providers.anthropic.serverSideFallback` |
-| Thinking       | `defaultThinkingLevel`, `hideThinkingBlock`, `thinkingBudgets.*`, `providers.autoThinkingMaxEffort`                                                                                                          |
+| Page              | Keys                                                                                                                                                                                                         |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Models & Roles    | `modelRoles` (one field per role), `modelRoleStorage`, `modelTags`, `modelProviderOrder`, `cycleOrder`, `enabledModels`, `disabledProviders`, `includeModelInPrompt`                                         |
+| Routing           | `retry.*` (incl. `retry.fallbackChains`), `auth.accountPolicies`, `task.agentAccountPools`, `enabledModels` / `enabledProviders` / `disabledProviders` (read-only), `providers.anthropic.serverSideFallback` |
+| Thinking          | `defaultThinkingLevel`, `hideThinkingBlock`, `thinkingBudgets.*`, `providers.autoThinkingMaxEffort`                                                                                                          |
+| Advisor & Agents  | `advisor.*`, `task.agentAdvisor` (one rule per subagent: `on`, `off` or a model), plus the `WATCHDOG.yml` and `agents/` file editors below                                                                   |
+| Sampling          | `temperature`, `topP`, `topK`, `minP`, `presencePenalty`, `repetitionPenalty`, `textVerbosity`, `personality`, `tier.*`                                                                                      |
+| Approvals & Tools | `tools.approvalMode`, `tools.approval` (rules editor), `bash.patterns` (ordered rules editor), `bashInterceptor.*`, `tools.intentTracing`, `tools.xdev`, `tools.xdevDocs`, `tools.xdevInlineDevices`         |
 
 `modelRoles` covers OMP's 16 roles: `default smol slow vision plan commit tiny
 memory task advisor widget image web speech dictation judge` (OMP has no
@@ -132,3 +136,62 @@ already resolved for its working directory, and the engine has no raw read, so
 writing the shown value back would delete every entry scoped to another
 folder. The pages show these three read-only (`OMP_PATH_SCOPED_KEYS`), with no
 Reset; edit them in OMP's config file.
+
+### Approvals
+
+`tools.approvalMode` on the page is OMP's default for `omp` run outside
+Ompanel. Ompanel threads always launch with `--approval-mode` from their
+permission mode (Supervised → `always-ask`, Auto-accept edits → `write`, Full
+access → `yolo`), which outranks the setting; the page says so next to the
+control, and a test keeps that text in step with `ompApprovalModeFor`.
+
+`tools.approval` maps a tool (or a policy key such as `write`) to `allow`,
+`prompt` or `deny`, and applies in every mode. `bash.patterns` is an ordered
+list of `{match, approval}` with `*` as the only wildcard. Both editors change
+one entry per write and pass every other entry through unchanged, including
+values OMP would ignore (shown as such, removable).
+
+## Agent directory files
+
+Advisor & Agents also edits two kinds of files in the instance's OMP agent
+directory:
+
+- `WATCHDOG.yml`, the user-level advisor roster (`advisor/config.ts`). When only
+  `WATCHDOG.yaml` exists, that file is edited in place, as OMP's own
+  `/advisor configure` does. Project-level `WATCHDOG.yml` files are not edited
+  here.
+- `agents/*.md`, the user's custom subagents (`task/discovery.ts`).
+
+The directory is what `omp [--profile <p>] config path` prints for the
+instance, so it follows the instance's profile (`~/.omp/profiles/<p>/agent`),
+`OMP_PROFILE` and `PI_CODING_AGENT_DIR`; the default profile is
+`~/.omp/agent`. It is asked on every call.
+One gap is OMP's: with a custom `PI_CODING_AGENT_DIR` (no named profile), OMP's
+subagent discovery still reads `~/.omp/agent/agents`, while `config path`,
+`WATCHDOG.yml` and `omp agents unpack` use the override (#83).
+
+The server reaches nothing outside that directory
+(`packages/provider-omp/src/server/agentFiles.ts`):
+
+- agent names must be plain `.md` names (`OMP_AGENT_FILE_NAME_PATTERN`): no
+  folders, no leading dot. Other `.md` files OMP loads are listed as not
+  editable.
+- `agents/` and each file may be links only if they resolve inside the agent
+  directory (which may itself be a link, e.g. into a dotfiles checkout); a
+  write through such a link changes its target, a delete removes the link.
+  Reads open the resolved file with `O_NOFOLLOW`.
+- files must be UTF-8 text up to 512 KiB.
+- a write names the version (sha256) it read, or none to create; a changed or
+  already-existing file fails `conflict`. A write goes to a temporary file
+  beside the target, then one rename.
+
+| Method                      | Scope              |
+| --------------------------- | ------------------ |
+| `server.listOmpAgentFiles`  | `providers:manage` |
+| `server.readOmpAgentFile`   | `providers:manage` |
+| `server.writeOmpAgentFile`  | `providers:manage` |
+| `server.deleteOmpAgentFile` | `providers:manage` |
+
+Errors are `OmpAgentFilesOperationError`. OMP reads the advisor roster when a
+thread starts, so open threads may keep the roster they loaded until they
+restart.
