@@ -1,7 +1,6 @@
 /**
- * OmpControlService: every short-lived `omp` process Ompanel starts outside a thread — the
- * status probe, `omp usage`, the login-provider list, RPC sign-in and sign-out — runs here, each under a
- * hard deadline. On a deadline the process group gets SIGTERM, then SIGKILL after
+ * OmpControlService: every short-lived `omp` process Ompanel starts outside a thread runs here
+ * under a hard deadline; on it the process group gets SIGTERM, then SIGKILL after
  * {@link OMP_CONTROL_KILL_GRACE_MS}, so a hung omp never outlives the call.
  */
 import {
@@ -43,6 +42,8 @@ export const OMP_CONTROL_TIMEOUTS_MS = {
   login: 60_000,
   /** `omp config list|set|reset --json`. */
   config: 10_000,
+  /** `omp skill list --json`, or an RPC server's `ready` plus `get_available_commands`. */
+  catalog: 10_000,
 } as const;
 export type OmpControlBudget = keyof typeof OMP_CONTROL_TIMEOUTS_MS;
 
@@ -110,7 +111,9 @@ export type OmpControlOperation =
   | "config_list"
   | "config_set"
   | "config_reset"
-  | "config_path";
+  | "config_path"
+  | "skill_list"
+  | "available_commands";
 
 /** Carries no process output: stderr and stdout may contain credentials. */
 export class OmpControlError extends Schema.TaggedError<OmpControlError>()("OmpControlError", {
@@ -126,6 +129,8 @@ export class OmpControlError extends Schema.TaggedError<OmpControlError>()("OmpC
     "config_set",
     "config_reset",
     "config_path",
+    "skill_list",
+    "available_commands",
   ]),
   reason: Schema.Literals([
     "missing",
@@ -242,6 +247,38 @@ const decodeConfigSetResult = Schema.decodeEffect(Schema.fromJsonString(OmpConfi
 const decodeConfigResetResult = Schema.decodeEffect(Schema.fromJsonString(OmpConfigResetResult));
 const encodeJsonValue = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
+/** `omp skill list <dir> --json`: the CLI contract's `CliSkillList`. */
+const OmpSkillList = Schema.Struct({
+  skills: Schema.Array(
+    Schema.Struct({
+      name: Schema.String,
+      description: Schema.String,
+      filePath: Schema.String,
+      baseDir: Schema.String,
+      source: Schema.String,
+      hide: Schema.Boolean,
+    }),
+  ),
+  warnings: Schema.Array(Schema.Struct({ skillPath: Schema.String, message: Schema.String })),
+});
+export type OmpSkillList = typeof OmpSkillList.Type;
+const decodeSkillList = Schema.decodeEffect(Schema.fromJsonString(OmpSkillList));
+
+/**
+ * The fields of the wire contract's `AvailableSlashCommand` Ompanel shows. `source` stays a
+ * string, so a source a newer omp adds does not fail the whole list.
+ */
+const AvailableSlashCommandSchema = Schema.Struct({
+  name: Schema.String,
+  source: Schema.String,
+  description: Schema.optionalKey(Schema.String),
+  input: Schema.optionalKey(Schema.Struct({ hint: Schema.optionalKey(Schema.String) })),
+});
+export type OmpAvailableSlashCommand = typeof AvailableSlashCommandSchema.Type;
+const decodeAvailableCommands = Schema.decodeUnknownEffect(
+  Schema.Struct({ commands: Schema.Array(AvailableSlashCommandSchema) }),
+);
+
 export type OmpProbeFailure =
   | { readonly stage: "version"; readonly reason: "missing" | "spawn" | "timeout" | "exit" }
   | { readonly stage: "ready"; readonly reason: "spawn" | "timeout" | "exit" | "invalid" };
@@ -336,6 +373,19 @@ export interface OmpControlService {
    * environment (`PI_CODING_AGENT_DIR`, `OMP_PROFILE`), the one line it prints.
    */
   readonly configPath: (target: OmpControlTarget) => Effect.Effect<string, OmpControlError>;
+  /**
+   * `omp [--profile p] skill list <target.cwd> --json` (10 s), uncached: the skills a session in
+   * that directory would load, as `omp skill list` resolves them.
+   */
+  readonly skillList: (target: OmpControlTarget) => Effect.Effect<OmpSkillList, OmpControlError>;
+  /**
+   * RPC `get_available_commands` in a fresh control server in `target.cwd` (10 s), uncached.
+   * The control server runs without extensions, skills, tools or MCP, so the list holds OMP's
+   * builtins and the directory's file commands only; a thread's own server reports the rest.
+   */
+  readonly availableCommands: (
+    target: OmpControlTarget,
+  ) => Effect.Effect<ReadonlyArray<OmpAvailableSlashCommand>, OmpControlError>;
 }
 
 export interface OmpControlServiceOptions {
@@ -830,6 +880,49 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
     return result;
   });
 
+  const skillList = Effect.fn("OmpControl.skillList")(function* (target: OmpControlTarget) {
+    const output = yield* collect("skill_list", "catalog", target, [
+      ...profileArgs(target.profile),
+      "skill",
+      "list",
+      target.cwd,
+      "--json",
+    ]);
+    if (output.code !== 0) {
+      return yield* new OmpControlError({
+        operation: "skill_list",
+        reason: "exit",
+        exitCode: output.code,
+      });
+    }
+    return yield* decodeSkillList(output.stdout.trim()).pipe(
+      Effect.mapError(
+        (cause) => new OmpControlError({ operation: "skill_list", reason: "invalid", cause }),
+      ),
+    );
+  });
+
+  const availableCommands = Effect.fn("OmpControl.availableCommands")(function* (
+    target: OmpControlTarget,
+  ) {
+    const data = yield* withDeadline(
+      "available_commands",
+      "catalog",
+      openRpcSession("available_commands", target).pipe(
+        Effect.flatMap((session) => session.request({ type: "get_available_commands" })),
+        Effect.flatMap((response) =>
+          decodeAvailableCommands(response).pipe(
+            Effect.mapError(
+              (cause) =>
+                new OmpControlError({ operation: "available_commands", reason: "invalid", cause }),
+            ),
+          ),
+        ),
+      ),
+    );
+    return data.commands;
+  });
+
   interface CacheEntry {
     readonly deferred: Deferred.Deferred<unknown, unknown>;
     settledAt: number | null;
@@ -889,5 +982,7 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
     configSet,
     configReset,
     configPath,
+    skillList,
+    availableCommands,
   } satisfies OmpControlService;
 });

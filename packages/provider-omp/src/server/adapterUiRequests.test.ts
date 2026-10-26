@@ -22,6 +22,7 @@ import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 
 import { makeOmpAdapter } from "./adapter.ts";
+import { rewriteOmpSkillMention, type OmpCommandHooks } from "./commands.ts";
 import { makeOmpPidfiles } from "./pidfiles.ts";
 import { ompStateDirs } from "./session.ts";
 import { makeOmpThreadSessions } from "./threadSessions.ts";
@@ -50,14 +51,19 @@ const uiRequest = (frame: Record<string, unknown>): FakeOmpStep => ({
 
 /**
  * Opens a session on the fake, starts one turn and collects every event in the background.
- * `prompt` is what the fake does on `prompt`; `answered` what it does on each UI reply.
+ * `prompt` is what the fake does on `prompt`; `answered` what it does on each UI reply;
+ * `afterReady` what it writes right after `ready`. `text` is the turn's message.
  */
 const startUiTurn = Effect.fnUntraced(function* (script: {
   readonly prompt: ReadonlyArray<FakeOmpStep>;
   readonly answered?: ReadonlyArray<FakeOmpStep>;
+  readonly afterReady?: ReadonlyArray<FakeOmpStep>;
+  readonly text?: string;
+  readonly commands?: OmpCommandHooks;
 }) {
   const state = yield* makeFakeOmpState;
   const env = state.script({
+    ...(script.afterReady === undefined ? {} : { afterReady: script.afterReady }),
     commands: {
       set_session_name: [{ respond: null }],
       set_ask_dialog: [{ respond: { enabled: true } }],
@@ -79,6 +85,7 @@ const startUiTurn = Effect.fnUntraced(function* (script: {
     expectedContractVersion: "1.0.0",
     threadSessions: makeOmpThreadSessions(),
     sessions: state.sessions,
+    ...(script.commands === undefined ? {} : { commands: script.commands }),
   });
   const session = yield* adapter.openSession({
     threadId: THREAD_ID,
@@ -131,7 +138,7 @@ const startUiTurn = Effect.fnUntraced(function* (script: {
     providerThread,
     message: {
       messageId: "message:ui:1" as never,
-      text: "Do the thing",
+      text: script.text ?? "Do the thing",
       attachments: [],
       createdBy: "user",
       creationSource: "web",
@@ -340,6 +347,109 @@ posixOnly("OmpAdapter UI requests", () => {
         },
       ]);
       yield* turn.terminal();
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("round-trips the /review mode picker as a select card", () =>
+    Effect.gen(function* () {
+      const modes = [
+        "1. Review against a base branch (PR Style)",
+        "2. Review uncommitted changes",
+        "3. Review a specific commit",
+        "4. Review a specific PR/MR",
+        "5. Custom review instructions",
+      ];
+      const turn = yield* startUiTurn({
+        text: "/review",
+        prompt: [
+          PROMPT_ACK,
+          uiRequest({ id: "ui-review", method: "select", title: "Review Mode", options: modes }),
+        ],
+        answered: [PROMPT_DONE],
+      });
+      const pending = yield* turn.request("pending");
+      assert.strictEqual(pending.kind, "user_input");
+      const card = turn.itemFor(pending.id);
+      assert.deepStrictEqual(
+        card?.type === "user_input_request"
+          ? card.questions.map((question) => [
+              question.id,
+              question.question,
+              question.options.map((option) => option.label),
+            ])
+          : null,
+        [["ui-review", "Review Mode", modes]],
+      );
+      yield* turn.session.respondToRuntimeRequest({
+        requestId: pending.id,
+        answers: { "ui-review": "2. Review uncommitted changes" },
+      });
+      yield* turn.request("resolved");
+      assert.deepStrictEqual(
+        turn.state
+          .commands()
+          .filter((command) => command["type"] === "prompt")
+          .map((command) => command["message"]),
+        ["/review"],
+      );
+      assert.deepStrictEqual(turn.replies(), [
+        { type: "extension_ui_response", id: "ui-review", value: "2. Review uncommitted changes" },
+      ]);
+      yield* turn.terminal();
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+});
+
+posixOnly("OmpAdapter commands and skills", () => {
+  const recordingHooks = () => {
+    const pushes: Array<{ readonly cwd: string; readonly names: ReadonlyArray<string> }> = [];
+    const hooks: OmpCommandHooks = {
+      onAvailableCommands: (cwd, commands) =>
+        Effect.sync(() => void pushes.push({ cwd, names: commands.map((c) => c.name) })),
+      resolvePrompt: (_cwd, text) => Effect.succeed(rewriteOmpSkillMention(text, new Set(["tdd"]))),
+    };
+    return { hooks, pushes };
+  };
+  const commandsUpdate = (names: ReadonlyArray<string>): FakeOmpStep => ({
+    emit: {
+      type: "available_commands_update",
+      commands: names.map((name) => ({ name, source: "builtin" })),
+    },
+  });
+
+  it.live("hands every available_commands_update to the catalog with the session's cwd", () =>
+    Effect.gen(function* () {
+      const { hooks, pushes } = recordingHooks();
+      const turn = yield* startUiTurn({
+        commands: hooks,
+        afterReady: [commandsUpdate(["compact", "fresh"])],
+        prompt: [PROMPT_ACK, commandsUpdate(["compact", "fresh", "review"]), PROMPT_DONE],
+      });
+      yield* turn.terminal();
+      assert.isTrue(yield* waitUntil(() => pushes.length === 2));
+      assert.deepStrictEqual(pushes, [
+        { cwd: turn.state.dir, names: ["compact", "fresh"] },
+        { cwd: turn.state.dir, names: ["compact", "fresh", "review"] },
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("sends a $skill prompt to OMP as /skill:<name>", () =>
+    Effect.gen(function* () {
+      const { hooks } = recordingHooks();
+      const turn = yield* startUiTurn({
+        commands: hooks,
+        text: "$tdd cover the parser",
+        prompt: [PROMPT_ACK, PROMPT_DONE],
+      });
+      yield* turn.terminal();
+      assert.deepStrictEqual(
+        turn.state
+          .commands()
+          .filter((command) => command["type"] === "prompt")
+          .map((command) => command["message"]),
+        ["/skill:tdd cover the parser"],
+      );
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
