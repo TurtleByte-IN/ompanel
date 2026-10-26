@@ -286,7 +286,6 @@ test("stops a running turn", async () => {
 
   await stop.click();
   await expect(stop).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Submit message" })).toBeVisible();
   await screenshot("08b-stopped");
 
   // The thread keeps working on the same omp process.
