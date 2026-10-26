@@ -131,4 +131,7 @@ are `[grant labels…, grant always-labels…, Approve | Approve Once, session?,
 
 When OMP offers both a folder and a file grant, the card offers the file one:
 the folder grant would cover more than the call being approved. The card shows
-the prompt; its `Reason:` line moves to the card's reason.
+the prompt verbatim, except the `Reason:` line of OMP's header (the line after
+`Allow tool: NAME`, or after `Origin: MCP server tool`), which becomes the
+card's reason. A `Reason:` line anywhere else is part of the tool's arguments,
+which the model wrote, so it stays in the prompt and never becomes the reason.

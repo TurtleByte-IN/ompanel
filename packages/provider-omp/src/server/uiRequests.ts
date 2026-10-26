@@ -469,12 +469,19 @@ export class OmpUiRequests {
         const choices = title === undefined ? null : approvalChoices(title, options);
         if (choices !== null && title !== undefined) {
           const toolName = APPROVAL_TITLE.exec(title)?.[1] ?? "tool";
+          // Only OMP's header carries a reason (`approvalHeader`: the tool line, an optional
+          // `Origin: MCP server tool`, then `Reason: …`). The details below it are the tool's
+          // arguments, written by the model, and are shown verbatim.
           const lines = title.split("\n");
-          const reason = lines
-            .find((line) => line.startsWith("Reason: "))
-            ?.slice("Reason: ".length)
-            .trim();
-          const prompt = lines.filter((line) => !line.startsWith("Reason: ")).join("\n");
+          const reasonIndex = lines[1] === "Origin: MCP server tool" ? 2 : 1;
+          const reasonLine = lines[reasonIndex];
+          const reason = reasonLine?.startsWith("Reason: ")
+            ? reasonLine.slice("Reason: ".length).trim()
+            : undefined;
+          const prompt =
+            reason === undefined || reason.length === 0
+              ? title
+              : lines.filter((_, index) => index !== reasonIndex).join("\n");
           return {
             kind: approvalKind(toolName),
             dialog: { kind: "approval", choices },
