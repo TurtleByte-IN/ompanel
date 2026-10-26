@@ -48,7 +48,7 @@ function seedDatabase(file: string, events: ReadonlyArray<string>) {
     INSERT INTO scheduled_tasks VALUES ('nightly', 'upstream-webhook-token', 'upstream-webhook-secret');
     INSERT INTO scheduled_task_webhook_pending VALUES ('delivery', 'nightly',
       '{"webhook":{"path":"/api/hooks/nightly/upstream-webhook-token","url":"https://relay/nightly/upstream-webhook-token"}}',
-      '{"path":"/api/hooks/nightly/upstream-webhook-token","headers":{"x-echo":"upstream-webhook-secret"}}');
+      '{"path":"/api/hooks/nightly/upstream-webhook-token","headers":{}}');
   `);
   db.close();
 }
@@ -69,6 +69,13 @@ function readDatabase(file: string) {
         .prepare("SELECT webhook_token, webhook_secret FROM scheduled_tasks")
         .all()
         .map((row) => [row.webhook_token, row.webhook_secret]),
+      pending: db
+        .prepare("SELECT task_json, request_json FROM scheduled_task_webhook_pending")
+        .all()
+        .map((row) => ({
+          task: JSON.parse(String(row.task_json)),
+          request: JSON.parse(String(row.request_json)),
+        })),
     };
   } finally {
     db.close();
@@ -182,6 +189,10 @@ describe("migrateLegacyHome", () => {
       assert.notInclude(text, "upstream-webhook-token");
       assert.notInclude(text, "upstream-webhook-secret");
       assert.isFalse(yield* exists(path.join(target, "statev2.sqlite-wal")));
+      const [queued] = copied.pending;
+      assert.match(queued!.task.webhook.path, /\/\[redacted\]$/);
+      assert.match(queued!.task.webhook.url, /\/\[redacted\]$/);
+      assert.match(queued!.request.path, /\/\[redacted\]$/);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

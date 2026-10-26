@@ -162,16 +162,18 @@ async function snapshotDatabase(sourcePath: string, destinationPath: string): Pr
             .filter((name) => name === "webhook_token" || name === "webhook_secret")
         : [];
     // Queued webhook deliveries snapshot the task and request, whose path and URL carry the token.
-    if (existingTables(copy, ["scheduled_task_webhook_pending"]).length > 0) {
-      for (const column of webhookColumns) {
-        copy.exec(
-          `UPDATE scheduled_task_webhook_pending AS pending SET
-            task_json = replace(pending.task_json, tasks.${column}, '[redacted]'),
-            request_json = replace(pending.request_json, tasks.${column}, '[redacted]')
-          FROM scheduled_tasks AS tasks
-          WHERE tasks.task_id = pending.task_id AND tasks.${column} <> ''`,
-        );
-      }
+    // The signing secret is never written there, and being user-chosen it must not be replaced raw.
+    if (
+      webhookColumns.includes("webhook_token") &&
+      existingTables(copy, ["scheduled_task_webhook_pending"]).length > 0
+    ) {
+      copy.exec(
+        `UPDATE scheduled_task_webhook_pending AS pending SET
+          task_json = replace(pending.task_json, tasks.webhook_token, '[redacted]'),
+          request_json = replace(pending.request_json, tasks.webhook_token, '[redacted]')
+        FROM scheduled_tasks AS tasks
+        WHERE tasks.task_id = pending.task_id AND tasks.webhook_token <> ''`,
+      );
     }
     if (webhookColumns.length > 0) {
       copy.exec(
