@@ -51,9 +51,19 @@ Projects & threads, project-scoped; on mobile under Server controls → Agent be
 - Project MCP servers and extensions load when `omp` starts. If a project's trust changed
   since its thread's `omp` started, the next turn fails with `workspace_trust_changed`,
   the overlay already holds the new value, and `omp` restarts; sending again uses it.
+- Trust is per project only: there is no server-wide value, a project without its own
+  value is untrusted, and the toggle shows only when a project is selected (web and mobile).
 - The key is written only to an OMP with contract 1.9.0 or later; an older OMP would
-  reject an overlay with an unknown key. Until `omp.lock` pins such a release, the setting
-  has no effect.
+  reject an overlay with an unknown key. On such an OMP the setting is not enforced: the
+  server reports it (`ompWorkspaceTrust` capability), web and mobile say "Not enforced by
+  this server's OMP version", and opening an untrusted thread logs a warning with the
+  contract versions (no paths). Until `omp.lock` pins such a release, that is the state.
+- Ompanel's thread overlay is a loaded `--config` file, so outside Full access OMP asks
+  before any write to it, whatever the mode or a remembered grant
+  (oh-my-pi `d1dd9c852`: `config/settings.ts:762` registers loaded overlays,
+  `config/agent-config-paths.ts:114` matches them; tests `workspace-trust.test.ts`
+  "recognizes … loaded overlays" and "always asks outside yolo"). In Full access the agent
+  may write it, and the adapter re-pins and re-confirms the guard before the next turn.
 
 ## OMP builtins from the composer
 

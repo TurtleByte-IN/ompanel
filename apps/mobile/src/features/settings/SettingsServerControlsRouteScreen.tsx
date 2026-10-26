@@ -432,16 +432,27 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       onValueChange={(value) => write({ enableAgentBrowserAccess: value })}
                     />
                   </SettingsSection>
-                  <SettingsSection title="Project agent config">
-                    <SettingsSwitchRow
-                      icon={{ ios: "checkmark.shield", android: "lock" }}
-                      label="Trust project agent config"
-                      subtitle="Let OMP use the project's own approval rules, MCP servers, extensions and hooks. Off by default."
-                      value={uniform("trustProjectAgentConfig")}
-                      disabled={disabledFor("trustProjectAgentConfig")}
-                      onValueChange={(value) => write({ trustProjectAgentConfig: value })}
-                    />
-                  </SettingsSection>
+                  {projectSelected ? (
+                    <SettingsSection title="Project agent config">
+                      <SettingsSwitchRow
+                        icon={{ ios: "checkmark.shield", android: "lock" }}
+                        label="Trust project agent config"
+                        subtitle={
+                          selectedTargets.length > 0 &&
+                          selectedTargets.every(
+                            (target) =>
+                              target.serverConfig.environment.capabilities.ompWorkspaceTrust ===
+                              true,
+                          )
+                            ? "Let OMP use this project's own approval rules, MCP servers, extensions and hooks. Off until you turn it on."
+                            : "Not enforced by this server's OMP version: OMP still uses the project's own agent config whatever you choose."
+                        }
+                        value={uniform("trustProjectAgentConfig")}
+                        disabled={disabledFor("trustProjectAgentConfig")}
+                        onValueChange={(value) => write({ trustProjectAgentConfig: value })}
+                      />
+                    </SettingsSection>
+                  ) : null}
                 </>
               ) : null}
 

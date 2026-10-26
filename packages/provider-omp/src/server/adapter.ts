@@ -425,6 +425,13 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       readOmpTraitSelection(input.modelSelection).computer,
       startedTrusted,
     ).pipe(Effect.mapError(openError));
+    // An older OMP would reject the key, so it stays out: say so, without the workspace path.
+    if (!workspaceTrustAvailable && !startedTrusted) {
+      yield* Effect.logWarning("OMP does not enforce this project's untrusted workspace", {
+        contractVersion: options.expectedContractVersion,
+        requiredContractVersion: "1.9.0",
+      });
+    }
     const process = yield* startOmpSessionProcess({
       binaryPath,
       profile: options.profile,

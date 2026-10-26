@@ -1163,8 +1163,8 @@ export const ServerSettings = Schema.Struct({
 
   enableAgentDeviceAccess: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /**
-   * Whether agents may use a project's own agent config (approval rules, MCP servers, extensions,
-   * hooks). Off: a cloned repository cannot widen what the agent does (PRD §9).
+   * Never read: trust is per project only (`projectSettingsOverrides[id].trustProjectAgentConfig`),
+   * so a project without its own value is untrusted (PRD §9). Kept so project scope resolves.
    */
   trustProjectAgentConfig: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** Enabling the Device panel must not grant providers device control. */
@@ -1516,6 +1516,7 @@ export const ServerSettingsPatch = Schema.Struct({
     ),
   ),
   enableAgentDeviceAccess: Schema.optionalKey(Schema.Boolean),
+  /** Scoped writers route this to the selected projects; a server-wide value is never read. */
   trustProjectAgentConfig: Schema.optionalKey(Schema.Boolean),
   enableDeviceSupport: Schema.optionalKey(Schema.Boolean),
   deviceOnboardingCompleted: Schema.optionalKey(Schema.Boolean),

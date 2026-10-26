@@ -15,7 +15,6 @@ import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 
 export class RuntimePolicyResolveError extends Schema.TaggedError<RuntimePolicyResolveError>()(
   "RuntimePolicyResolveError",
@@ -118,10 +117,11 @@ export const layerFromProjectStore: Layer.Layer<
         const workspaceTrusted = Option.isNone(serverSettings)
           ? false
           : yield* serverSettings.value.getSettings.pipe(
+              // Per project only: a server-wide value is never read.
               Effect.map(
                 (settings) =>
-                  resolveProjectSettings(settings, input.thread.projectId).settings
-                    .trustProjectAgentConfig,
+                  settings.projectSettingsOverrides[input.thread.projectId]
+                    ?.trustProjectAgentConfig === true,
               ),
               Effect.orElseSucceed(() => false),
             );
