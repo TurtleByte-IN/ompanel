@@ -50,9 +50,9 @@ The server never looks up `omp` on `PATH`. It takes the first of:
 1. The instance's binary path, if set. It must be an absolute path (a leading
    `~` is expanded). Ompanel runs it as given, without a sha256 check, and fails
    if it does not exist rather than falling back.
-2. The sidecar the desktop app ships, which it names in the server's
-   `OMPANEL_OMP_BUNDLED_PATH` environment variable, if its sha256 matches
-   `omp.lock`.
+2. The sidecar the desktop app ships, which it names by absolute path in the
+   server's `OMPANEL_OMP_BUNDLED_PATH` environment variable, if its sha256
+   matches `omp.lock`. A relative path or bare name there is an error.
 3. `tools/omp/<tag>/<asset>` under the server's base directory (the download
    cache), if its sha256 matches `omp.lock`.
 
