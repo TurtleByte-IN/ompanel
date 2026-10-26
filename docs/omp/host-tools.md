@@ -77,7 +77,7 @@ The session turns on `set_host_cwd_change`. After that, OMP sends a
 | -------------------------------------------------------- | ------------------- |
 | `set_host_tools` (MCP tools)                             | 1.0.0               |
 | `set_tool_enabled` (terminal in place of `bash`)         | 1.1.0               |
-| `set_host_cwd_change`, `host_cwd_change_request` (`/wt`) | 1.4.0 (oh-my-pi#38) |
+| `set_host_cwd_change`, `host_cwd_change_request` (`/wt`) | 1.5.0 (oh-my-pi#38) |
 
 The session compares the pinned contract (`omp.lock`) against these versions.
 It leaves out what the pinned sidecar cannot do. The vendored contract does not

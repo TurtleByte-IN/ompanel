@@ -13,7 +13,7 @@
  *   `/move`. `/wt` gets a T3 worktree; `/move` is refused, because a T3 thread stays in its
  *   project or worktree.
  *
- * `set_tool_enabled` needs RPC contract 1.1.0 and `set_host_cwd_change` 1.4.0 (oh-my-pi#38);
+ * `set_tool_enabled` needs RPC contract 1.1.0 and `set_host_cwd_change` 1.5.0 (oh-my-pi#38);
  * against an older pinned contract the bridge leaves those features off.
  */
 import type { ThreadId } from "@t3tools/contracts";
@@ -40,7 +40,7 @@ export const OMP_TOOL_TOGGLE_CONTRACT = "1.1.0";
  * First RPC contract with `set_host_cwd_change` and `host_cwd_change_request` (oh-my-pi#38).
  * Renumber if that PR lands under a later minor.
  */
-export const OMP_HOST_CWD_CHANGE_CONTRACT = "1.4.0";
+export const OMP_HOST_CWD_CHANGE_CONTRACT = "1.5.0";
 
 const DEFAULT_TIMEOUT_SECONDS = 300;
 const MAX_TIMEOUT_SECONDS = 3_600;
