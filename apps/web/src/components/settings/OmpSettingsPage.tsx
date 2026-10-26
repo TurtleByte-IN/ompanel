@@ -66,9 +66,13 @@ function ModelRolesEditor({
             disabled={field.readOnly}
             value={typeof roles[role] === "string" ? roles[role] : ""}
             onCommit={(next) => {
-              const { [role]: _previous, ...rest } = roles;
               const model = next.trim();
-              onWrite(model === "" ? rest : { ...rest, [role]: model });
+              onWrite(
+                Object.fromEntries([
+                  ...Object.entries(roles).filter(([name]) => name !== role),
+                  ...(model === "" ? [] : [[role, model]]),
+                ]),
+              );
             }}
           />
         </div>
