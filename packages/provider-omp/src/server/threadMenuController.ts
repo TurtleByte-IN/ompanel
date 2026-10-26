@@ -227,6 +227,15 @@ export const makeOmpThreadMenuController = (
       yield* fileSystem.makeDirectory(input.exportsDir, { recursive: true, mode: 0o700 });
       const scratch = yield* fileSystem.makeTempDirectoryScoped({ directory: input.exportsDir });
       const overlay = path.join(scratch, "share-overlay.yml");
+      // `omp share` takes no `--config` (it rejects the flag after the subcommand and ignores it
+      // before), so the overlay goes in `PI_CONFIG_FILES`: one path, replacing any inherited
+      // list. OMP splits that variable on `;` (Windows) or `:`, so a path holding one is refused.
+      if (overlay.includes(path.sep === "\\" ? ";" : ":")) {
+        return yield* fail(
+          "omp_failed",
+          "Ompanel's state directory path contains the system path-list separator, so it cannot share safely.",
+        );
+      }
       yield* fileSystem.writeFileString(overlay, SHARE_OVERLAY, { mode: 0o600 });
       const report = yield* control
         .shareGist(

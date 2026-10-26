@@ -41,7 +41,12 @@ anything leaves the machine:
 Ompanel never lets that fallback upload anything. `omp share` runs with a
 config overlay (`PI_CONFIG_FILES`, which outranks global and project settings)
 that sets `share.serverUrl` to `https://share-server-disabled.invalid`, a host
-that can never resolve (RFC 6761). So:
+that can never resolve (RFC 6761). This is the one place Ompanel sets
+`PI_CONFIG_FILES`, because `omp share` takes no `--config`: the flag is
+rejected after the subcommand and ignored before it, as checked on the pinned
+binary. The variable holds one path and replaces any inherited list. OMP splits
+it on `;` (Windows) or `:`, so a state directory path containing that
+separator is refused. So:
 
 - If the gist fails after the check (a network error, a revoked token), OMP's
   fallback upload fails too. The dialog says "OMP could not create the gist.
