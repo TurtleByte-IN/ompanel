@@ -35,6 +35,13 @@ const SETTINGS: Readonly<Record<string, { type: OmpConfigType; default: unknown 
   "tier.openai": { type: "enum", default: "none" },
   "tools.approval": { type: "record", default: {} },
   "bash.patterns": { type: "array", default: [] },
+  "memory.backend": { type: "enum", default: "off" },
+  "compaction.thresholdPercent": { type: "number", default: 80 },
+  "loop.mode": { type: "enum", default: "prompt" },
+  "eval.py": { type: "boolean", default: true },
+  "web_search.enabled": { type: "boolean", default: true },
+  "skills.enableClaudeUser": { type: "boolean", default: true },
+  "startup.quiet": { type: "boolean", default: false },
 };
 
 /** A scripted `omp config` holding one global layer; `get` prints like `omp config get --json`. */
@@ -129,6 +136,12 @@ describe("OMP settings pages", () => {
           key: "bash.patterns",
           value: [{ match: "git status*", approval: "allow" }],
         },
+        { page: OMP_SETTINGS_PAGES.memory, key: "memory.backend", value: "mnemopi" },
+        { page: OMP_SETTINGS_PAGES.context, key: "compaction.thresholdPercent", value: 65 },
+        { page: OMP_SETTINGS_PAGES.modes, key: "loop.mode", value: "compact" },
+        { page: OMP_SETTINGS_PAGES.runtime, key: "eval.py", value: false },
+        { page: OMP_SETTINGS_PAGES.search, key: "modelRoles", value: { web: "web/searxng" } },
+        { page: OMP_SETTINGS_PAGES.discovery, key: "skills.enableClaudeUser", value: false },
       ];
       yield* makeOmpControlService().pipe(
         Effect.flatMap((control) => {
@@ -205,11 +218,56 @@ describe("OMP settings pages", () => {
         threadOverride: "overlay" as const,
       })),
     };
-    for (const page of [OMP_SETTINGS_PAGES.models, OMP_SETTINGS_PAGES.routing]) {
+    for (const page of [
+      OMP_SETTINGS_PAGES.models,
+      OMP_SETTINGS_PAGES.routing,
+      OMP_SETTINGS_PAGES.discovery,
+    ]) {
       const fields = ompSettingsPageForm(form, page).fields;
       for (const field of fields) {
         assert.strictEqual(field.readOnly, OMP_PATH_SCOPED_KEYS.includes(field.key), field.key);
       }
+    }
+  });
+
+  it("show every terminal-only key read-only and keep other pages writable", () => {
+    const form = {
+      fields: ["startup.quiet", "theme.dark", "statusLine.preset", "eval.py"].map((key) => ({
+        key,
+        group: key.split(".")[0]!,
+        type: "boolean" as const,
+        description: "",
+        source: "global" as const,
+        value: true,
+        redacted: false,
+        credential: false,
+        readOnly: false,
+        launchScoped: false,
+        threadOverride: "overlay" as const,
+      })),
+    };
+    const terminal = ompSettingsPageForm(form, OMP_SETTINGS_PAGES.terminal).fields;
+    assert.deepStrictEqual(
+      terminal.map((field) => [field.key, field.readOnly]),
+      [
+        ["startup.quiet", true],
+        ["theme.dark", true],
+        ["statusLine.preset", true],
+      ],
+    );
+    assert.strictEqual(
+      ompSettingsPageForm(form, OMP_SETTINGS_PAGES.runtime).fields[0]?.readOnly,
+      false,
+    );
+  });
+
+  it("record the PRD keys the pinned OMP does not register, and what replaced them", () => {
+    // PRD §7 names compaction.strategy, a PTY setting and an Exa key; none is registered.
+    for (const gone of ["compaction.strategy", "pty", "bash.pty", "exa.apiKey"]) {
+      assert.notInclude(OMP_SETTING_KEYS, gone);
+    }
+    for (const replacement of ["compaction.methodOrder", "modelRoles", "retry.fallbackChains"]) {
+      assert.include(OMP_SETTING_KEYS, replacement);
     }
   });
 

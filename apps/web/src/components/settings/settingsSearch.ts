@@ -30,6 +30,13 @@ export type SettingsPath =
   | "/settings/omp-advisor"
   | "/settings/omp-sampling"
   | "/settings/omp-approvals"
+  | "/settings/omp-memory"
+  | "/settings/omp-context"
+  | "/settings/omp-modes"
+  | "/settings/omp-runtime"
+  | "/settings/omp-search"
+  | "/settings/omp-discovery"
+  | "/settings/omp-terminal"
   | "/settings/integrations"
   | "/settings/scheduled-tasks"
   | "/settings/source-control"
@@ -97,6 +104,13 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/omp-advisor": "OMP Advisor & Agents",
   "/settings/omp-sampling": "OMP Sampling",
   "/settings/omp-approvals": "OMP Approvals & Tools",
+  "/settings/omp-memory": "OMP Memory",
+  "/settings/omp-context": "OMP Context",
+  "/settings/omp-modes": "OMP Modes",
+  "/settings/omp-runtime": "OMP Runtime",
+  "/settings/omp-search": "OMP Search",
+  "/settings/omp-discovery": "OMP Discovery",
+  "/settings/omp-terminal": "OMP Terminal prefs",
   "/settings/integrations": "Integrations",
   "/settings/scheduled-tasks": "Scheduled Tasks",
   "/settings/source-control": "Source Control",
@@ -750,6 +764,60 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "omp-memory",
+    title: "OMP memory",
+    to: "/settings/omp-memory",
+    searchTerms: [
+      "omp memory backend off local hindsight mnemopi sharpshooter recall retain reflect embeddings memories",
+    ],
+  },
+  {
+    id: "omp-context",
+    title: "OMP context and compaction",
+    to: "/settings/omp-context",
+    searchTerms: [
+      "omp compaction compact context window threshold percent tokens method order strategy idle handoff",
+    ],
+  },
+  {
+    id: "omp-modes",
+    title: "OMP modes",
+    to: "/settings/omp-modes",
+    searchTerms: ["omp plan mode goal mode loop mode autosave continuation default on startup"],
+  },
+  {
+    id: "omp-runtime",
+    title: "OMP runtime",
+    to: "/settings/omp-runtime",
+    searchTerms: [
+      "omp eval python javascript py js runtime tiny model device dtype pty pseudo terminal no-pty",
+    ],
+  },
+  {
+    id: "omp-search",
+    title: "OMP web search",
+    to: "/settings/omp-search",
+    searchTerms: [
+      "omp web search provider order web role fallback chain exa searxng endpoint timeout web_search",
+    ],
+  },
+  {
+    id: "omp-discovery",
+    title: "OMP discovery",
+    to: "/settings/omp-discovery",
+    searchTerms: [
+      "omp inherited config discovery claude codex agents pi skills commands mcp project config context files AGENTS.md enabled disabled providers",
+    ],
+  },
+  {
+    id: "omp-terminal",
+    title: "OMP terminal prefs",
+    to: "/settings/omp-terminal",
+    searchTerms: [
+      "omp terminal only tui startup theme status line keybindings.yml splash changelog",
+    ],
+  },
+  {
     id: "usage-providers",
     title: "Usage providers",
     to: "/settings/providers",
@@ -1118,6 +1186,13 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/omp-advisor": null,
   "/settings/omp-sampling": null,
   "/settings/omp-approvals": null,
+  "/settings/omp-memory": null,
+  "/settings/omp-context": null,
+  "/settings/omp-modes": null,
+  "/settings/omp-runtime": null,
+  "/settings/omp-search": null,
+  "/settings/omp-discovery": null,
+  "/settings/omp-terminal": null,
   "/settings/integrations": null,
   "/settings/source-control": "environment-defaults",
   "/settings/storage": "project-defaults",

@@ -26,7 +26,14 @@ export type OmpSettingsPageId =
   | "thinking"
   | "advisor"
   | "sampling"
-  | "approvals";
+  | "approvals"
+  | "memory"
+  | "context"
+  | "modes"
+  | "runtime"
+  | "search"
+  | "discovery"
+  | "terminal";
 
 export interface OmpSettingsPage {
   readonly id: OmpSettingsPageId;
@@ -34,6 +41,8 @@ export interface OmpSettingsPage {
   readonly description: string;
   /** Exact keys, or prefixes ending in `.` for a whole group; shown in this order. */
   readonly keys: ReadonlyArray<string>;
+  /** Every key is shown, never written: settings only OMP's terminal UI reads. */
+  readonly terminalOnly?: true;
 }
 
 export const OMP_SETTINGS_PAGES: Readonly<Record<OmpSettingsPageId, OmpSettingsPage>> = {
@@ -119,6 +128,78 @@ export const OMP_SETTINGS_PAGES: Readonly<Record<OmpSettingsPageId, OmpSettingsP
       "tools.xdevInlineDevices",
     ],
   },
+  memory: {
+    id: "memory",
+    title: "Memory",
+    description:
+      "Which memory backend OMP runs (off, local summaries, Hindsight, Mnemopi or Sharpshooter) and each backend's settings. OMP starts protocol sessions with memory off unless a layer sets it.",
+    keys: ["memory.backend", "memories.", "hindsight.", "mnemopi.", "sharpshooter."],
+  },
+  context: {
+    id: "context",
+    title: "Context",
+    description:
+      "When and how OMP compacts a long conversation. compaction.methodOrder replaces the old compaction.strategy.",
+    keys: ["compaction."],
+  },
+  modes: {
+    id: "modes",
+    title: "Modes",
+    description: "Plan mode, goal mode and loop mode.",
+    keys: ["plan.", "goal.", "loop."],
+  },
+  runtime: {
+    id: "runtime",
+    title: "Runtime",
+    description:
+      "The Python and JavaScript eval runtimes and the device the local tiny model runs on.",
+    keys: ["eval.", "providers.tinyModelDevice", "providers.tinyModelDtype"],
+  },
+  search: {
+    id: "search",
+    title: "Search",
+    description:
+      "Which search providers web_search tries, in order: the web model role picks the first (web/<provider>), its fallback chain the rest. Exa reads its API key from sign-in or the environment.",
+    keys: [
+      "web_search.enabled",
+      "modelRoles",
+      "retry.fallbackChains",
+      "providers.webSearchTimeoutSeconds",
+      "exa.",
+      "searxng.",
+    ],
+  },
+  discovery: {
+    id: "discovery",
+    title: "Discovery",
+    description:
+      "Which config OMP inherits from other tools: providers it discovers, skills and commands from Claude and other agents' directories, project MCP config and extra context files.",
+    keys: [
+      "enabledProviders",
+      "disabledProviders",
+      "skills.enabled",
+      "skills.enableClaudeUser",
+      "skills.enableClaudeProject",
+      "skills.enableAgentsUser",
+      "skills.enableAgentsProject",
+      "skills.enableCodexUser",
+      "skills.enablePiUser",
+      "skills.enablePiProject",
+      "skills.enableSkillCommands",
+      "commands.enableClaudeUser",
+      "commands.enableClaudeProject",
+      "mcp.enableProjectConfig",
+      "contextFiles.extra",
+    ],
+  },
+  terminal: {
+    id: "terminal",
+    title: "Terminal prefs",
+    description:
+      "Settings only OMP's terminal UI reads: startup, theme, status line and TUI behaviour. Shown for reference; change them in the omp terminal app. Key bindings live in keybindings.yml in OMP's agent directory.",
+    keys: ["startup.", "theme.", "statusLine.", "tui.", "terminal."],
+    terminalOnly: true,
+  },
 };
 
 /** OMP's approval modes (`tools/approval.ts` `APPROVAL_MODES`), with OMP's labels. */
@@ -150,9 +231,12 @@ export const OMP_PATH_SCOPED_KEYS: ReadonlyArray<string> = [
   "disabledProviders",
 ];
 
+/** The model role whose model and fallback chain pick web_search providers (`web/<provider>`). */
+export const OMP_WEB_SEARCH_ROLE = "web";
+
 /**
  * The page's fields, in the page's key order; keys the running OMP lacks are skipped. Path-scoped
- * arrays come back read-only.
+ * arrays and every key of a terminal-only page come back read-only.
  */
 export function ompSettingsPageForm(form: OmpSettingsForm, page: OmpSettingsPage): OmpSettingsForm {
   const fields: OmpSettingsField[] = [];
@@ -160,7 +244,8 @@ export function ompSettingsPageForm(form: OmpSettingsForm, page: OmpSettingsPage
     for (const field of form.fields) {
       const inPage = pattern.endsWith(".") ? field.key.startsWith(pattern) : field.key === pattern;
       if (!inPage) continue;
-      fields.push(OMP_PATH_SCOPED_KEYS.includes(field.key) ? { ...field, readOnly: true } : field);
+      const readOnly = page.terminalOnly === true || OMP_PATH_SCOPED_KEYS.includes(field.key);
+      fields.push(readOnly ? { ...field, readOnly: true } : field);
     }
   }
   return { fields };

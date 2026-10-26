@@ -33,6 +33,13 @@ export interface OmpSettingsFormProps {
   readonly controls?: Readonly<
     Record<string, (field: OmpSettingsField, onWrite: (value: unknown) => void) => ReactNode>
   >;
+  /** Why a non-env read-only field is read-only; defaults to the path-scoped explanation. */
+  readonly readOnlyNote?: string;
+  /**
+   * Keys whose control edits only part of a shared value; a Reset there would clear the whole key
+   * in the layer, so none is offered.
+   */
+  readonly noReset?: ReadonlyArray<string>;
 }
 
 function JsonField({
@@ -136,7 +143,15 @@ function FieldControl({
 }
 
 /** Renders the settings engine's form: one row per OMP setting, grouped by key prefix. */
-export function OmpSettingsForm({ form, scope, onWrite, onReset, controls }: OmpSettingsFormProps) {
+export function OmpSettingsForm({
+  form,
+  scope,
+  onWrite,
+  onReset,
+  controls,
+  readOnlyNote = "Can hold entries scoped to other folders, which this view cannot show; edit it in OMP's config file.",
+  noReset = [],
+}: OmpSettingsFormProps) {
   const groups = new Map<string, OmpSettingsField[]>();
   for (const field of form.fields) {
     const fields = groups.get(field.group);
@@ -160,7 +175,7 @@ export function OmpSettingsForm({ form, scope, onWrite, onReset, controls }: Omp
                     Restarts threads
                   </Badge>
                 ) : null}
-                {field.source === scope && !field.readOnly ? (
+                {field.source === scope && !field.readOnly && !noReset.includes(field.key) ? (
                   <Button variant="ghost" size="compact" onClick={() => onReset(field.key)}>
                     Reset
                   </Button>
@@ -178,7 +193,7 @@ export function OmpSettingsForm({ form, scope, onWrite, onReset, controls }: Omp
                 <p className="text-muted-foreground text-xs">
                   {field.source === "env"
                     ? "Set by an environment variable; change it where OMP is launched."
-                    : "Can hold entries scoped to other folders, which this view cannot show; edit it in OMP's config file."}
+                    : readOnlyNote}
                 </p>
               ) : field.credential ? (
                 <p className="text-muted-foreground text-xs">
