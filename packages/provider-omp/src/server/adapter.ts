@@ -34,6 +34,7 @@ import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import type {
+  Goal,
   GoalResult,
   ImageContent,
   RpcServerFrame,
@@ -1181,21 +1182,37 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
         }),
       );
       lastTurn = { runId: turnInput.runId, attemptId: turnInput.attemptId };
-      const answer: { readonly text: string } | { readonly error: string } =
+      // OMP forgets a completed goal the thread still shows (`ompStateGoal`): show and drop it here.
+      const shown = mapper.providerThread?.goal ?? null;
+      const completed = shown?.status === "complete" ? shown : null;
+      const answer:
+        | { readonly text: string; readonly goal?: Goal | null }
+        | { readonly error: string } =
         command.op === "budget"
           ? { text: OMP_GOAL_BUDGET_REPLY }
           : command.op === "invalid"
             ? { error: command.reason }
-            : yield* process
-                .request("goal", { op: command.op }, { timeoutMs: SELECTION_REQUEST_TIMEOUT_MS })
-                .pipe(
-                  Effect.map((result: GoalResult) => ({ text: ompGoalReply(command.op, result) })),
-                  Effect.catch((error: OmpRpcRequestError) =>
-                    Effect.succeed({
-                      error: error._tag === "OmpRpcCommandError" ? error.detail : error.message,
-                    }),
-                  ),
-                );
+            : completed !== null && command.op === "get"
+              ? { text: `Goal complete: ${completed.objective}` }
+              : completed !== null && command.op === "drop"
+                ? { text: `Goal dropped: ${completed.objective}`, goal: null }
+                : yield* process
+                    .request(
+                      "goal",
+                      { op: command.op },
+                      { timeoutMs: SELECTION_REQUEST_TIMEOUT_MS },
+                    )
+                    .pipe(
+                      Effect.map((result: GoalResult) => ({
+                        text: ompGoalReply(command.op, result),
+                        ...(command.op === "get" ? {} : { goal: result.goal }),
+                      })),
+                      Effect.catch((error: OmpRpcRequestError) =>
+                        Effect.succeed({
+                          error: error._tag === "OmpRpcCommandError" ? error.detail : error.message,
+                        }),
+                      ),
+                    );
       yield* exclusive(
         Effect.gen(function* () {
           if (mapper.activeProviderTurnId !== providerTurnId) return;
@@ -1208,9 +1225,11 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
               true,
             );
           }
+          const now = yield* DateTime.now;
+          if (answer.goal !== undefined) yield* emit(mapper.applyGoal(answer.goal, now));
           // Shown as OMP shows a builtin command's output (`command_output`).
           const output = { type: "command_output", text: answer.text };
-          yield* emit(mapper.handleFrame(output, yield* DateTime.now).events);
+          yield* emit(mapper.handleFrame(output, now).events);
           yield* finalize({ status: "completed" }, true);
         }),
       );

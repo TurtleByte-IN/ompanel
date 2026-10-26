@@ -9,7 +9,12 @@ import type {
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 
 import type { OmpGoalCommand } from "../composer.ts";
-import type { Goal, GoalResult, GoalStatus } from "../../contract/src/wire.generated.ts";
+import type {
+  Goal,
+  GoalModeState,
+  GoalResult,
+  GoalStatus,
+} from "../../contract/src/wire.generated.ts";
 
 /** OMP's goal statuses as T's; a dropped goal is no goal. */
 const GOAL_STATUS: Readonly<Record<GoalStatus, OrchestrationV2ProviderGoalStatus | null>> = {
@@ -38,6 +43,19 @@ export function ompProviderGoal(goal: Goal | null | undefined): OrchestrationV2P
     ...(tokensUsed === undefined ? {} : { tokensUsed }),
     ...(timeUsedSeconds === undefined ? {} : { timeUsedSeconds }),
   };
+}
+
+/**
+ * The goal `get_state` reports, given the one the thread shows. OMP forgets a completed goal
+ * once the turn that completed it ends; the thread keeps showing it complete until the next goal
+ * or a drop (both arrive as `goal_updated`).
+ */
+export function ompStateGoal(
+  reported: GoalModeState | null | undefined,
+  current: OrchestrationV2ProviderGoal | null | undefined,
+): OrchestrationV2ProviderGoal | null {
+  const next = ompProviderGoal(reported?.goal);
+  return next === null && current?.status === "complete" ? current : next;
 }
 
 const STATUS_WORDS: Readonly<Record<GoalStatus, string>> = {

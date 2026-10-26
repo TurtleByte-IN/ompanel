@@ -40,7 +40,7 @@ import type {
   TodoPhase,
   Usage,
 } from "../../contract/src/wire.generated.ts";
-import { ompProviderGoal } from "./goal.ts";
+import { ompProviderGoal, ompStateGoal } from "./goal.ts";
 import {
   advisorNotice,
   cardOutput,
@@ -650,7 +650,7 @@ export class OmpThreadMapper {
             nativeMetadata,
             ...(contextUsage === undefined ? {} : { contextUsage }),
             // A contract without `get_state.goal` leaves the recorded goal alone.
-            ...(state.goal === undefined ? {} : { goal: ompProviderGoal(state.goal?.goal) }),
+            ...(state.goal === undefined ? {} : { goal: ompStateGoal(state.goal, existing.goal) }),
             status: "idle",
             updatedAt: now,
           }
@@ -1144,7 +1144,7 @@ export class OmpThreadMapper {
       ...(contextUsage === undefined ? {} : { contextUsage }),
       ...(refresh.state?.goal === undefined
         ? {}
-        : { goal: ompProviderGoal(refresh.state.goal?.goal) }),
+        : { goal: ompStateGoal(refresh.state.goal, thread.providerThread.goal) }),
       updatedAt: now,
     };
     events.push({

@@ -281,21 +281,29 @@ posixOnly("OmpAdapter goal mode", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.live("a goal_updated frame between turns updates the thread's goal", () =>
-    Effect.gen(function* () {
-      const complete = goal("complete");
-      const { turn, lastGoal } = yield* openThread({
-        commands: {
-          prompt: [
-            { respond: { agentInvoked: true } },
-            { emit: { type: "goal_updated", goal: complete } },
-            ...PROMPT_TURN.slice(1),
-          ],
-        },
-      });
-      yield* turn("Keep going");
-      assert.strictEqual(lastGoal()?.status, "complete");
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  it.live(
+    "a goal_updated frame updates the thread's goal; a completed one stays until dropped",
+    () =>
+      Effect.gen(function* () {
+        const complete = goal("complete");
+        const { turn, sent, lastGoal, outputs } = yield* openThread({
+          commands: {
+            prompt: [
+              { respond: { agentInvoked: true } },
+              { emit: { type: "goal_updated", goal: complete } },
+              ...PROMPT_TURN.slice(1),
+            ],
+          },
+        });
+        yield* turn("Keep going");
+        assert.strictEqual(lastGoal()?.status, "complete");
+        // OMP has already forgotten a completed goal: the adapter shows and drops it itself.
+        yield* turn("/goal");
+        yield* turn("/goal drop");
+        assert.lengthOf(sent("goal"), 0);
+        assert.include(outputs().join("\n"), "Goal complete: Ship the release notes");
+        assert.isNull(lastGoal());
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
 
