@@ -4,12 +4,9 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import { afterEach, beforeEach } from "vite-plus/test";
 import { assert, describe, it } from "@effect/vitest";
-import {
-  OmpAgentFileRef,
-  OmpAgentFilesOperationError,
-  type OmpAgentFileRef as OmpAgentFileRefType,
-} from "@t3tools/contracts";
+import { OmpAgentFileRef, OmpAgentFilesOperationError } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -17,7 +14,6 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
-import { afterEach, beforeEach } from "vitest";
 
 import { makeOmpAgentFilesController, ompAgentDirFiles } from "./agentFiles.ts";
 import { makeOmpControlService, type OmpControlTarget } from "./control.ts";
@@ -25,8 +21,8 @@ import { makeOmpControlService, type OmpControlTarget } from "./control.ts";
 // Links behave differently on Windows (they need privileges); the rules are POSIX-tested.
 const posixOnly = describe.skipIf(HostProcess.Platform.defaultValue() === "win32");
 
-const WATCHDOG: OmpAgentFileRefType = { kind: "watchdog" };
-const agent = (name: string): OmpAgentFileRefType => ({ kind: "agent", name });
+const WATCHDOG: OmpAgentFileRef = { kind: "watchdog" };
+const agent = (name: string): OmpAgentFileRef => ({ kind: "agent", name });
 const version = (text: string) => NodeCrypto.createHash("sha256").update(text).digest("hex");
 
 /** The reason a refused call fails with. */

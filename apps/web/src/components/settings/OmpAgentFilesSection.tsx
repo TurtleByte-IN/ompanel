@@ -250,7 +250,6 @@ export function OmpAgentFilesSection({
           </div>
           <Textarea
             aria-label={`Contents of ${open.relativePath}`}
-            className="font-mono"
             rows={16}
             value={open.draft}
             onChange={(event) => setOpen({ ...open, draft: event.target.value })}

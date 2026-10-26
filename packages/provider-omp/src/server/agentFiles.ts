@@ -1,15 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off - path validation needs `lstat` and an `O_NOFOLLOW` open, which Effect's FileSystem does not expose.
 /**
- * The file editors of Settings → OMP Advisor & Agents: OMP's user-level `WATCHDOG.yml` advisor
- * roster and the custom agents in `agents/*.md`, both in the instance's agent directory. OMP reads
- * the roster from `<agent dir>/WATCHDOG.yml` (`advisor/config.ts` `advisorConfigFilePath`) and the
- * agents from `<agent dir>/agents` (`task/discovery.ts`); `omp config path` prints that directory
- * for the instance's profile and environment, so each call asks it rather than guessing `~/.omp`.
- *
- * Nothing outside the agent directory is read or written: agent names are plain `.md` file names,
- * and a folder or file that is a link must resolve inside the directory. Writes go to a temporary
- * file beside the target and replace it with one rename, and only when the file is still at the
- * version the editor read.
+ * `WATCHDOG.yml` and `agents/*.md` in the agent directory `omp config path` prints for the
+ * instance. Nothing outside it is reached: names are plain, links must resolve inside, and a write
+ * replaces the file by rename only while it is still at the version the editor read.
  */
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
