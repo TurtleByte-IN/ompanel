@@ -28,6 +28,9 @@ import { Route as ChatSettingsScheduledTasksRouteImport } from './routes/_chat.s
 import { Route as ChatSettingsProvidersRouteImport } from './routes/_chat.settings.providers'
 import { Route as ChatSettingsProjectsRouteImport } from './routes/_chat.settings.projects'
 import { Route as ChatSettingsOpenSourceLicensesRouteImport } from './routes/_chat.settings.open-source-licenses'
+import { Route as ChatSettingsOmpThinkingRouteImport } from './routes/_chat.settings.omp-thinking'
+import { Route as ChatSettingsOmpRoutingRouteImport } from './routes/_chat.settings.omp-routing'
+import { Route as ChatSettingsOmpModelsRouteImport } from './routes/_chat.settings.omp-models'
 import { Route as ChatSettingsKeybindingsRouteImport } from './routes/_chat.settings.keybindings'
 import { Route as ChatSettingsIntegrationsRouteImport } from './routes/_chat.settings.integrations'
 import { Route as ChatSettingsGeneralRouteImport } from './routes/_chat.settings.general'
@@ -136,6 +139,21 @@ const ChatSettingsOpenSourceLicensesRoute =
     path: '/open-source-licenses',
     getParentRoute: () => ChatSettingsRoute,
   } as any)
+const ChatSettingsOmpThinkingRoute = ChatSettingsOmpThinkingRouteImport.update({
+  id: '/omp-thinking',
+  path: '/omp-thinking',
+  getParentRoute: () => ChatSettingsRoute,
+} as any)
+const ChatSettingsOmpRoutingRoute = ChatSettingsOmpRoutingRouteImport.update({
+  id: '/omp-routing',
+  path: '/omp-routing',
+  getParentRoute: () => ChatSettingsRoute,
+} as any)
+const ChatSettingsOmpModelsRoute = ChatSettingsOmpModelsRouteImport.update({
+  id: '/omp-models',
+  path: '/omp-models',
+  getParentRoute: () => ChatSettingsRoute,
+} as any)
 const ChatSettingsKeybindingsRoute = ChatSettingsKeybindingsRouteImport.update({
   id: '/keybindings',
   path: '/keybindings',
@@ -211,6 +229,9 @@ export interface FileRoutesByFullPath {
   '/settings/general': typeof ChatSettingsGeneralRoute
   '/settings/integrations': typeof ChatSettingsIntegrationsRoute
   '/settings/keybindings': typeof ChatSettingsKeybindingsRoute
+  '/settings/omp-models': typeof ChatSettingsOmpModelsRoute
+  '/settings/omp-routing': typeof ChatSettingsOmpRoutingRoute
+  '/settings/omp-thinking': typeof ChatSettingsOmpThinkingRoute
   '/settings/open-source-licenses': typeof ChatSettingsOpenSourceLicensesRoute
   '/settings/projects': typeof ChatSettingsProjectsRoute
   '/settings/providers': typeof ChatSettingsProvidersRoute
@@ -241,6 +262,9 @@ export interface FileRoutesByTo {
   '/settings/general': typeof ChatSettingsGeneralRoute
   '/settings/integrations': typeof ChatSettingsIntegrationsRoute
   '/settings/keybindings': typeof ChatSettingsKeybindingsRoute
+  '/settings/omp-models': typeof ChatSettingsOmpModelsRoute
+  '/settings/omp-routing': typeof ChatSettingsOmpRoutingRoute
+  '/settings/omp-thinking': typeof ChatSettingsOmpThinkingRoute
   '/settings/open-source-licenses': typeof ChatSettingsOpenSourceLicensesRoute
   '/settings/projects': typeof ChatSettingsProjectsRoute
   '/settings/providers': typeof ChatSettingsProvidersRoute
@@ -273,6 +297,9 @@ export interface FileRoutesById {
   '/_chat/settings/general': typeof ChatSettingsGeneralRoute
   '/_chat/settings/integrations': typeof ChatSettingsIntegrationsRoute
   '/_chat/settings/keybindings': typeof ChatSettingsKeybindingsRoute
+  '/_chat/settings/omp-models': typeof ChatSettingsOmpModelsRoute
+  '/_chat/settings/omp-routing': typeof ChatSettingsOmpRoutingRoute
+  '/_chat/settings/omp-thinking': typeof ChatSettingsOmpThinkingRoute
   '/_chat/settings/open-source-licenses': typeof ChatSettingsOpenSourceLicensesRoute
   '/_chat/settings/projects': typeof ChatSettingsProjectsRoute
   '/_chat/settings/providers': typeof ChatSettingsProvidersRoute
@@ -305,6 +332,9 @@ export interface FileRouteTypes {
     | '/settings/general'
     | '/settings/integrations'
     | '/settings/keybindings'
+    | '/settings/omp-models'
+    | '/settings/omp-routing'
+    | '/settings/omp-thinking'
     | '/settings/open-source-licenses'
     | '/settings/projects'
     | '/settings/providers'
@@ -335,6 +365,9 @@ export interface FileRouteTypes {
     | '/settings/general'
     | '/settings/integrations'
     | '/settings/keybindings'
+    | '/settings/omp-models'
+    | '/settings/omp-routing'
+    | '/settings/omp-thinking'
     | '/settings/open-source-licenses'
     | '/settings/projects'
     | '/settings/providers'
@@ -366,6 +399,9 @@ export interface FileRouteTypes {
     | '/_chat/settings/general'
     | '/_chat/settings/integrations'
     | '/_chat/settings/keybindings'
+    | '/_chat/settings/omp-models'
+    | '/_chat/settings/omp-routing'
+    | '/_chat/settings/omp-thinking'
     | '/_chat/settings/open-source-licenses'
     | '/_chat/settings/projects'
     | '/_chat/settings/providers'
@@ -520,6 +556,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatSettingsOpenSourceLicensesRouteImport
       parentRoute: typeof ChatSettingsRoute
     }
+    '/_chat/settings/omp-thinking': {
+      id: '/_chat/settings/omp-thinking'
+      path: '/omp-thinking'
+      fullPath: '/settings/omp-thinking'
+      preLoaderRoute: typeof ChatSettingsOmpThinkingRouteImport
+      parentRoute: typeof ChatSettingsRoute
+    }
+    '/_chat/settings/omp-routing': {
+      id: '/_chat/settings/omp-routing'
+      path: '/omp-routing'
+      fullPath: '/settings/omp-routing'
+      preLoaderRoute: typeof ChatSettingsOmpRoutingRouteImport
+      parentRoute: typeof ChatSettingsRoute
+    }
+    '/_chat/settings/omp-models': {
+      id: '/_chat/settings/omp-models'
+      path: '/omp-models'
+      fullPath: '/settings/omp-models'
+      preLoaderRoute: typeof ChatSettingsOmpModelsRouteImport
+      parentRoute: typeof ChatSettingsRoute
+    }
     '/_chat/settings/keybindings': {
       id: '/_chat/settings/keybindings'
       path: '/keybindings'
@@ -602,6 +659,9 @@ interface ChatSettingsRouteChildren {
   ChatSettingsGeneralRoute: typeof ChatSettingsGeneralRoute
   ChatSettingsIntegrationsRoute: typeof ChatSettingsIntegrationsRoute
   ChatSettingsKeybindingsRoute: typeof ChatSettingsKeybindingsRoute
+  ChatSettingsOmpModelsRoute: typeof ChatSettingsOmpModelsRoute
+  ChatSettingsOmpRoutingRoute: typeof ChatSettingsOmpRoutingRoute
+  ChatSettingsOmpThinkingRoute: typeof ChatSettingsOmpThinkingRoute
   ChatSettingsOpenSourceLicensesRoute: typeof ChatSettingsOpenSourceLicensesRoute
   ChatSettingsProjectsRoute: typeof ChatSettingsProjectsRoute
   ChatSettingsProvidersRoute: typeof ChatSettingsProvidersRoute
@@ -620,6 +680,9 @@ const ChatSettingsRouteChildren: ChatSettingsRouteChildren = {
   ChatSettingsGeneralRoute: ChatSettingsGeneralRoute,
   ChatSettingsIntegrationsRoute: ChatSettingsIntegrationsRoute,
   ChatSettingsKeybindingsRoute: ChatSettingsKeybindingsRoute,
+  ChatSettingsOmpModelsRoute: ChatSettingsOmpModelsRoute,
+  ChatSettingsOmpRoutingRoute: ChatSettingsOmpRoutingRoute,
+  ChatSettingsOmpThinkingRoute: ChatSettingsOmpThinkingRoute,
   ChatSettingsOpenSourceLicensesRoute: ChatSettingsOpenSourceLicensesRoute,
   ChatSettingsProjectsRoute: ChatSettingsProjectsRoute,
   ChatSettingsProvidersRoute: ChatSettingsProvidersRoute,

@@ -19,6 +19,10 @@
       "types": "./src/configForm.ts",
       "import": "./src/configForm.ts"
     },
+    "./settingsPages": {
+      "types": "./src/settingsPages.ts",
+      "import": "./src/settingsPages.ts"
+    },
     "./server": {
       "types": "./src/server.ts",
       "import": "./src/server.ts"
