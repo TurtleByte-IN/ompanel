@@ -37,6 +37,8 @@ export const RelayAgentAwarenessPreferences = Schema.Struct({
   notifyOnInput: Schema.Boolean,
   notifyOnCompletion: Schema.Boolean,
   notifyOnFailure: Schema.Boolean,
+  /** Messages the agent sends the user mid-run (OMP `notify`). Absent from older clients: on. */
+  notifyOnAgentMessage: Schema.optional(Schema.Boolean),
 });
 export type RelayAgentAwarenessPreferences = typeof RelayAgentAwarenessPreferences.Type;
 
@@ -81,6 +83,7 @@ export const RelayClientDeviceRecord = Schema.Struct({
     notifyOnInput: Schema.Boolean,
     notifyOnCompletion: Schema.Boolean,
     notifyOnFailure: Schema.Boolean,
+    notifyOnAgentMessage: Schema.optional(Schema.Boolean),
   }),
   liveActivities: Schema.Struct({
     enabled: Schema.Boolean,
@@ -116,6 +119,14 @@ export const RelayDeviceUnregistrationParams = Schema.Struct({
 });
 export type RelayDeviceUnregistrationParams = typeof RelayDeviceUnregistrationParams.Type;
 
+/** The newest message the agent sent the user (OMP `notify`). */
+export const RelayAgentMessage = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  text: TrimmedNonEmptyString,
+  sentAt: TrimmedNonEmptyString,
+});
+export type RelayAgentMessage = typeof RelayAgentMessage.Type;
+
 export const RelayAgentActivityState = Schema.Struct({
   environmentId: EnvironmentId,
   threadId: ThreadId,
@@ -127,6 +138,8 @@ export const RelayAgentActivityState = Schema.Struct({
   modelTitle: TrimmedNonEmptyString,
   updatedAt: TrimmedNonEmptyString,
   deepLink: TrimmedNonEmptyString,
+  /** Relays alert when this changes while the agent works. Absent from older servers. */
+  agentMessage: Schema.optional(RelayAgentMessage),
 });
 export type RelayAgentActivityState = typeof RelayAgentActivityState.Type;
 
@@ -964,6 +977,16 @@ export const RelayOkResponse = Schema.Struct({
 });
 export type RelayOkResponse = typeof RelayOkResponse.Type;
 
+export const RelayDeviceRegistrationResponse = Schema.Struct({
+  ok: Schema.Boolean,
+  /**
+   * The agent-message preference the relay stored. Relays that predate it omit the field and drop
+   * the preference, so a client that turned it off registers again until a relay confirms it.
+   */
+  notifyOnAgentMessage: Schema.optional(Schema.Boolean),
+});
+export type RelayDeviceRegistrationResponse = typeof RelayDeviceRegistrationResponse.Type;
+
 export const RelayPublishResponse = Schema.Struct({
   ok: Schema.Boolean,
   deliveries: Schema.Array(RelayDeliveryResult),
@@ -1002,7 +1025,7 @@ export const RelayRegisterDeviceEndpoint = HttpApiEndpoint.post(
   {
     headers: RelayDpopRequestHeaders,
     payload: RelayDeviceRegistrationRequest,
-    success: RelayOkResponse,
+    success: RelayDeviceRegistrationResponse,
     error: RelayAuthAndInternalErrors,
   },
 ).annotate(OpenApi.Summary, "Register or update a mobile device");

@@ -10,6 +10,7 @@ const NOTIFICATION_PREFERENCES = [
   ["notifyOnInput", "input requests"],
   ["notifyOnCompletion", "completions"],
   ["notifyOnFailure", "failures"],
+  ["notifyOnAgentMessage", "agent messages"],
 ] as const satisfies ReadonlyArray<
   readonly [keyof RelayClientDeviceRecord["notifications"], string]
 >;

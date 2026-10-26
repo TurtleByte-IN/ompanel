@@ -11,7 +11,10 @@ import {
   type RelayAgentActivityPublishProofPayload,
   type RelayAgentActivityState,
 } from "@t3tools/contracts/relay";
-import { projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
+import {
+  AGENT_MESSAGE_ALERT_WINDOW_MS,
+  projectThreadAwarenessV2,
+} from "@t3tools/shared/agentAwareness";
 import { turnItemUpdateCanEndBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
@@ -73,6 +76,19 @@ function isTurnItemPayload(
   );
 }
 
+// The agent's messages to the user (OMP `notify`) reach the relay while it works (P-15).
+function isAgentNotificationPayload(payload: object): boolean {
+  return (
+    "type" in payload &&
+    payload.type === "notification" &&
+    "source" in payload &&
+    typeof payload.source === "object" &&
+    payload.source !== null &&
+    "kind" in payload.source &&
+    payload.source.kind === "agent"
+  );
+}
+
 function shouldPublishAgentAwarenessEvent(
   event: Pick<OrchestrationV2DomainEvent, "type"> & { readonly payload?: unknown },
 ): boolean {
@@ -125,7 +141,11 @@ function shouldPublishAgentAwarenessEvent(
     case "provider-session.detached":
     case "provider-turn.updated":
     case "turn-item.updated":
-      return isTurnItemPayload(event.payload) && turnItemUpdateCanEndBackgroundWork(event.payload);
+      return (
+        isTurnItemPayload(event.payload) &&
+        (turnItemUpdateCanEndBackgroundWork(event.payload) ||
+          isAgentNotificationPayload(event.payload))
+      );
     case "message.updated":
     case "plan.updated":
     case "checkpoint-scope.created":
@@ -183,12 +203,22 @@ function sanitizeRelayAgentActivityState(
   if (state === null) {
     return null;
   }
-  const { detail: _detail, ...rest } = state;
+  const { detail: _detail, agentMessage, ...rest } = state;
   const detail = (state.phase === "failed" ? REDACTED_RELAY_AGENT_FAILURE_DETAIL : state.detail)
     ?.trim()
     .slice(0, RELAY_AGENT_ACTIVITY_DETAIL_MAX_LENGTH)
     .trim();
-  return detail ? { ...rest, detail } : rest;
+  const agentMessageText = agentMessage?.text
+    .trim()
+    .slice(0, RELAY_AGENT_ACTIVITY_DETAIL_MAX_LENGTH)
+    .trim();
+  return {
+    ...rest,
+    ...(detail ? { detail } : {}),
+    ...(agentMessage && agentMessageText
+      ? { agentMessage: { ...agentMessage, text: agentMessageText } }
+      : {}),
+  };
 }
 
 function relayEnvironmentClient(token: string) {
@@ -435,6 +465,55 @@ export const make = Effect.gen(function* () {
     yield* Ref.set(publishedStateByThreadRef, new Map());
   });
 
+  // The agent's words reach the relay only while they can still alert: within the alert window,
+  // and only in the unbroken run of publishes that introduced them. A publish that leaves a
+  // message out retires it, so a later publish (after waiting for input, say) cannot make the
+  // relay see it as new and push it again.
+  const agentMessageByThread = new Map<ThreadId, { readonly id: string; retired: boolean }>();
+  let scheduleAgentMessageExpiry: (
+    threadId: ThreadId,
+    delayMs: number,
+  ) => Effect.Effect<void> = () => Effect.void;
+  const withAlertableAgentMessage = (
+    threadId: ThreadId,
+    state: RelayAgentActivityState | null,
+    nowMs: number,
+  ): RelayAgentActivityState | null => {
+    const message = state?.agentMessage;
+    if (state === null || message === undefined) return state;
+    const sentAtMs = Date.parse(message.sentAt);
+    const entry = agentMessageByThread.get(threadId);
+    if (
+      Number.isFinite(sentAtMs) &&
+      nowMs - sentAtMs <= AGENT_MESSAGE_ALERT_WINDOW_MS &&
+      !(entry?.id === message.id && entry.retired)
+    ) {
+      return state;
+    }
+    const { agentMessage: _agentMessage, ...withoutMessage } = state;
+    return withoutMessage;
+  };
+  const recordPublishedAgentMessage = Effect.fnUntraced(function* (
+    threadId: ThreadId,
+    state: RelayAgentActivityState | null,
+    nowMs: number,
+  ) {
+    const entry = agentMessageByThread.get(threadId);
+    const message = state?.agentMessage;
+    if (state === null) {
+      agentMessageByThread.delete(threadId);
+    } else if (message === undefined) {
+      if (entry !== undefined) entry.retired = true;
+    } else if (entry?.id !== message.id) {
+      agentMessageByThread.set(threadId, { id: message.id, retired: false });
+      // Publish again once the window closes, so the relay's copy of the words goes too.
+      yield* scheduleAgentMessageExpiry(
+        threadId,
+        Date.parse(message.sentAt) + AGENT_MESSAGE_ALERT_WINDOW_MS - nowMs + 1_000,
+      );
+    }
+  });
+
   const publishThreadUnsafe = Effect.fn("publishThreadUnsafe")(function* (threadId: ThreadId) {
     const publishAgentActivity = yield* readPublishAgentActivityEnabled;
     if (!publishAgentActivity) {
@@ -528,12 +607,17 @@ export const make = Effect.gen(function* () {
     const project = Option.isSome(thread)
       ? yield* projects.getById(thread.value.projectId)
       : Option.none<Project>();
-    const snapshot = resolveAgentAwarenessRelayPublishSnapshot({
+    const nowMs = (yield* DateTime.now).epochMilliseconds;
+    const resolved = resolveAgentAwarenessRelayPublishSnapshot({
       environmentId,
       threadId,
       thread,
       project,
     });
+    const snapshot = {
+      ...resolved,
+      state: withAlertableAgentMessage(threadId, resolved.state, nowMs),
+    };
     const publishIdentity = agentAwarenessPublishIdentity(snapshot.state);
     const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
     if (
@@ -563,7 +647,6 @@ export const make = Effect.gen(function* () {
       snapshot.state?.phase === "completed";
     if (requiresConfirmation) {
       if (snapshot.state?.phase === "completed") heldCompletions.add(threadId);
-      const nowMs = (yield* DateTime.now).epochMilliseconds;
       const deadline = publishConfirmDeadlines.get(threadId);
       if (deadline === undefined) {
         publishConfirmDeadlines.set(threadId, nowMs + 5_000);
@@ -608,6 +691,7 @@ export const make = Effect.gen(function* () {
           state: completion,
           reason: unsettled.reason,
         }).pipe(withRelayClientTracing);
+        yield* recordPublishedAgentMessage(threadId, completion, nowMs);
         heldCompletions.delete(threadId);
         publishConfirmDeadlines.set(threadId, nowMs + 5_000);
         yield* Ref.update(publishedStateByThreadRef, (publishedStates) =>
@@ -639,6 +723,7 @@ export const make = Effect.gen(function* () {
       state: snapshot.state,
       reason: snapshot.reason,
     }).pipe(withRelayClientTracing);
+    yield* recordPublishedAgentMessage(threadId, snapshot.state, nowMs);
     publishConfirmDeadlines.delete(threadId);
     heldCompletions.delete(threadId);
     yield* Ref.update(publishedStateByThreadRef, (publishedStates) => {
@@ -787,6 +872,20 @@ export const make = Effect.gen(function* () {
         Effect.andThen(worker.enqueue(threadId)),
         Effect.catchCause((cause) =>
           Effect.logWarning("deferred agent activity confirmation failed", {
+            threadId,
+            cause: Cause.pretty(cause),
+          }),
+        ),
+      ),
+      scope,
+    ).pipe(Effect.asVoid);
+
+  scheduleAgentMessageExpiry = (threadId, delayMs) =>
+    Effect.forkIn(
+      Effect.sleep(Math.max(0, delayMs)).pipe(
+        Effect.andThen(worker.enqueue(threadId)),
+        Effect.catchCause((cause) =>
+          Effect.logWarning("agent message expiry publish failed", {
             threadId,
             cause: Cause.pretty(cause),
           }),

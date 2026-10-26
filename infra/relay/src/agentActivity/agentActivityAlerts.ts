@@ -1,7 +1,9 @@
 import type {
   RelayAgentActivityAggregateRow,
   RelayAgentActivityAggregateState,
+  RelayAgentActivityState,
   RelayAgentAwarenessPreferences,
+  RelayAgentMessage,
 } from "@t3tools/contracts/relay";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
@@ -158,4 +160,27 @@ export function shouldAlertForActivity(input: {
     ((input.phase !== "completed" && input.phase !== "failed") ||
       isFreshTerminalNotification(input.updatedAt, input.nowMs))
   );
+}
+
+/**
+ * A message the agent sent the user (OMP `notify`) that this publish introduced. Only while the
+ * agent works: attention and terminal transitions carry their own alert.
+ */
+export function newAgentMessage(input: {
+  readonly previous: RelayAgentActivityState | null;
+  readonly next: RelayAgentActivityState;
+  readonly nowMs: number;
+}): RelayAgentMessage | null {
+  const message = input.next.agentMessage;
+  if (message === undefined) return null;
+  if (input.next.phase !== "starting" && input.next.phase !== "running") return null;
+  if (input.previous?.agentMessage?.id === message.id) return null;
+  return isFreshTerminalNotification(message.sentAt, input.nowMs) ? message : null;
+}
+
+/** Devices registered before the preference existed omit it and get agent messages. */
+export function agentMessageAlertAllowed(
+  preferences: RelayAgentAwarenessPreferences | null,
+): boolean {
+  return preferences?.notificationsEnabled === true && preferences.notifyOnAgentMessage !== false;
 }

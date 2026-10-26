@@ -24,10 +24,16 @@ import * as FcmDeliveryQueueSender from "./FcmDeliveryQueueSender.ts";
 import * as FcmClient from "./FcmClient.ts";
 import { androidActivityData, fitFcmData } from "./fcmPayloads.ts";
 import { makeAggregateState, statusForPhase } from "./agentActivityAggregate.ts";
-import { isExpiredAgentActivityState, notificationForActivity } from "./agentActivityPayloads.ts";
 import {
+  isExpiredAgentActivityState,
+  notificationForActivity,
+  notificationForAgentMessage,
+} from "./agentActivityPayloads.ts";
+import {
+  agentMessageAlertAllowed,
   alertForActivityRows,
   attentionTransitionRows,
+  isFreshTerminalNotification,
   terminalTransitionRows,
   shouldAlertForActivity,
 } from "./agentActivityAlerts.ts";
@@ -39,6 +45,8 @@ export const FcmDeliveryJob = Schema.Struct({
   state: Schema.NullOr(RelayAgentActivityState),
   queuedAt: Schema.Number,
   replay: Schema.optional(Schema.Boolean),
+  /** The publish introduced this agent message (OMP `notify`); alert it if nothing else rings. */
+  agentMessageId: Schema.optional(Schema.String),
 });
 export type FcmDeliveryJob = typeof FcmDeliveryJob.Type;
 const decodeJob = Schema.decodeUnknownEffect(FcmDeliveryJob);
@@ -67,6 +75,31 @@ export function androidAlertForState(
   const notification = notificationForActivity({ ...state, status: statusForPhase(state.phase) });
   return {
     alert_id: JSON.stringify([state.environmentId, state.threadId, state.phase, state.updatedAt]),
+    alert_group: JSON.stringify([state.environmentId, state.threadId]),
+    alert_title: notification.title,
+    alert_body: notification.body,
+    alert_path: notification.deepLink,
+  };
+}
+
+/** Alerts the agent's message while the stored row still carries it and it is fresh. */
+export function androidAlertForAgentMessage(
+  state: RelayAgentActivityState,
+  agentMessageId: string,
+  preferences: RelayAgentAwarenessPreferences,
+  nowMs: number,
+) {
+  const message = state.agentMessage;
+  if (
+    message?.id !== agentMessageId ||
+    !agentMessageAlertAllowed(preferences) ||
+    !isFreshTerminalNotification(message.sentAt, nowMs)
+  ) {
+    return null;
+  }
+  const notification = notificationForAgentMessage(state, message);
+  return {
+    alert_id: JSON.stringify([state.environmentId, state.threadId, "agent_message", message.id]),
     alert_group: JSON.stringify([state.environmentId, state.threadId]),
     alert_title: notification.title,
     alert_body: notification.body,
@@ -120,6 +153,7 @@ export class FcmDeliveries extends Context.Service<
       readonly target: LiveActivities.TargetRow;
       readonly state: RelayAgentActivityState | null;
       readonly replay?: boolean;
+      readonly agentMessageId?: string;
     }) => Effect.Effect<RelayDeliveryResult | null, FcmDeliveryError>;
     readonly process: (
       body: unknown,
@@ -169,6 +203,7 @@ export const make = Effect.gen(function* () {
           token: input.target.push_token,
           state: input.state,
           ...(input.replay ? { replay: true } : {}),
+          ...(input.agentMessageId === undefined ? {} : { agentMessageId: input.agentMessageId }),
           queuedAt: now.epochMilliseconds,
         })
         .pipe(Effect.mapError((cause) => new FcmDeliveryError({ operation: "enqueue", cause })));
@@ -211,7 +246,11 @@ export const make = Effect.gen(function* () {
       const previousAggregate = target.last_aggregate_json
         ? Option.getOrNull(decodePreviousActivity(target.last_aggregate_json))
         : null;
-      let alert: ReturnType<typeof androidAlertForState | typeof androidAlertForAggregate> = null;
+      let alert: ReturnType<
+        | typeof androidAlertForState
+        | typeof androidAlertForAggregate
+        | typeof androidAlertForAgentMessage
+      > = null;
       // Deletions update the card but must not consume another thread's pending completion alert.
       let acknowledgeAggregate = job.state !== null || job.replay === true || aggregate === null;
       if (job.state && preferences.value.notificationsEnabled) {
@@ -279,6 +318,20 @@ export const make = Effect.gen(function* () {
           !isExpiredAgentActivityState(state, now.epochMilliseconds)
         ) {
           alert = androidAlertForState(state, preferences.value, now.epochMilliseconds);
+        }
+        // Attention and terminal transitions ring first; the agent's message rings otherwise.
+        if (
+          alert === null &&
+          job.agentMessageId !== undefined &&
+          deliveryUser?.notificationsEnabled &&
+          state !== null
+        ) {
+          alert = androidAlertForAgentMessage(
+            state,
+            job.agentMessageId,
+            preferences.value,
+            now.epochMilliseconds,
+          );
         }
       }
       const displayedAggregate =

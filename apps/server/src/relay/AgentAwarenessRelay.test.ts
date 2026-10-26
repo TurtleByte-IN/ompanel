@@ -10,7 +10,9 @@ import {
   type OrchestrationV2TurnItem,
   ProjectId,
   ProviderInstanceId,
+  ProviderSessionId,
   RunId,
+  RuntimeRequestId,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -713,6 +715,217 @@ describe("AgentAwarenessRelay", () => {
         publications.map((publication) => publication.state?.phase),
         ["running", "completed"],
       );
+    }).pipe(Effect.scoped, Effect.provide(ProjectionStore.layerMemory)),
+  );
+
+  it.effect("publishes an OMP notify as the thread's agent message while it works", () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const events = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
+      const pulls = yield* Queue.unbounded<void>();
+      const { relay, shellReads, publications } = yield* makeTestRelay({
+        readShell: (threadId) => store.getThreadShell(threadId).pipe(Effect.orDie),
+        domainEvents: Stream.fromEffectRepeat(
+          Queue.offer(pulls, undefined).pipe(Effect.andThen(Queue.take(events))),
+        ),
+      });
+      yield* relay.start();
+      yield* Queue.take(pulls);
+      const deliver = Effect.fnUntraced(function* (event: OrchestrationV2DomainEvent) {
+        yield* store.apply(event);
+        yield* Queue.offer(events, event);
+        yield* Queue.take(pulls);
+        yield* relay.drain;
+      });
+
+      const now = yield* DateTime.now;
+      const runId = RunId.make("run:notify");
+      const run = {
+        id: runId,
+        threadId: THREAD_ID,
+        ordinal: 1,
+        providerInstanceId: ProviderInstanceId.make("omp"),
+        modelSelection: { instanceId: ProviderInstanceId.make("omp"), model: "test-model" },
+        providerThreadId: null,
+        userMessageId: MessageId.make("message:notify"),
+        rootNodeId: null,
+        activeAttemptId: null,
+        status: "running" as const,
+        requestedAt: now,
+        startedAt: now,
+        completedAt: null,
+        checkpointId: null,
+        contextHandoffId: null,
+      };
+      // What provider-omp's mapper makes of `extension_ui_request` `notify` (mapper.test.ts).
+      const notification = (
+        id: string,
+        kind: "agent" | "system",
+        summary: string,
+        inRun: RunId = runId,
+        at: DateTime.Utc = now,
+      ) =>
+        ({
+          id: EventId.make(`event:${id}`),
+          type: "turn-item.updated",
+          threadId: THREAD_ID,
+          runId: inRun,
+          occurredAt: at,
+          payload: {
+            id: TurnItemId.make(id),
+            threadId: THREAD_ID,
+            runId: inRun,
+            nodeId: NodeId.make(`node:${id}`),
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 1,
+            title: null,
+            startedAt: at,
+            completedAt: at,
+            updatedAt: at,
+            status: "completed",
+            type: "notification",
+            source: { kind },
+            outcome: "updated",
+            summary,
+          },
+        }) satisfies OrchestrationV2DomainEvent;
+
+      yield* deliver({
+        id: EventId.make("event:notify:thread"),
+        type: "thread.created",
+        threadId: THREAD_ID,
+        occurredAt: now,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: THREAD_ID,
+          projectId: PROJECT_ID,
+          title: "Thread",
+          providerInstanceId: ProviderInstanceId.make("omp"),
+          modelSelection: { instanceId: ProviderInstanceId.make("omp"), model: "test-model" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: { rootThreadId: THREAD_ID, parentThreadId: null, relationshipToParent: null },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+      yield* deliver({
+        id: EventId.make("event:notify:run"),
+        type: "run.created",
+        threadId: THREAD_ID,
+        runId,
+        occurredAt: now,
+        payload: run,
+      });
+      assert.deepEqual(
+        publications.map((publication) => publication.state?.agentMessage),
+        [undefined],
+      );
+
+      // Notices OMP itself prints never reach the relay; only the agent talking to the user does.
+      const readsBeforeNotice = shellReads.length;
+      yield* deliver(notification("notice:1", "system", "Context: 12% used"));
+      assert.equal(shellReads.length, readsBeforeNotice);
+
+      yield* deliver(notification("notify:1", "agent", "Build is green"));
+      assert.deepEqual(
+        publications.map((publication) => [
+          publication.state?.phase,
+          publication.state?.agentMessage?.id,
+          publication.state?.agentMessage?.text,
+        ]),
+        [
+          ["running", undefined, undefined],
+          ["running", "notify:1", "Build is green"],
+        ],
+      );
+      assert.equal(publications[1]?.state?.agentMessage?.sentAt, DateTime.formatIso(now));
+      const messagesSince = (from: number) =>
+        publications
+          .slice(from)
+          .map((publication) => [publication.state?.phase, publication.state?.agentMessage?.id]);
+
+      // Stop, then a follow-up run inside the alert window: the earlier run's message stays put.
+      yield* deliver({
+        id: EventId.make("event:notify:run:stopped"),
+        type: "run.updated",
+        threadId: THREAD_ID,
+        runId,
+        occurredAt: now,
+        payload: { ...run, status: "completed", completedAt: now },
+      });
+      const followUpRunId = RunId.make("run:notify:follow-up");
+      yield* deliver({
+        id: EventId.make("event:notify:run:follow-up"),
+        type: "run.created",
+        threadId: THREAD_ID,
+        runId: followUpRunId,
+        occurredAt: now,
+        payload: {
+          ...run,
+          id: followUpRunId,
+          ordinal: 2,
+          userMessageId: MessageId.make("message:notify:follow-up"),
+        },
+      });
+      assert.deepEqual(messagesSince(2), [["running", undefined]]);
+
+      // Waiting for input carries its own alert, so the words stay off the relay; once the run
+      // works again the message was already alerted and is not sent a second time.
+      yield* deliver(notification("notify:2", "agent", "Tests pass", followUpRunId));
+      const request = (status: "pending" | "resolved") =>
+        ({
+          id: EventId.make(`event:notify:request:${status}`),
+          type: "runtime-request.updated",
+          threadId: THREAD_ID,
+          runId: followUpRunId,
+          nodeId: NodeId.make("node:notify:request"),
+          occurredAt: now,
+          payload: {
+            id: RuntimeRequestId.make("request:notify"),
+            nodeId: NodeId.make("node:notify:request"),
+            providerTurnId: null,
+            nativeRequestRef: null,
+            kind: "user_input",
+            status,
+            responseCapability: {
+              type: "live",
+              providerSessionId: ProviderSessionId.make("session:notify"),
+            },
+            createdAt: now,
+            resolvedAt: status === "resolved" ? now : null,
+          },
+        }) satisfies OrchestrationV2DomainEvent;
+      yield* deliver(request("pending"));
+      yield* deliver(request("resolved"));
+      assert.deepEqual(messagesSince(3), [
+        ["running", "notify:2"],
+        ["waiting_for_input", undefined],
+        ["running", undefined],
+      ]);
+
+      // The relay holds the words only for the alert window: the server publishes again without
+      // them when it closes.
+      const later = yield* DateTime.now;
+      yield* deliver(notification("notify:3", "agent", "Deploying", followUpRunId, later));
+      assert.deepEqual(messagesSince(6), [["running", "notify:3"]]);
+      yield* TestClock.adjust("2 minutes");
+      yield* TestClock.adjust("2 seconds");
+      yield* relay.drain;
+      assert.deepEqual(messagesSince(7), [["running", undefined]]);
     }).pipe(Effect.scoped, Effect.provide(ProjectionStore.layerMemory)),
   );
 });

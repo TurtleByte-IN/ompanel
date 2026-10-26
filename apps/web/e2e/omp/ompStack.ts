@@ -11,6 +11,7 @@ import * as NodePath from "node:path";
 
 import { type FakeSignInVendor, startFakeSignInVendor, writeFakeSignInOmp } from "./fakeSignIn.ts";
 import { type OtlpMetricsReceiver, startOtlpMetricsReceiver } from "./otlpMetrics.ts";
+import { linkToRelayStub, type RelayStub, startRelayStub } from "./relayStub.ts";
 import { type ScriptedModel, startScriptedModel } from "./scriptedModel.ts";
 
 const REPO_ROOT = NodePath.resolve(import.meta.dirname, "..", "..", "..", "..");
@@ -30,6 +31,8 @@ export interface OmpStackOptions {
   readonly secretEnvironment?: Readonly<Record<string, string>>;
   /** Give OMP's control servers a fake login provider (`fakeSignIn.ts`); the G2 suite's sign-in. */
   readonly fakeSignIn?: boolean;
+  /** Link the environment to a loopback relay that records agent-activity publishes (P-15). */
+  readonly relayStub?: boolean;
   /**
    * Start OMP as a fresh install: no default model and no `models.yml`, so `omp --mode rpc`
    * refuses to start until {@link OmpStack.completeOmpSetup}.
@@ -59,6 +62,8 @@ export interface OmpStack {
   readonly omp: (...args: ReadonlyArray<string>) => string;
   /** The fake vendor and where the wrapper keeps its account, with `fakeSignIn`. */
   readonly signIn: { readonly vendor: FakeSignInVendor; readonly accountFile: string } | null;
+  /** The loopback relay, with `relayStub`. */
+  readonly relay: RelayStub | null;
   /**
    * Leaves the OMP home as `omp setup` would: the scripted model's provider and a default model.
    * A no-op unless the stack started with `freshOmpHome`.
@@ -186,6 +191,8 @@ export const startOmpStack = async (options: OmpStackOptions = {}): Promise<OmpS
 
   const model = await startScriptedModel(modelDir);
   const metrics = await startOtlpMetricsReceiver();
+  const relay = options.relayStub === true ? await startRelayStub() : null;
+  if (relay !== null) linkToRelayStub(NodePath.join(userdata, "secrets"), relay.url);
   const port = await freePort();
   const logPath = NodePath.join(root, "server.log");
   const log = NodeFS.openSync(logPath, "a");
@@ -250,6 +257,7 @@ export const startOmpStack = async (options: OmpStackOptions = {}): Promise<OmpS
     git,
     omp,
     signIn,
+    relay,
     completeOmpSetup,
     serverLog: () =>
       secrets.reduce(
@@ -270,6 +278,7 @@ export const startOmpStack = async (options: OmpStackOptions = {}): Promise<OmpS
       NodeFS.closeSync(log);
       await model.close();
       await metrics.close();
+      await relay?.close();
       await vendor?.close();
       NodeFS.rmSync(root, { recursive: true, force: true });
     },

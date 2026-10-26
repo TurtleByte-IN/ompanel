@@ -1,6 +1,8 @@
 import type {
   RelayAgentActivityAggregateState,
+  RelayAgentActivityState,
   RelayAgentAwarenessPreferences,
+  RelayAgentMessage,
   RelayDeliveryKind,
   RelayDeliveryResult,
 } from "@t3tools/contracts/relay";
@@ -21,6 +23,7 @@ import {
   isExpiredAgentActivityState,
   isTerminalPhase,
   notificationForActivity,
+  notificationForAgentMessage,
   sanitizeAgentActivityAggregateState,
   sanitizeApnsNotificationPayload,
 } from "./agentActivityPayloads.ts";
@@ -45,9 +48,11 @@ import * as ApnsDeliveryQueue from "./ApnsDeliveryQueue.ts";
 import { withSpanAttributes } from "../observability.ts";
 
 import {
+  agentMessageAlertAllowed,
   alertForAttentionTransition,
   alertForNewlyTerminal,
   alertForTerminalAggregate,
+  isFreshTerminalNotification,
   rowPhasesChanged,
   shouldAlertForActivity,
 } from "./agentActivityAlerts.ts";
@@ -506,6 +511,12 @@ export class ApnsDeliveries extends Context.Service<
       readonly target: LiveActivities.TargetRow;
       readonly aggregate: RelayAgentActivityAggregateState | null;
     }) => Effect.Effect<RelayDeliveryResult | null, ApnsDeliveryError>;
+    /** Alerts a message the agent sent the user (OMP `notify`) as a plain push notification. */
+    readonly sendAgentMessageForTarget: (input: {
+      readonly target: LiveActivities.TargetRow;
+      readonly state: RelayAgentActivityState;
+      readonly message: RelayAgentMessage;
+    }) => Effect.Effect<RelayDeliveryResult | null, ApnsDeliveryError>;
     readonly sendLiveActivity: (
       input: SendLiveActivityDeliveryInput,
     ) => Effect.Effect<RelayDeliveryResult, ApnsDeliveryError>;
@@ -940,15 +951,19 @@ export const make = Effect.gen(function* () {
       deliveryTarget = currentTarget;
       const preferences = parsePreferences(currentTarget.preferences_json);
       const alertAllowed =
-        notification.phase !== undefined && notification.updatedAt !== undefined
-          ? shouldAlertForActivity({
-              ...notification,
-              phase: notification.phase,
-              updatedAt: notification.updatedAt,
-              preferences,
-              nowMs: now.epochMilliseconds,
-            })
-          : preferences?.notificationsEnabled === true;
+        notification.agentMessageId !== undefined
+          ? agentMessageAlertAllowed(preferences) &&
+            notification.updatedAt !== undefined &&
+            isFreshTerminalNotification(notification.updatedAt, now.epochMilliseconds)
+          : notification.phase !== undefined && notification.updatedAt !== undefined
+            ? shouldAlertForActivity({
+                ...notification,
+                phase: notification.phase,
+                updatedAt: notification.updatedAt,
+                preferences,
+                nowMs: now.epochMilliseconds,
+              })
+            : preferences?.notificationsEnabled === true;
       if (!alertAllowed) {
         yield* attempts.completeSourceJob({
           sourceJobId: input.sourceJobId,
@@ -1119,6 +1134,24 @@ export const make = Effect.gen(function* () {
             notification,
           })
         : Effect.succeed(null);
+    }),
+    sendAgentMessageForTarget: Effect.fnUntraced(function* (input) {
+      const token = input.target.push_token;
+      if (
+        !config.apns ||
+        !token ||
+        !agentMessageAlertAllowed(parsePreferences(input.target.preferences_json))
+      ) {
+        return null;
+      }
+      return yield* deliveryQueue.enqueuePushNotification({
+        userId: input.target.user_id,
+        deviceId: input.target.device_id,
+        token,
+        bundleId: input.target.bundle_id,
+        apsEnvironment: input.target.aps_environment,
+        notification: notificationForAgentMessage(input.state, input.message),
+      });
     }),
     sendForTarget: Effect.fnUntraced(function* (input) {
       if (!config.apns) return null;

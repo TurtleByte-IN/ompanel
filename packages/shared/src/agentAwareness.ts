@@ -28,7 +28,19 @@ export interface AgentAwarenessState {
   readonly modelTitle: string;
   readonly updatedAt: string;
   readonly deepLink: string;
+  /**
+   * The newest message the agent sent the user, only while the run that sent it is working;
+   * relays alert when its id changes. Its text never outlives that window on the relay.
+   */
+  readonly agentMessage?: {
+    readonly id: string;
+    readonly text: string;
+    readonly sentAt: string;
+  };
 }
+
+/** How long after the agent sends a message it may still alert, and so reach the relay. */
+export const AGENT_MESSAGE_ALERT_WINDOW_MS = 2 * 60_000;
 
 function buildAgentAwarenessDeepLink(input: {
   readonly environmentId: EnvironmentId;
@@ -42,8 +54,10 @@ export interface ProjectThreadAwarenessV2Input {
   readonly project: Pick<Project, "title">;
   readonly thread: Pick<
     OrchestrationV2ThreadShell,
+    | "activeRunId"
     | "activityRunStatus"
     | "id"
+    | "latestAgentNotification"
     | "lineage"
     | "latestRunStopRequested"
     | "modelSelection"
@@ -80,6 +94,7 @@ export function projectThreadAwarenessV2(
       : phase === "failed"
         ? "The agent run failed."
         : undefined;
+  const agentMessage = agentMessageForAwareness(thread, phase);
   return {
     environmentId,
     threadId: thread.id,
@@ -91,6 +106,32 @@ export function projectThreadAwarenessV2(
     modelTitle: thread.modelSelection.model,
     updatedAt: DateTime.formatIso(thread.updatedAt),
     deepLink: buildAgentAwarenessDeepLink({ environmentId, threadId: thread.id }),
+    ...(agentMessage === null ? {} : { agentMessage }),
+  };
+}
+
+/**
+ * The agent's message rides along only while its own run is still working. Waiting and terminal
+ * phases carry their own alert, and after Stop or a settle a follow-up run must not push a message
+ * an earlier run sent.
+ */
+function agentMessageForAwareness(
+  thread: ProjectThreadAwarenessV2Input["thread"],
+  phase: AgentAwarenessPhase,
+): NonNullable<AgentAwarenessState["agentMessage"]> | null {
+  const notification = thread.latestAgentNotification;
+  if (
+    notification == null ||
+    (phase !== "starting" && phase !== "running") ||
+    notification.runId === null ||
+    notification.runId !== thread.activeRunId
+  ) {
+    return null;
+  }
+  return {
+    id: notification.itemId,
+    text: notification.summary,
+    sentAt: notification.notifiedAt,
   };
 }
 

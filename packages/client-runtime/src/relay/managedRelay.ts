@@ -20,6 +20,7 @@ import {
   type RelayAgentActivitySnapshotResponse,
   type RelayLiveActivityRegistrationRequest,
   RelayMobileRegistrationScope,
+  type RelayDeviceRegistrationResponse,
   type RelayOkResponse,
   type RelayPublicClientId,
   RelayRegisterDeviceEndpoint,
@@ -286,7 +287,7 @@ export class ManagedRelayClient extends Context.Service<
     readonly registerDevice: (input: {
       readonly clerkToken: string;
       readonly payload: RelayDeviceRegistrationRequest;
-    }) => Effect.Effect<RelayOkResponse, ManagedRelayClientError>;
+    }) => Effect.Effect<RelayDeviceRegistrationResponse, ManagedRelayClientError>;
     readonly unregisterDevice: (input: {
       readonly clerkToken: string;
       readonly deviceId: string;

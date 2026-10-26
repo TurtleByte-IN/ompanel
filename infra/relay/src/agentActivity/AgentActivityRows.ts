@@ -65,10 +65,11 @@ export class AgentActivityRowListPersistenceError extends Schema.TaggedError<Age
 export class AgentActivityRows extends Context.Service<
   AgentActivityRows,
   {
+    /** Returns the state it replaced, so publishes can tell what is new. */
     readonly upsert: (input: {
       readonly environmentPublicKey: string;
       readonly state: RelayAgentActivityState;
-    }) => Effect.Effect<void, AgentActivityRowUpsertPersistenceError>;
+    }) => Effect.Effect<RelayAgentActivityState | null, AgentActivityRowUpsertPersistenceError>;
     readonly pruneTerminal: (input: {
       readonly updatedBefore: string;
     }) => Effect.Effect<void, AgentActivityRowPruneTerminalPersistenceError>;
@@ -121,6 +122,30 @@ export const make = Effect.gen(function* () {
             }),
         ),
       );
+      const upsertError = (cause: unknown) =>
+        new AgentActivityRowUpsertPersistenceError({
+          environmentId: input.state.environmentId,
+          threadId: input.state.threadId,
+          cause,
+        });
+      const previous = yield* db
+        .select({ stateJson: relayAgentActivityRows.stateJson })
+        .from(relayAgentActivityRows)
+        .where(
+          and(
+            eq(relayAgentActivityRows.environmentId, input.state.environmentId),
+            eq(relayAgentActivityRows.environmentPublicKey, input.environmentPublicKey),
+            eq(relayAgentActivityRows.threadId, input.state.threadId),
+          ),
+        )
+        .pipe(
+          Effect.map((rows) =>
+            rows[0] === undefined
+              ? null
+              : Option.getOrNull(decodeRelayAgentActivityState(rows[0].stateJson)),
+          ),
+          Effect.mapError(upsertError),
+        );
       yield* db
         .insert(relayAgentActivityRows)
         .values({
@@ -142,16 +167,8 @@ export const make = Effect.gen(function* () {
             updatedAt: input.state.updatedAt,
           },
         })
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new AgentActivityRowUpsertPersistenceError({
-                environmentId: input.state.environmentId,
-                threadId: input.state.threadId,
-                cause,
-              }),
-          ),
-        );
+        .pipe(Effect.mapError(upsertError));
+      return previous;
     }),
 
     remove: Effect.fn("relay.agent_activity_rows.remove")(function* (input) {

@@ -31,6 +31,7 @@ import {
   getAgentAwarenessRegistrationStatus,
   refreshAgentAwarenessRegistration,
   subscribeAgentAwarenessRegistrationStatus,
+  updateAgentAwarenessRegistrationPreferences,
 } from "../agent-awareness/remoteRegistration";
 import { refreshManagedRelayEnvironments } from "../cloud/managedRelayState";
 import { hasCloudPublicConfig, resolveRelayClerkTokenOptions } from "../cloud/publicConfig";
@@ -97,6 +98,22 @@ function ConfiguredSettingsNotificationsRouteScreen() {
   const canClearLiveActivitiesPreference =
     AsyncResult.isSuccess(preferencesResult) &&
     preferencesResult.value.liveActivitiesEnabled !== false;
+  const agentMessagesEnabled = AsyncResult.isSuccess(preferencesResult)
+    ? preferencesResult.value.agentMessageNotificationsEnabled !== false
+    : true;
+
+  // The relay holds per-device alert preferences, so a change re-registers this device.
+  const handleAgentMessagesChange = async (enabled: boolean) => {
+    savePreferences({ agentMessageNotificationsEnabled: enabled });
+    const result = await settleAsyncResult(() =>
+      runtime.runPromiseExit(
+        updateAgentAwarenessRegistrationPreferences({ agentMessageNotificationsEnabled: enabled }),
+      ),
+    );
+    if (result._tag === "Failure") {
+      reportAtomCommandResult(result, { label: "agent message notification preference" });
+    }
+  };
 
   const connections = Object.values(savedConnectionsById);
   const environmentCount = connections.length;
@@ -415,6 +432,19 @@ function ConfiguredSettingsNotificationsRouteScreen() {
               agentAwarenessPushAvailable && notificationStatus === "enabled" && deviceRegistered
             }
             onValueChange={handleDeviceNotificationsChange}
+          />
+          <SettingsSwitchRow
+            icon="text.bubble"
+            label="Agent Messages"
+            disabled={
+              !agentAwarenessPlatform.supported ||
+              !agentAwarenessPushAvailable ||
+              notificationStatus !== "enabled" ||
+              !AsyncResult.isSuccess(preferencesResult)
+            }
+            subtitle="Alert when the agent sends you a message while it works"
+            value={agentMessagesEnabled}
+            onValueChange={(enabled) => void handleAgentMessagesChange(enabled)}
           />
           <SettingsSwitchRow
             disabled={

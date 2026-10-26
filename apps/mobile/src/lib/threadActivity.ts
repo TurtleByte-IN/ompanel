@@ -579,6 +579,8 @@ function itemIcon(item: OrchestrationV2TurnItem): ThreadFeedActivity["icon"] {
       case "background_task":
       case "system":
         return "zap";
+      case "agent":
+        return "message";
       default:
         source satisfies never;
         return "zap";

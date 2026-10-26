@@ -8,6 +8,7 @@ export {
 } from "./agentActivityAggregate.ts";
 import type {
   RelayAgentActivityState,
+  RelayAgentMessage,
   RelayDeliveryResult,
   RelayPublishResponse,
 } from "@t3tools/contracts/relay";
@@ -18,6 +19,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import { isTerminalPhase } from "./agentActivityPayloads.ts";
+import { newAgentMessage } from "./agentActivityAlerts.ts";
 
 export { isExpiredAgentActivityState } from "./agentActivityPayloads.ts";
 import * as AgentActivityRows from "./AgentActivityRows.ts";
@@ -65,6 +67,8 @@ export const make = Effect.gen(function* () {
   const publishForDeliveryUser = Effect.fnUntraced(function* (input: {
     readonly deliveryUser: EnvironmentLinks.AgentAwarenessDeliveryUserRecord;
     readonly state: RelayAgentActivityState | null;
+    /** Set when this publish introduced a message the agent sent the user (OMP `notify`). */
+    readonly agentMessage: RelayAgentMessage | null;
     readonly nowMs: number;
   }) {
     const activeStates = input.deliveryUser.liveActivitiesEnabled
@@ -87,12 +91,20 @@ export const make = Effect.gen(function* () {
             nowMs: input.nowMs,
           })
         : null;
+    const agentMessage =
+      input.deliveryUser.notificationsEnabled && input.state !== null ? input.agentMessage : null;
     const targets = yield* liveActivities.listTargets({ userId: input.deliveryUser.userId });
     const deliveriesByTarget = yield* Effect.forEach(
       targets,
       Effect.fnUntraced(function* (target) {
         if (target.platform === "android") {
-          return [yield* fcmDeliveries.enqueue({ target, state: input.state })];
+          return [
+            yield* fcmDeliveries.enqueue({
+              target,
+              state: input.state,
+              ...(agentMessage === null ? {} : { agentMessageId: agentMessage.id }),
+            }),
+          ];
         }
         return yield* Effect.all(
           [
@@ -107,8 +119,15 @@ export const make = Effect.gen(function* () {
                   target,
                   aggregate: notificationOnlyAggregate,
                 }),
+            agentMessage === null || input.state === null
+              ? Effect.succeed(null)
+              : apnsDeliveries.sendAgentMessageForTarget({
+                  target,
+                  state: input.state,
+                  message: agentMessage,
+                }),
           ],
-          { concurrency: 2 },
+          { concurrency: 3 },
         );
       }),
       { concurrency: 4 },
@@ -210,11 +229,18 @@ export const make = Effect.gen(function* () {
         "relay.thread_id": input.threadId,
         "relay.agent_activity.phase": input.state?.phase ?? "deleted",
       });
+      const now = yield* DateTime.now;
+      let agentMessage: RelayAgentMessage | null = null;
       if (input.state) {
         // Retain terminal rows until cron pruning so completed threads remain visible alongside active ones.
-        yield* rows.upsert({
+        const previous = yield* rows.upsert({
           environmentPublicKey: input.environmentPublicKey,
           state: input.state,
+        });
+        agentMessage = newAgentMessage({
+          previous,
+          next: input.state,
+          nowMs: now.epochMilliseconds,
         });
       } else {
         yield* rows.remove({
@@ -228,13 +254,13 @@ export const make = Effect.gen(function* () {
         environmentId: input.environmentId,
         environmentPublicKey: input.environmentPublicKey,
       });
-      const now = yield* DateTime.now;
       const deliveriesByUser = yield* Effect.forEach(
         deliveryUsers,
         (deliveryUser) =>
           publishForDeliveryUser({
             deliveryUser,
             state: input.state,
+            agentMessage,
             nowMs: now.epochMilliseconds,
           }),
         { concurrency: 4 },

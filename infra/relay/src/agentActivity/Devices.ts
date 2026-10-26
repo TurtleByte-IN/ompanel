@@ -245,6 +245,7 @@ export const make = Effect.gen(function* () {
           notifyOnInput: row.preferences.notifyOnInput,
           notifyOnCompletion: row.preferences.notifyOnCompletion,
           notifyOnFailure: row.preferences.notifyOnFailure,
+          notifyOnAgentMessage: row.preferences.notifyOnAgentMessage !== false,
         },
         liveActivities: {
           enabled: row.preferences.liveActivitiesEnabled,
