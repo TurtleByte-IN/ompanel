@@ -61,7 +61,10 @@ cancelled job fails it. Through it, every pull request is gated on:
   output of the cached sidecar run with the status check's flags are too.
   The job has only `contents: read` (no OIDC token), and the script drops
   `ACTIONS_*`, `GITHUB_TOKEN` and `GH_TOKEN` from the environment the app and
-  the downloaded sidecar inherit. On Windows the job first runs
+  the downloaded sidecar inherit. A first check that ends in "did not answer
+  within 10 s" (a cold first start, ompanel#147) gets one refresh after the
+  30 s probe cache expires; any other error fails at once. On Windows the job
+  first runs
   `processTree.windows.test.ts`, which kills real process trees under the
   job-object launcher ([processes.md](processes.md#stopping)). Its waits
   allow for the ~20-30 s launcher start on `windows-11-arm` (ompanel#145).

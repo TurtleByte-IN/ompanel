@@ -274,10 +274,29 @@ const readRow = () =>
     null,
   );
 // `warning` covers "Checking the OMP sidecar..." while the probe runs; ready and error are final.
-const row = await waitFor(async () => {
-  const current = await readRow();
-  return current?.status === "ready" || current?.status === "error" ? current : undefined;
-}, OMP_READY_TIMEOUT_MS);
+const settled = () =>
+  waitFor(async () => {
+    const current = await readRow();
+    return current?.status === "ready" || current?.status === "error" ? current : undefined;
+  }, OMP_READY_TIMEOUT_MS);
+let row = await settled();
+// The very first `omp` start on a cold runner can miss the control process's 10 s ready budget
+// (ompanel#147). One re-check after the 30 s probe cache expires; any other error is final.
+if (row?.status === "error" && row.text.includes("did not answer within")) {
+  record(`[smoke-omp] first check timed out (${row.text}); refreshing once`);
+  await sleep(31_000);
+  await within(
+    page.evaluate(() => {
+      for (const button of document.querySelectorAll("button")) {
+        if (button.textContent?.includes("Refresh provider status")) button.click();
+      }
+    }),
+    10_000,
+    undefined,
+  );
+  await waitFor(async () => ((await readRow())?.status === "error" ? undefined : true), 60_000);
+  row = await settled();
+}
 await within(
   page.screenshot({
     path: NodePath.join(artifactsDir, `providers-${hostPlatform}-${hostArch}.png`),
