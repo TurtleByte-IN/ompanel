@@ -11,7 +11,7 @@ import * as Effect from "effect/Effect";
 import { OMP_LOCK, type OmpLock } from "../ompLock.ts";
 import type { OmpSettings } from "../settings.ts";
 import { OMP_READY_TIMEOUT_MS, type OmpProbeResult } from "./probe.ts";
-import type { OmpSidecarError } from "./sidecar.ts";
+import type { OmpSidecar, OmpSidecarError } from "./sidecar.ts";
 
 const OMP_PRESENTATION = {
   displayName: "OMP",
@@ -95,7 +95,12 @@ export function ompProviderSnapshot(input: {
   readonly checkedAt: string;
   readonly resolution:
     | { readonly kind: "unresolved"; readonly error: OmpSidecarError }
-    | { readonly kind: "probed"; readonly probe: OmpProbeResult };
+    | {
+        readonly kind: "probed";
+        readonly probe: OmpProbeResult;
+        /** The binary that was probed; an unverified override is named in the status. */
+        readonly sidecar?: Pick<OmpSidecar, "path" | "verified">;
+      };
   /** Pins the RPC contract the sidecar must speak. */
   readonly lock?: OmpLock;
 }): ServerProviderDraft {
@@ -133,10 +138,16 @@ export function ompProviderSnapshot(input: {
           : `This OMP speaks RPC contract ${reported}. Ompanel needs contract ${lock.contract.version} (OMP ${lock.tag}).`,
     });
   }
+  const sidecar = resolution.sidecar;
   return ompSnapshot(settings, checkedAt, {
     installed: true,
     version: probe.version,
     status: "ready",
     auth: UNKNOWN_AUTH,
+    ...(sidecar && !sidecar.verified
+      ? {
+          message: `Running the OMP binary at ${sidecar.path}, which Ompanel does not check against OMP ${lock.tag}.`,
+        }
+      : {}),
   });
 }

@@ -960,6 +960,48 @@ describe("DesktopBackendConfiguration", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("names the packaged OMP sidecar for this platform to the server", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-backend-config-test-",
+      });
+      const resourcesPath = path.join(baseDir, "resources");
+      const sidecarPath = path.join(resourcesPath, "omp", "darwin-arm64", "omp");
+      const resolveEnv = (processArch: NodeJS.Architecture) =>
+        Effect.gen(function* () {
+          const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+          return (yield* configuration.resolvePrimary).env;
+        }).pipe(
+          Effect.provide(
+            layerBackendConfiguration().pipe(
+              Layer.provideMerge(layerServerExposure),
+              Layer.provideMerge(DesktopAppSettings.layerTest()),
+              Layer.provideMerge(DesktopWslServerTree.layerTest()),
+              Layer.provideMerge(DesktopWslEnvironment.layerTest()),
+              Layer.provideMerge(
+                layerEnvironment(baseDir, {
+                  appPath: `${resourcesPath}/app.asar`,
+                  dirname: `${resourcesPath}/app.asar/apps/desktop/dist-electron`,
+                  isPackaged: true,
+                  resourcesPath,
+                  processArch,
+                }),
+              ),
+            ),
+          ),
+        );
+
+      assert.isUndefined((yield* resolveEnv("arm64")).OMPANEL_OMP_BUNDLED_PATH);
+      yield* fileSystem.makeDirectory(path.dirname(sidecarPath), { recursive: true });
+      yield* fileSystem.writeFileString(sidecarPath, "binary");
+      assert.equal((yield* resolveEnv("arm64")).OMPANEL_OMP_BUNDLED_PATH, sidecarPath);
+      // An x64 app (e.g. under Rosetta) never runs another architecture's sidecar.
+      assert.isUndefined((yield* resolveEnv("x64")).OMPANEL_OMP_BUNDLED_PATH);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it("resolvePrimaryLabel is runSync-safe against the real WSL availability probe", async () => {
     // oxlint-disable-next-line t3code/no-manual-effect-runtime-in-tests -- This test intentionally replicates the sync IPC handler's runSync path to catch a regression to async-only resolution; it.effect would mask it.
     const runtime = ManagedRuntime.make(

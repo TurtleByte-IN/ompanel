@@ -14,6 +14,10 @@
     "./server": {
       "types": "./src/server.ts",
       "import": "./src/server.ts"
+    },
+    "./sidecar": {
+      "types": "./src/sidecar.ts",
+      "import": "./src/sidecar.ts"
     }
   },
   "scripts": {

@@ -33,6 +33,28 @@ describe("ompProviderSnapshot", () => {
     );
   });
 
+  it("names an unverified binary path while it runs", () => {
+    const probe = {
+      status: "ready",
+      version: "18.12.6",
+      ready: { contractVersion: OMP_LOCK.contract.version },
+    } as const;
+    const override = ompProviderSnapshot({
+      settings,
+      checkedAt,
+      resolution: { kind: "probed", probe, sidecar: { path: "/opt/omp", verified: false } },
+    });
+    assert.strictEqual(override.status, "ready");
+    assert.include(override.message, "/opt/omp");
+    assert.include(override.message, "does not check");
+    const verified = ompProviderSnapshot({
+      settings,
+      checkedAt,
+      resolution: { kind: "probed", probe, sidecar: { path: "/cache/omp", verified: true } },
+    });
+    assert.isUndefined(verified.message);
+  });
+
   it("refuses a different contract version", () => {
     const snapshot = ompProviderSnapshot({
       settings,
