@@ -22,6 +22,7 @@ import * as Stream from "effect/Stream";
 import { makeOmpAdapter } from "./adapter.ts";
 import { makeOmpPidfiles } from "./pidfiles.ts";
 import { ompStateDirs } from "./session.ts";
+import { makeOmpThreadSessions } from "./threadSessions.ts";
 import { fakeOmpFrames, makeFakeOmpState } from "./testing/fakeOmp.ts";
 
 const platform = HostProcess.Platform.defaultValue();
@@ -101,6 +102,7 @@ posixOnly("OmpAdapter turns", () => {
         dirs,
         pidfiles: yield* makeOmpPidfiles({ dir: dirs.pidfiles, platform }),
         expectedContractVersion: "1.0.0",
+        threadSessions: makeOmpThreadSessions(),
       });
 
       const events = yield* Effect.gen(function* () {
