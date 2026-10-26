@@ -210,9 +210,15 @@ export const useOmpSuite = (options: {
     const page = await context.newPage();
     suite = makeSuite(stack, page, options.artifacts);
     // Through `location` rather than `page.goto`, so the report's step titles never show the
-    // pairing token; tracing starts after pairing for the same reason.
+    // pairing token; tracing starts after pairing for the same reason. Pairing replaces the URL
+    // with `/` and then reloads; waiting only for the URL let a step's first `page.goto` race that
+    // reload ("interrupted by another navigation"), so wait for the reloaded page itself.
+    const reloaded = page.waitForEvent("load", {
+      predicate: (loaded) => new URL(loaded.url()).pathname === "/",
+      timeout: 120_000,
+    });
     await page.evaluate((url) => window.location.assign(url), stack.pairingUrl);
-    await page.waitForURL((url) => url.protocol === "http:" && !url.pathname.startsWith("/pair"));
+    await reloaded;
     await context.tracing.start(TRACING);
   });
 

@@ -21,6 +21,24 @@ The binary is resolved (and its sha256 checked, see [sidecar.md](./sidecar.md))
 right before each spawn. The process gets the server's environment plus the
 instance's environment overrides.
 
+The same command line runs on macOS, Linux and Windows:
+
+- Overlays go in as `--config <path>`, one argument per file, so no path
+  separator is involved. Ompanel sets `PI_CONFIG_FILES`, whose list OMP
+  splits on `:` on Unix and `;` on Windows, in one place only: `omp share`
+  takes no `--config`, so "Share as gist" passes its overlay there as a
+  single path and refuses a path that contains the platform's separator
+  ([thread-menu.md](./thread-menu.md#share-as-gist)). A `PI_CONFIG_FILES` the
+  user exports reaches thread sessions unchanged, and OMP splits it itself;
+  control processes drop it ([sidecar.md](./sidecar.md#control-processes)).
+- Ompanel never runs `omp config init-xdg`. That command exits non-zero on
+  Windows and moves no data elsewhere. Ompanel instead follows the directories
+  OMP already resolves, XDG roots included once they exist
+  ([sessions.md](./sessions.md)).
+
+`launch.test.ts` fails if server, desktop or provider code mentions
+`init-xdg`, or sets `PI_CONFIG_FILES` anywhere but the "Share as gist" call.
+
 ### Approval mode is required (O-9)
 
 OMP's own default for `tools.approvalMode` is `yolo`, so an `omp` started
@@ -97,6 +115,10 @@ Killing a tree:
   inherited stdio. Every descendant inherits the job, and only the launcher
   holds the job handle, so the tree dies when the launcher dies for any
   reason. Stop runs `taskkill /T /F` on the launcher.
+  The Windows CI runners kill real trees through this launcher
+  (`processTree.windows.test.ts`): a stop ends the launcher, `omp`, its child
+  and its grandchild. Terminating only the launcher ends them too, because
+  closing the job's last handle kills the job.
 
 ## Pidfiles
 

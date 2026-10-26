@@ -2,6 +2,7 @@ import type {
   RelayAgentActivityAggregateRow,
   RelayAgentActivityAggregateState,
   RelayAgentActivityState,
+  RelayAgentMessage,
 } from "@t3tools/contracts/relay";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
@@ -112,5 +113,21 @@ export function notificationForActivity(
     deepLink: activity.deepLink,
     phase: activity.phase,
     updatedAt: activity.updatedAt,
+  });
+}
+
+/** The agent's own words are the alert body; the thread title says where they came from. */
+export function notificationForAgentMessage(
+  state: RelayAgentActivityState,
+  message: RelayAgentMessage,
+): ApnsNotificationPayload {
+  return sanitizeApnsNotificationPayload({
+    title: state.threadTitle,
+    body: message.text,
+    environmentId: state.environmentId,
+    threadId: state.threadId,
+    deepLink: state.deepLink,
+    updatedAt: message.sentAt,
+    agentMessageId: message.id,
   });
 }

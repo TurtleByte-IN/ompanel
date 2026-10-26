@@ -3366,6 +3366,99 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       }),
   );
 
+  it.effect("surfaces the newest agent notification on the shell, from SQL and memory alike", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const later = DateTime.add(now, { seconds: 5 });
+      const threadId = ThreadId.make("thread:projection-shell-agent-notification");
+      const projectId = ProjectId.make("project:projection-shell-agent-notification");
+      const runId = RunId.make("run:projection-shell-agent-notification");
+      const rootNodeId = NodeId.make("node:projection-shell-agent-notification");
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-shell-agent-notification:thread"),
+        type: "thread.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: threadId,
+          projectId,
+          title: "Agent notification shell",
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+      const shells = Effect.gen(function* () {
+        const sqlShell = (yield* projectionStore.getShellSnapshot()).threads.find(
+          (row) => row.id === threadId,
+        );
+        const memoryShell = ProjectionStore.threadShellFromProjection(
+          yield* projectionStore.getThreadProjection(threadId),
+        );
+        return [sqlShell?.latestAgentNotification, memoryShell.latestAgentNotification];
+      });
+      assert.deepStrictEqual(yield* shells, [null, null]);
+
+      const notification = (id: string, kind: "agent" | "system", at: DateTime.Utc) =>
+        projectionStore.apply({
+          id: EventId.make(`event:projection-shell-agent-notification:${id}`),
+          type: "turn-item.updated",
+          threadId,
+          runId,
+          nodeId: rootNodeId,
+          driver,
+          occurredAt: at,
+          payload: {
+            id: TurnItemId.make(id),
+            threadId,
+            runId,
+            nodeId: rootNodeId,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 1,
+            title: null,
+            startedAt: at,
+            completedAt: at,
+            updatedAt: at,
+            status: "completed",
+            type: "notification",
+            source: { kind },
+            outcome: "updated",
+            summary: `${kind} ${id}`,
+          },
+        });
+      yield* notification("item:agent-older", "agent", now);
+      yield* notification("item:agent-newer", "agent", later);
+      // A later system notice is not the agent talking to the user.
+      yield* notification("item:system", "system", DateTime.add(later, { seconds: 5 }));
+      const expected = {
+        itemId: TurnItemId.make("item:agent-newer"),
+        summary: "agent item:agent-newer",
+        notifiedAt: DateTime.formatIso(later),
+        runId,
+      };
+      assert.deepStrictEqual(yield* shells, [expected, expected]);
+    }),
+  );
+
   it.effect("only exposes interruptible runs through the shell activeRunId", () =>
     Effect.gen(function* () {
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;

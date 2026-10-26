@@ -2,14 +2,14 @@
 
 Six layers, from fastest to most faithful.
 
-| Layer           | Where                                                                                                                  | Drives                                                           |
-| --------------- | ---------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| Unit            | `packages/provider-omp/src/**/*.test.ts`                                                                               | Pure functions: launch arguments, approval-mode mapping, frames  |
-| Adapter         | `packages/provider-omp/src/server/adapter.test.ts` (and the process-layer tests next to it)                            | The adapter and thread process against the scripted fake `omp`   |
-| Control plane   | `packages/provider-omp/src/server/controlBinary.test.ts`                                                               | `OmpControlService` against the scripted control fake `omp`      |
-| Replay fixtures | `apps/server/src/orchestration-v2/testkit/OmpReplayFixtures.integration.test.ts`, fixtures in `testkit/fixtures/omp_*` | The process layer against stdout recorded from the pinned fork   |
-| End-to-end      | `apps/web/e2e/omp/omp-thread.spec.ts`, `omp-settings.spec.ts`, `omp-onboarding.spec.ts` (Playwright)                   | The web app and server against a real `omp` and a scripted model |
-| Live            | `apps/web/e2e/omp/omp-live.spec.ts` (Playwright, `OMPANEL_LIVE=1`)                                                     | The web app and server against a real `omp` and a real model     |
+| Layer           | Where                                                                                                                      | Drives                                                           |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| Unit            | `packages/provider-omp/src/**/*.test.ts`                                                                                   | Pure functions: launch arguments, approval-mode mapping, frames  |
+| Adapter         | `packages/provider-omp/src/server/adapter.test.ts` (and the process-layer tests next to it)                                | The adapter and thread process against the scripted fake `omp`   |
+| Control plane   | `packages/provider-omp/src/server/controlBinary.test.ts`                                                                   | `OmpControlService` against the scripted control fake `omp`      |
+| Replay fixtures | `apps/server/src/orchestration-v2/testkit/OmpReplayFixtures.integration.test.ts`, fixtures in `testkit/fixtures/omp_*`     | The process layer against stdout recorded from the pinned fork   |
+| End-to-end      | `apps/web/e2e/omp/omp-thread.spec.ts`, `omp-settings.spec.ts`, `omp-onboarding.spec.ts`, `omp-notify.spec.ts` (Playwright) | The web app and server against a real `omp` and a scripted model |
+| Live            | `apps/web/e2e/omp/omp-live.spec.ts` (Playwright, `OMPANEL_LIVE=1`)                                                         | The web app and server against a real `omp` and a real model     |
 
 The first four run in CI with the rest of the suite; none needs a model, an
 account or a built `omp`. The end-to-end test has its own CI job, `OMP E2E`,
@@ -249,6 +249,20 @@ shows a one-time code, an `input` request for the code, then the code traded
 at the vendor's token endpoint. Every other `omp` start execs the real binary,
 so thread processes keep their pid and command line. No real vendor is
 contacted.
+
+`apps/web/e2e/omp/omp-notify.spec.ts` covers OMP `notify` alerts
+([notifications.md](notifications.md)). The spec writes an OMP extension
+into its agent directory that calls `ctx.ui.notify` a few seconds into a turn
+whose prompt names a message; the stack links the environment to a loopback relay
+(`e2e/omp/relayStub.ts`, the stack's `relayStub` option) that records every
+agent-activity publish and 404s every other route. Its steps:
+
+1. turn on In-app notifications; Agent messages is on by default;
+2. start a stalled turn, open another view; the agent's message shows as a
+   toast, the relay received the running thread's state with that message as
+   `agentMessage`, and the thread shows it as a notification row;
+3. turn Agent messages off; the next notify still reaches the relay (phones
+   decide per device) but shows no toast.
 
 `e2e/omp/ompSuite.ts` holds what the Playwright specs share: the hooks that
 start one stack and one paired page per file and record a trace per step, and

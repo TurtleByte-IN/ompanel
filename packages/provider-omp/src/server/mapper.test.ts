@@ -604,15 +604,16 @@ describe("OmpThreadMapper", () => {
     assert.deepStrictEqual(
       items.map((item) =>
         item.type === "notification"
-          ? [item.type, item.summary, item.detail ?? null]
+          ? [item.type, item.summary, item.detail ?? null, item.source.kind]
           : item.type === "system_notice"
             ? [item.type, item.message, item.title]
             : [item.type],
       ),
       [
-        ["notification", "Context: 12% used", "\nContext: 12% used\nSystem: 3k"],
+        ["notification", "Context: 12% used", "\nContext: 12% used\nSystem: 3k", "system"],
         ["system_notice", "Memory is off", "Memory"],
-        ["notification", "Build done", null],
+        // Only notify is the agent talking to the user; it alone reaches push (P-15).
+        ["notification", "Build done", null, "agent"],
       ],
     );
     assert.strictEqual(new Set(items.map((item) => item.id)).size, 3);

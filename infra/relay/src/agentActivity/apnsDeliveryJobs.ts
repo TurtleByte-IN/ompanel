@@ -45,6 +45,8 @@ export const ApnsNotificationPayload = Schema.Struct({
   deepLink: Schema.String,
   phase: Schema.optional(RelayAgentAwarenessPhase),
   updatedAt: Schema.optional(Schema.String),
+  /** Set on agent-message alerts, which carry no phase; `updatedAt` is when the agent sent it. */
+  agentMessageId: Schema.optional(Schema.String),
 });
 export type ApnsNotificationPayload = typeof ApnsNotificationPayload.Type;
 

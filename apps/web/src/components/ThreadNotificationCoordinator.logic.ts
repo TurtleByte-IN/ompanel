@@ -1,6 +1,18 @@
 import { WORKING_EXIT_GRACE_MS } from "@t3tools/client-runtime/state/thread-inbox";
+import type { OrchestrationV2AgentNotificationSummary } from "@t3tools/contracts";
 
-export type ThreadNotificationKind = "input" | "completion";
+export type ThreadNotificationKind = "input" | "completion" | "message";
+
+/**
+ * The agent's newest message to the user (OMP `notify`) when it differs from the one last seen.
+ * Callers skip a thread's first sighting so reconnects and page loads stay quiet.
+ */
+export function newAgentMessage(
+  prior: OrchestrationV2AgentNotificationSummary | null | undefined,
+  next: OrchestrationV2AgentNotificationSummary | null | undefined,
+): OrchestrationV2AgentNotificationSummary | null {
+  return next != null && next.itemId !== prior?.itemId ? next : null;
+}
 
 export interface ThreadNotificationObservation {
   /** Run and status key while the thread needs attention, otherwise null. */

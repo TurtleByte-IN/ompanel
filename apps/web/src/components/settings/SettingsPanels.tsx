@@ -429,6 +429,10 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.inAppNotificationsEnabled !== DEFAULT_UNIFIED_SETTINGS.inAppNotificationsEnabled
       ? ["In-app notifications"]
       : []),
+    ...(settings.agentMessageNotificationsEnabled !==
+    DEFAULT_UNIFIED_SETTINGS.agentMessageNotificationsEnabled
+      ? ["Agent messages"]
+      : []),
     ...(settings.sidebarThreadPreviewCount !== DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount
       ? ["Visible threads"]
       : []),
@@ -591,6 +595,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
       notificationMode: DEFAULT_UNIFIED_SETTINGS.notificationMode,
       inAppNotificationsEnabled: DEFAULT_UNIFIED_SETTINGS.inAppNotificationsEnabled,
+      agentMessageNotificationsEnabled: DEFAULT_UNIFIED_SETTINGS.agentMessageNotificationsEnabled,
       wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
       persistComposerContextStrip: DEFAULT_UNIFIED_SETTINGS.persistComposerContextStrip,
       diffFilesCollapsed: DEFAULT_UNIFIED_SETTINGS.diffFilesCollapsed,
@@ -1136,6 +1141,19 @@ export function GeneralSettingsPanel() {
               checked={settings.inAppNotificationsEnabled}
               onCheckedChange={(checked) => updateSettings({ inAppNotificationsEnabled: checked })}
               aria-label="In-app notifications"
+            />
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("agent-message-notifications")}
+          description="Thread notifications and toasts also fire when the agent sends you a message while it works."
+          control={
+            <Switch
+              checked={settings.agentMessageNotificationsEnabled}
+              onCheckedChange={(checked) =>
+                updateSettings({ agentMessageNotificationsEnabled: checked })
+              }
+              aria-label="Agent messages"
             />
           }
         />

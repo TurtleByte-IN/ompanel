@@ -1009,7 +1009,8 @@ export class OmpThreadMapper {
               ...this.#oneShotItem(turn, "notify", now, {
                 title: null,
                 type: "notification",
-                source: { kind: "system" },
+                // `agent` lets the shell surface it for push and desktop alerts (P-15).
+                source: { kind: "agent" },
                 outcome: notifyType === "error" ? "failed" : "updated",
                 summary: message.slice(0, 200),
                 ...(message.length > 200 ? { detail: message } : {}),

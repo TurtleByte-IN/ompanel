@@ -3,7 +3,9 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type { RelayAgentActivityState } from "@t3tools/contracts/relay";
 import { makeAggregateState } from "./agentActivityAggregate.ts";
 import {
+  agentMessageAlertAllowed,
   attentionTransitionRows,
+  newAgentMessage,
   terminalTransitionRows,
   shouldAlertForActivity,
 } from "./agentActivityAlerts.ts";
@@ -101,5 +103,37 @@ describe("shared agent activity policy", () => {
       }),
     ).toBe(false);
     expect(shouldAlertForActivity({ ...input, nowMs: 180_000 })).toBe(false);
+  });
+
+  it("alerts an agent message once, while the agent works, and only while it is fresh", () => {
+    const agentMessage = { id: "notify:1", text: "Build is green", sentAt: state.updatedAt };
+    const next = { ...state, agentMessage };
+    expect(newAgentMessage({ previous: state, next, nowMs: 0 })).toEqual(agentMessage);
+    // The relay has no row yet: a first publish that already carries a message still alerts.
+    expect(newAgentMessage({ previous: null, next, nowMs: 0 })).toEqual(agentMessage);
+    // Republishing the same message (a phase or title change) never rings again.
+    expect(newAgentMessage({ previous: next, next, nowMs: 0 })).toBeNull();
+    expect(
+      newAgentMessage({
+        previous: next,
+        next: { ...next, agentMessage: { ...agentMessage, id: "notify:2" } },
+        nowMs: 0,
+      }),
+    ).toMatchObject({ id: "notify:2" });
+    // Attention and terminal phases carry their own alerts.
+    for (const phase of ["waiting_for_input", "completed", "failed"] as const) {
+      expect(newAgentMessage({ previous: state, next: { ...next, phase }, nowMs: 0 })).toBeNull();
+    }
+    // A replay long after the agent sent it stays quiet.
+    expect(newAgentMessage({ previous: state, next, nowMs: 180_000 })).toBeNull();
+    expect(newAgentMessage({ previous: state, next: state, nowMs: 0 })).toBeNull();
+  });
+
+  it("honours the agent-message preference; devices registered before it get messages", () => {
+    expect(agentMessageAlertAllowed(preferences)).toBe(true);
+    expect(agentMessageAlertAllowed({ ...preferences, notifyOnAgentMessage: true })).toBe(true);
+    expect(agentMessageAlertAllowed({ ...preferences, notifyOnAgentMessage: false })).toBe(false);
+    expect(agentMessageAlertAllowed({ ...preferences, notificationsEnabled: false })).toBe(false);
+    expect(agentMessageAlertAllowed(null)).toBe(false);
   });
 });

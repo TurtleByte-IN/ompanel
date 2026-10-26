@@ -131,7 +131,7 @@ function harness() {
       invalidateDeliveryToken: () => Effect.void,
     }),
     Layer.succeed(AgentActivityRows.AgentActivityRows, {
-      upsert: () => Effect.void,
+      upsert: () => Effect.succeed(null),
       remove: () => Effect.void,
       pruneTerminal: () => Effect.void,
       listForUser: () =>
@@ -526,6 +526,73 @@ describe("Android delivery routing", () => {
       yield* delivery.process({ ...h.job, state: h.current.state });
       expect(h.sent[1]?.data.active).toBe("false");
       expect(h.sent[1]?.data.alert_id).toBeUndefined();
+    }).pipe(Effect.provide(h.layer));
+  });
+
+  it.effect("alerts a new agent message in the agent's own words while it works", () => {
+    const h = harness();
+    const withMessage: RelayAgentActivityState = {
+      ...state,
+      agentMessage: { id: "item-1", text: "Tests pass, opening the PR", sentAt: state.updatedAt },
+    };
+    h.current.state = withMessage;
+    return Effect.gen(function* () {
+      const delivery = yield* FcmDeliveries.FcmDeliveries;
+      yield* delivery.enqueue({ target, state: withMessage, agentMessageId: "item-1" });
+      expect(h.queued[0]?.agentMessageId).toBe("item-1");
+      yield* delivery.process(h.queued[0]);
+      expect(h.sent).toHaveLength(1);
+      expect(h.sent[0]?.alert).toBe(true);
+      expect(h.sent[0]?.data).toMatchObject({
+        alert_title: "Fix notifications",
+        alert_body: "Tests pass, opening the PR",
+        alert_path: "/threads/env/thread",
+        active: "true",
+      });
+      expect(h.sent[0]?.data.alert_id).toMatch(/^[0-9a-f]{64}$/);
+      // The same publish without a new message only refreshes the card.
+      yield* delivery.process({ ...h.job, state: withMessage });
+      expect(h.sent[1]?.alert).toBe(false);
+    }).pipe(Effect.provide(h.layer));
+  });
+
+  it.effect.each([
+    {
+      case: "the agent message preference is off",
+      preferences: { ...preferences, notifyOnAgentMessage: false },
+      sentAt: state.updatedAt,
+      storedId: "item-1",
+    },
+    {
+      case: "notifications are off",
+      preferences: { ...preferences, notificationsEnabled: false },
+      sentAt: state.updatedAt,
+      storedId: "item-1",
+    },
+    {
+      case: "the message is older than the alert window",
+      preferences,
+      sentAt: "1969-12-31T23:57:00.000Z",
+      storedId: "item-1",
+    },
+    {
+      case: "a newer message replaced it before delivery",
+      preferences,
+      sentAt: state.updatedAt,
+      storedId: "item-2",
+    },
+  ])("stays silent for an agent message when $case", (input) => {
+    const h = harness();
+    const withMessage: RelayAgentActivityState = {
+      ...state,
+      agentMessage: { id: input.storedId, text: "Tests pass", sentAt: input.sentAt },
+    };
+    h.current.state = withMessage;
+    h.current.target.preferences_json = encodeJson(input.preferences);
+    return Effect.gen(function* () {
+      const delivery = yield* FcmDeliveries.FcmDeliveries;
+      yield* delivery.process({ ...h.job, state: withMessage, agentMessageId: "item-1" });
+      expect(h.sent.every((message) => !message.alert)).toBe(true);
     }).pipe(Effect.provide(h.layer));
   });
 

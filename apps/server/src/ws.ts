@@ -3781,6 +3781,9 @@ export const layerWsRpc = (
               // Buffer changes through discovery and the initial snapshot's RPC ACK wait.
               const keybindingsChanges = yield* keybindings.subscribeChanges;
               const settingsChanges = yield* serverSettings.subscribeChanges;
+              // Before any read of the providers: a probe finishing between that read and a later
+              // subscription would never reach this client.
+              const providerChanges = yield* providerRegistry.subscribeChanges;
               const config = yield* loadServerConfig({
                 usageLimitsCommand,
                 workspaceSnapshotsOnDemand,
@@ -3797,10 +3800,7 @@ export const layerWsRpc = (
               );
               const providerStatuses = Stream.zipLatestWith(
                 // Seed the changes-only stream so early source refreshes pair with current providers.
-                Stream.concat(
-                  Stream.fromEffect(providerRegistry.getProviders),
-                  providerRegistry.streamChanges,
-                ),
+                Stream.concat(Stream.fromEffect(providerRegistry.getProviders), providerChanges),
                 usageLimitSources.streamChanges.pipe(
                   Stream.changesWith(
                     usageLimitsCommand ? sameUsageLimitCommandCoverage : () => true,

@@ -12,6 +12,7 @@ import {
   CircleAlertIcon,
   CircleCheckIcon,
   MessageCircleQuestionIcon,
+  MessageSquareTextIcon,
   ShieldQuestionIcon,
 } from "lucide-react";
 import { useEffect, useEffectEvent, useRef } from "react";
@@ -30,6 +31,7 @@ import {
 import { resolveSidebarThreadStatus, type SidebarThreadStatus } from "./Sidebar.logic";
 import {
   createThreadNotificationGate,
+  newAgentMessage,
   type ThreadNotificationKind,
   type ThreadNotificationObservation,
 } from "./ThreadNotificationCoordinator.logic";
@@ -120,6 +122,9 @@ function EnvironmentNotifications({
   const inAppNotificationsEnabled = useClientSettings(
     (settings) => settings.inAppNotificationsEnabled,
   );
+  const agentMessageNotificationsEnabled = useClientSettings(
+    (settings) => settings.agentMessageNotificationsEnabled,
+  );
   const navigate = useNavigate();
   const { environmentId: activeEnvironmentId, threadId: activeThreadId } = useParams({
     strict: false,
@@ -131,20 +136,27 @@ function EnvironmentNotifications({
     const entry = previous.current.get(threadId);
     if (!entry) return;
     const { thread, status } = entry;
+    // The agent's own words carry the alert; the thread title says where they came from.
+    const agentMessage =
+      kind === "message" ? (entry.raw.latestAgentNotification?.summary ?? null) : null;
+    if (kind === "message" && (agentMessage === null || !agentMessageNotificationsEnabled)) return;
+    const body = agentMessage ?? thread.title;
     const title =
-      kind === "completion"
-        ? "Thread completed"
-        : status === "approval"
-          ? "Approval needed"
-          : status === "limited"
-            ? "Usage limit reached"
-            : status === "failed"
-              ? "Thread failed"
-              : status === "request"
-                ? "Guest request"
-                : "Input needed";
+      kind === "message"
+        ? thread.title
+        : kind === "completion"
+          ? "Thread completed"
+          : status === "approval"
+            ? "Approval needed"
+            : status === "limited"
+              ? "Usage limit reached"
+              : status === "failed"
+                ? "Thread failed"
+                : status === "request"
+                  ? "Guest request"
+                  : "Input needed";
     if (hasNotificationSound(mode)) {
-      void playNotificationSound(kind, () =>
+      void playNotificationSound(kind === "completion" ? "completion" : "input", () =>
         hasNotificationSound(getClientSettings().notificationMode),
       );
     }
@@ -155,13 +167,22 @@ function EnvironmentNotifications({
       (activeEnvironmentId !== environmentId || activeThreadId !== thread.id)
     ) {
       const toastId = toastManager.add({
-        type: kind === "completion" ? "success" : status === "failed" ? "error" : "warning",
+        type:
+          kind === "completion"
+            ? "success"
+            : kind === "message"
+              ? "info"
+              : status === "failed"
+                ? "error"
+                : "warning",
         title,
-        description: thread.title,
+        description: body,
         data: {
           hideCopyButton: true,
           leadingIcon:
-            kind === "completion" ? (
+            kind === "message" ? (
+              <MessageSquareTextIcon aria-hidden className="size-4 text-info-foreground" />
+            ) : kind === "completion" ? (
               <CircleCheckIcon aria-hidden className="size-4 text-success-foreground" />
             ) : status === "approval" ? (
               <ShieldQuestionIcon aria-hidden className="size-4 text-warning-foreground" />
@@ -193,7 +214,7 @@ function EnvironmentNotifications({
       return;
     try {
       const notification = new Notification(title, {
-        body: thread.title,
+        body,
         tag: threadNotificationTag(environmentId, thread.id),
         silent: true,
       });
@@ -276,6 +297,13 @@ function EnvironmentNotifications({
         archived: state.thread.archivedAt !== null,
         quiet: state.raw.latestRunStopRequested === true,
       });
+      if (
+        prior !== undefined &&
+        state.thread.archivedAt === null &&
+        newAgentMessage(prior.raw.latestAgentNotification, state.raw.latestAgentNotification)
+      ) {
+        present(state.thread.id, "message");
+      }
     }
   }, [environmentId, threads]);
 

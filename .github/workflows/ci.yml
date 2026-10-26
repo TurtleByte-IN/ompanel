@@ -32,6 +32,7 @@ jobs:
       typecheck: ${{ steps.detect.outputs.typecheck }}
       build: ${{ steps.detect.outputs.build }}
       boot_smoke: ${{ steps.detect.outputs.boot_smoke }}
+      desktop_smoke: ${{ steps.detect.outputs.desktop_smoke }}
       test: ${{ steps.detect.outputs.test }}
       test_packages: ${{ steps.detect.outputs.test_packages }}
       test_web: ${{ steps.detect.outputs.test_web }}
@@ -666,6 +667,92 @@ jobs:
         timeout-minutes: 5
         run: node scripts/smoke-server-boot.ts --target node --target electron
 
+  # The desktop app on every OS it ships for: builds it as `pnpm build:desktop` does, launches
+  # `dist-electron/boot.cjs` in a throwaway home with OMP enabled and no binary path, and fails
+  # unless the window opens, the backend answers, and the OMP provider turns ready with the
+  # omp.lock sidecar for this platform downloaded and sha256-verified (docs/omp/ci.md). The
+  # Windows runners also kill real process trees under the job-object launcher.
+  desktop_smoke:
+    permissions:
+      contents: read
+    # No id-token: nothing here uses OIDC, and the job runs a downloaded binary.
+    name: Desktop Smoke ${{ matrix.label }}
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.desktop_smoke != 'false' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { label: macOS arm64, runner: macos-26, artifact: darwin-arm64 }
+          - { label: Linux x64, runner: ubuntu-24.04, artifact: linux-x64 }
+          - { label: Linux arm64, runner: ubuntu-24.04-arm, artifact: linux-arm64 }
+          - { label: Windows x64, runner: windows-2025, artifact: win32-x64 }
+          - { label: Windows arm64, runner: windows-11-arm, artifact: win32-arm64 }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+            !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: ./.github/actions/setup-ci-deps
+        with:
+          task-cache-read-token: ${{ secrets.T3_TASK_CACHE_READ_TOKEN }}
+
+      - name: Cache Electron download
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/electron
+            ~/Library/Caches/electron
+            ~/AppData/Local/electron/Cache
+          key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('node_modules/.pnpm/electron@*/node_modules/electron/package.json') }}
+
+      - name: Ensure Electron runtime is installed
+        run: vp run --filter @t3tools/desktop ensure:electron
+
+      # The Linux desktop build compiles the browser secret helper; the smoke needs a display.
+      - name: Install Linux build libraries and a virtual display
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config xvfb
+
+      - name: Build desktop app and server
+        run: vp run --filter @t3tools/desktop --filter t3 build
+
+      - name: Kill process trees under the job-object launcher
+        if: runner.os == 'Windows'
+        working-directory: packages/provider-omp
+        run: vp test run --config ../../vite.config.ts --dir . src/server/processTree.windows.test.ts
+
+      - name: Launch the desktop app and wait for OMP
+        timeout-minutes: 15
+        env:
+          OMPANEL_DESKTOP_SMOKE_ARTIFACTS: ${{ runner.temp }}/desktop-smoke
+        run: |
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            xvfb-run -a node apps/desktop/scripts/smoke-omp.mjs
+          else
+            node apps/desktop/scripts/smoke-omp.mjs
+          fi
+
+      - name: Upload screenshots and log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: desktop-smoke-${{ matrix.artifact }}
+          path: ${{ runner.temp }}/desktop-smoke
+          if-no-files-found: ignore
+          retention-days: 14
+
   # Branch protection requires this job by its name, `Check`. It fails when any
   # other job fails, is cancelled, or is skipped without a reason, so splitting
   # or resharding jobs needs no ruleset change. Add every new job to `needs`.
@@ -687,6 +774,7 @@ jobs:
         mobile_native_static_analysis,
         release_smoke,
         boot_smoke,
+        desktop_smoke,
       ]
     runs-on: ubuntu-24.04
     timeout-minutes: 5

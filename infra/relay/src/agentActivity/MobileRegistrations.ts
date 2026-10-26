@@ -1,6 +1,7 @@
 import type {
   RelayAgentActivitySnapshotResponse,
   RelayDeviceRegistrationRequest,
+  RelayDeviceRegistrationResponse,
   RelayLiveActivityRegistrationRequest,
 } from "@t3tools/contracts/relay";
 import * as DateTime from "effect/DateTime";
@@ -25,7 +26,7 @@ export class MobileRegistrations extends Context.Service<
     readonly registerDevice: (input: {
       readonly userId: string;
       readonly payload: RelayDeviceRegistrationRequest;
-    }) => Effect.Effect<{ readonly ok: true }, MobileRegistrationError>;
+    }) => Effect.Effect<RelayDeviceRegistrationResponse, MobileRegistrationError>;
     readonly registerLiveActivity: (input: {
       readonly userId: string;
       readonly payload: RelayLiveActivityRegistrationRequest;
@@ -66,7 +67,11 @@ export const make = Effect.gen(function* () {
           ),
           Effect.ignore,
         );
-      return { ok: true as const };
+      // Echo the stored preference so clients can tell this relay kept it (absent means on).
+      return {
+        ok: true as const,
+        notifyOnAgentMessage: input.payload.preferences.notifyOnAgentMessage !== false,
+      };
     }),
     registerLiveActivity: Effect.fn("relay.mobile_registrations.register_live_activity")(
       function* (input) {

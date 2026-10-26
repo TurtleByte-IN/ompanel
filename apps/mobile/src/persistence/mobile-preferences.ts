@@ -86,6 +86,8 @@ export interface Preferences {
   readonly pullRequestHideTestFiles?: boolean;
   readonly pullRequestMergeMethod?: PullRequestMergeMethod;
   readonly liveActivitiesEnabled?: boolean;
+  /** Push the agent's mid-run messages (OMP `notify`). Unset means on. */
+  readonly agentMessageNotificationsEnabled?: boolean;
   readonly themeId?: MobileThemeId;
   readonly lightThemeId?: MobileThemeId;
   readonly darkThemeId?: MobileThemeId;
@@ -163,6 +165,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     pullRequestHideTestFiles?: boolean;
     pullRequestMergeMethod?: PullRequestMergeMethod;
     liveActivitiesEnabled?: boolean;
+    agentMessageNotificationsEnabled?: boolean;
     themeId?: MobileThemeId;
     lightThemeId?: MobileThemeId;
     darkThemeId?: MobileThemeId;
@@ -218,6 +221,9 @@ function sanitizePreferences(parsed: Preferences): Preferences {
 
   if (typeof parsed.liveActivitiesEnabled === "boolean") {
     preferences.liveActivitiesEnabled = parsed.liveActivitiesEnabled;
+  }
+  if (typeof parsed.agentMessageNotificationsEnabled === "boolean") {
+    preferences.agentMessageNotificationsEnabled = parsed.agentMessageNotificationsEnabled;
   }
   if (
     typeof parsed.themeId === "string" &&

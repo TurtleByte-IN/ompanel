@@ -80,7 +80,7 @@ function makeAgentActivityRows(
   overrides: Partial<AgentActivityRows.AgentActivityRows["Service"]> = {},
 ): AgentActivityRows.AgentActivityRows["Service"] {
   return {
-    upsert: () => Effect.void,
+    upsert: () => Effect.succeed(null),
     remove: () => Effect.void,
     pruneTerminal: () => Effect.void,
     listForUser: () => {
@@ -235,13 +235,49 @@ describe("MobileRegistrations", () => {
         ),
       );
 
-      expect(result).toEqual({ ok: true });
+      expect(result).toEqual({ ok: true, notifyOnAgentMessage: true });
       expect(messages).toContainEqual([
         "device registration activity replay failed",
         { errorTag: "AgentActivityRowListPersistenceError" },
       ]);
     }).pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false })));
   });
+
+  it.effect("echoes the stored agent-message preference so clients know this relay kept it", () =>
+    Effect.gen(function* () {
+      const registrations = yield* MobileRegistrations.MobileRegistrations;
+      const register = (notifyOnAgentMessage: boolean | undefined) =>
+        registrations.registerDevice({
+          userId: "dev:julius",
+          payload: {
+            ...device,
+            preferences: {
+              ...device.preferences,
+              ...(notifyOnAgentMessage === undefined ? {} : { notifyOnAgentMessage }),
+            },
+          },
+        });
+      expect((yield* register(false)).notifyOnAgentMessage).toBe(false);
+      expect((yield* register(true)).notifyOnAgentMessage).toBe(true);
+      expect((yield* register(undefined)).notifyOnAgentMessage).toBe(true);
+    }).pipe(
+      Effect.provide(
+        MobileRegistrations.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.succeed(Devices.Devices, makeDevices()),
+              Layer.succeed(LiveActivities.LiveActivities, makeLiveActivities()),
+              Layer.succeed(AgentActivityRows.AgentActivityRows, makeAgentActivityRows()),
+              Layer.succeed(
+                AgentActivityPublisher.AgentActivityPublisher,
+                makeAgentActivityPublisher(),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
 
   it.effect(
     "does not remotely start a Live Activity when a device registers after work is already active",
@@ -296,7 +332,7 @@ describe("MobileRegistrations", () => {
           },
         });
 
-        expect(result).toEqual({ ok: true });
+        expect(result).toEqual({ ok: true, notifyOnAgentMessage: true });
         expect(registeredDevices).toHaveLength(1);
         expect(queuedStarts).toEqual([]);
         expect(queuedJobs).toEqual([]);
