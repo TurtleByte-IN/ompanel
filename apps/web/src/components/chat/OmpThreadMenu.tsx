@@ -68,7 +68,7 @@ interface OmpThreadDialog {
   readonly instanceId: ProviderInstanceId;
 }
 
-export const ompThreadDialogAtom = Atom.make<OmpThreadDialog | null>(null).pipe(
+const ompThreadDialogAtom = Atom.make<OmpThreadDialog | null>(null).pipe(
   Atom.keepAlive,
   Atom.withLabel("omp-thread-menu:dialog"),
 );
