@@ -65,20 +65,33 @@ export function resolveCompletionShell(
   return "posix";
 }
 
+/**
+ * Where the command runs: `subshell` isolates it (a setup script's `cd`/`exit` stay inside);
+ * `current` runs it in the interactive shell so `cd` and `export` persist for later commands.
+ */
+export type CompletionScope = "subshell" | "current";
+
 // A block with its own closing line protects the sentinel from trailing comments, heredocs and scripts reading stdin.
 export function wrapCommandForCompletion(
   command: string,
   shell: CompletionShell,
   sentinel: string,
+  scope: CompletionScope,
 ): string {
   const body = command.replace(/\r?\n/g, "\r");
   switch (shell) {
-    case "powershell":
-      return `$global:LASTEXITCODE = $null; & {\r${body}\r}; if ($null -ne $LASTEXITCODE) { $__t3c = $LASTEXITCODE } elseif ($?) { $__t3c = 0 } else { $__t3c = 1 }; Write-Host "${sentinel}$__t3c"`;
+    case "powershell": {
+      // `&` runs the block in a child scope; dot-sourcing runs it in the current one.
+      const invoke = scope === "current" ? "." : "&";
+      return `$global:LASTEXITCODE = $null; ${invoke} {\r${body}\r}; if ($null -ne $LASTEXITCODE) { $__t3c = $LASTEXITCODE } elseif ($?) { $__t3c = 0 } else { $__t3c = 1 }; Write-Host "${sentinel}$__t3c"`;
+    }
     case "fish":
+      // begin/end already runs in the current shell; fish has no cheap subshell.
       return `begin\r${body}\rend; printf '\\n${sentinel}%s\\n' $status`;
     case "posix":
-      return `( ${body}\r); printf '\\n${sentinel}%s\\n' "$?"`;
+      return scope === "current"
+        ? `{ ${body}\r}; printf '\\n${sentinel}%s\\n' "$?"`
+        : `( ${body}\r); printf '\\n${sentinel}%s\\n' "$?"`;
   }
 }
 

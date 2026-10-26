@@ -48,8 +48,10 @@ const OUTPUT_LINE_MAX_LENGTH = 4_000;
 const OUTPUT_MAX_LENGTH = 64 * 1024;
 const OUTPUT_TRUNCATED_MARKER = "[earlier output truncated]";
 const CTRL_C = "\x03";
-// A program killed by Ctrl-C also stops the shell's command list, so no sentinel ever comes.
+// How long Ctrl-C gets to bring the shell back to our sentinel before the terminal is closed.
 const CTRL_C_GRACE = "3 seconds";
+const TERMINAL_CLOSED_NOTE =
+  "[the agent terminal did not return to its prompt and was closed; the next command starts a new shell]";
 // Pagers and colour make agent-read output noisy or block on a keypress nobody sends.
 const AGENT_TERMINAL_ENV = {
   NO_COLOR: "1",
@@ -194,7 +196,13 @@ export const make = Effect.gen(function* () {
     const terminalId = AGENT_TERMINAL_ID;
     const token = (yield* crypto.randomUUIDv4().pipe(Effect.orDie)).replaceAll("-", "");
     const sentinel = completionSentinel(COMPLETION_SENTINEL_PREFIX, token);
-    const commandLine = wrapCommandForCompletion(input.command, completionShell, sentinel);
+    // The current shell, not a subshell, so `cd` and `export` persist between commands.
+    const commandLine = wrapCommandForCompletion(
+      input.command,
+      completionShell,
+      sentinel,
+      "current",
+    );
     const output = makeOutputCollector();
     // Shell startup output (rc-file banners) only matters if the command never got typed, e.g.
     // a startup prompt still waits for the user.
@@ -257,14 +265,19 @@ export const make = Effect.gen(function* () {
       return yield* observed.finished;
     });
 
-    // Ctrl-C reaches the foreground program. Keep the thread's lock until the shell is back at
-    // its prompt, or the next command's keystrokes go to the dying program (sudo reads them).
-    const stopCommand = terminalManager
-      .write({ threadId, terminalId, data: CTRL_C })
-      .pipe(
-        Effect.ignore,
-        Effect.andThen(observed.finished.pipe(Effect.timeoutOption(CTRL_C_GRACE))),
-      );
+    // Keep the thread's lock until Ctrl-C brings the shell back (our sentinel prints only then),
+    // or the next keystrokes reach the foreground program. If it never comes (an `ssh` session),
+    // close the terminal. Succeeds with whether it was closed.
+    const stopCommand = Effect.gen(function* () {
+      yield* terminalManager.write({ threadId, terminalId, data: CTRL_C }).pipe(Effect.ignore);
+      const stopped = yield* observed.finished.pipe(Effect.timeoutOption(CTRL_C_GRACE));
+      if (Option.isSome(stopped)) return false;
+      // Keep a prompt the command was left waiting at (a `sudo` password prompt has no newline).
+      yield* observed.flushPartialLine;
+      agentShells.delete(threadId);
+      yield* terminalManager.close({ threadId, terminalId }).pipe(Effect.ignore);
+      return true;
+    });
 
     return yield* Effect.gen(function* () {
       const completion = yield* run.pipe(
@@ -279,12 +292,13 @@ export const make = Effect.gen(function* () {
           timedOut: false,
         };
       }
-      const stopped = yield* stopCommand;
-      // Keep a prompt the command was left waiting at (a `sudo` password prompt has no newline).
-      if (Option.isNone(stopped)) yield* observed.flushPartialLine;
+      const closed = yield* stopCommand;
+      const text = (typed ? output : startupOutput).text();
       return {
         terminalId,
-        output: (typed ? output : startupOutput).text(),
+        output: closed
+          ? [text, TERMINAL_CLOSED_NOTE].filter((part) => part.length > 0).join("\n")
+          : text,
         exitCode: null,
         timedOut: true,
       };

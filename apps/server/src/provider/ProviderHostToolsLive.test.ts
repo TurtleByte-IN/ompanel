@@ -109,8 +109,11 @@ const makeHarness = Effect.fn(function* (options: HarnessOptions = {}) {
   const output = (data: string) => emit({ ...eventBase, type: "output", data });
 
   let shellPid: number | null = null;
+  // Order of terminal operations, to check a command is typed only into a reopened shell.
+  const calls: Array<string> = [];
   const open = vi.fn((input: { readonly cwd: string }) =>
     Effect.gen(function* () {
+      calls.push("open");
       if (shellPid === null) {
         shellPid = 4242;
         yield* emit({ ...eventBase, type: "started", snapshot: snapshot(input.cwd, shellPid) });
@@ -136,6 +139,7 @@ const makeHarness = Effect.fn(function* (options: HarnessOptions = {}) {
       }),
     write: (input) =>
       Queue.offer(writes, input.data).pipe(
+        Effect.tap(() => Effect.sync(() => calls.push(input.data === "\x03" ? "ctrl-c" : "write"))),
         Effect.andThen(
           Effect.suspend(() => {
             const replied = input.data === "\x03" ? undefined : options.reply?.(input.data);
@@ -220,6 +224,7 @@ const makeHarness = Effect.fn(function* (options: HarnessOptions = {}) {
   return {
     tools,
     writes,
+    calls,
     output,
     open,
     close,
@@ -239,6 +244,9 @@ const replyWith =
       ? undefined
       : `${command.trim()}\r\n${body}\r\n${sentinel}${exitCode}\r\n% `;
   };
+
+const closedNote =
+  "[the agent terminal did not return to its prompt and was closed; the next command starts a new shell]";
 
 describe("ProviderHostToolsLive terminal", () => {
   it.effect("returns the command's output and exit code from the agent terminal", () =>
@@ -264,7 +272,7 @@ describe("ProviderHostToolsLive terminal", () => {
       });
       const written = yield* Queue.takeAll(writes);
       expect(written).toHaveLength(1);
-      expect(written[0]).toMatch(/^ \( printf 'a\\nb\\n'; exit 3\r\); printf/);
+      expect(written[0]).toMatch(/^ \{ printf 'a\\nb\\n'; exit 3\r\}; printf/);
     }).pipe(Effect.scoped),
   );
 
@@ -310,22 +318,68 @@ describe("ProviderHostToolsLive terminal", () => {
       yield* output(`${typed.trim()}\r\nName? `);
       yield* TestClock.adjust("5 seconds");
       yield* TestClock.adjust("3 seconds");
-      expect(yield* Fiber.join(fiber)).toMatchObject({ output: "Name?", timedOut: true });
+      expect(yield* Fiber.join(fiber)).toEqual({
+        terminalId,
+        output: `Name?\n${closedNote}`,
+        exitCode: null,
+        timedOut: true,
+      });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("closes the terminal when Ctrl-C does not bring the shell back", () =>
+    Effect.gen(function* () {
+      const { tools, writes, output, open, close, calls } = yield* makeHarness();
+      const stuck = yield* tools
+        .runTerminalCommand({ threadId, cwd: "/repo", command: "ssh host", timeoutMs: 5_000 })
+        .pipe(Effect.forkChild);
+      const typed = yield* Queue.take(writes);
+      yield* output(`${typed.trim()}\r\nremote$ `);
+      yield* TestClock.adjust("5 seconds");
+      expect(yield* Queue.take(writes)).toBe("\x03");
+      yield* TestClock.adjust("3 seconds");
+      expect((yield* Fiber.join(stuck)).output).toBe(`remote$\n${closedNote}`);
+      expect(close).toHaveBeenCalledTimes(1);
+      expect(close.mock.calls[0]![0]).toEqual({ threadId, terminalId });
+
+      const next = yield* tools
+        .runTerminalCommand({ threadId, cwd: "/repo", command: "pwd", timeoutMs: 60_000 })
+        .pipe(Effect.forkChild);
+      const nextTyped = yield* Queue.take(writes);
+      expect(open).toHaveBeenCalledTimes(2);
+      expect(calls).toEqual(["open", "write", "ctrl-c", "open", "write"]);
+      yield* output(`${nextTyped.trim()}\r\n/repo\r\n${sentinelOf(nextTyped)}0\r\n% `);
+      expect(yield* Fiber.join(next)).toMatchObject({ output: "/repo", exitCode: 0 });
     }).pipe(Effect.scoped),
   );
 
   it.effect("sends Ctrl-C when the caller interrupts the command", () =>
     Effect.gen(function* () {
-      const { tools, writes } = yield* makeHarness();
+      const { tools, writes, output, close } = yield* makeHarness();
       const fiber = yield* tools
         .runTerminalCommand({ threadId, cwd: "/repo", command: "sleep 100", timeoutMs: 60_000 })
+        .pipe(Effect.forkChild);
+      const typed = yield* Queue.take(writes);
+      const interrupting = yield* Fiber.interrupt(fiber).pipe(Effect.forkChild);
+      expect(yield* Queue.take(writes)).toBe("\x03");
+      yield* output(`${typed.trim()}\r\n^C\r\n${sentinelOf(typed)}130\r\n% `);
+      yield* Fiber.join(interrupting);
+      expect(close).not.toHaveBeenCalled();
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("closes the terminal when an interrupted command does not stop", () =>
+    Effect.gen(function* () {
+      const { tools, writes, close } = yield* makeHarness();
+      const fiber = yield* tools
+        .runTerminalCommand({ threadId, cwd: "/repo", command: "ssh host", timeoutMs: 60_000 })
         .pipe(Effect.forkChild);
       yield* Queue.take(writes);
       const interrupting = yield* Fiber.interrupt(fiber).pipe(Effect.forkChild);
       expect(yield* Queue.take(writes)).toBe("\x03");
       yield* TestClock.adjust("3 seconds");
       yield* Fiber.join(interrupting);
-      expect(yield* Queue.size(writes)).toBe(0);
+      expect(close.mock.calls[0]![0]).toEqual({ threadId, terminalId });
     }).pipe(Effect.scoped),
   );
 
@@ -629,13 +683,40 @@ describe.runIf(nodePtyLoads)("ProviderHostToolsLive with a real PTY", () => {
       const result = yield* tools.runTerminalCommand({
         threadId,
         cwd,
-        command: "printf 'a\\nb\\n'; exit 3",
+        // A subshell: the command runs in the agent's own shell, where `exit` would end it.
+        command: "printf 'a\\nb\\n'; (exit 3)",
         timeoutMs: 30_000,
       });
       console.log(`[real PTY] result: ${JSON.stringify(result)}`);
       expect(result.exitCode).toBe(3);
       expect(result.timedOut).toBe(false);
       expect(result.output.split("\n")).toEqual(expect.arrayContaining(["a", "b"]));
+    }).pipe(Effect.scoped, Effect.provide(layerLive)),
+  );
+
+  it.live("keeps `cd` and `export` for the next command in the same shell", () =>
+    Effect.gen(function* () {
+      const { tools, cwd } = yield* makeLiveTools;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const target = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-host-tools-cd-" });
+      const first = yield* tools.runTerminalCommand({
+        threadId,
+        cwd,
+        command: `cd '${target}' && export K08_PERSIST=yes`,
+        timeoutMs: 30_000,
+      });
+      expect(first).toMatchObject({ exitCode: 0, timedOut: false });
+      const second = yield* tools.runTerminalCommand({
+        threadId,
+        cwd,
+        command: `pwd -P; printf '%s\\n' "$K08_PERSIST"`,
+        timeoutMs: 30_000,
+      });
+      console.log(`[real PTY] after cd/export: ${JSON.stringify(second)}`);
+      expect(second).toMatchObject({
+        output: `${yield* fileSystem.realPath(target)}\nyes`,
+        exitCode: 0,
+      });
     }).pipe(Effect.scoped, Effect.provide(layerLive)),
   );
 

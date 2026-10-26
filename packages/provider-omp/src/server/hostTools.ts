@@ -34,6 +34,9 @@ const MAX_TIMEOUT_SECONDS = 3_600;
 /** Partial output is streamed to OMP at most this often. */
 const UPDATE_INTERVAL_MS = 250;
 const UPDATE_TAIL_CHARS = 16_384;
+/** C0/C1 controls other than `\n` and `\t`, DEL, and bidi overrides/isolates. */
+const HIDDEN_COMMAND_CHARACTER =
+  /[\u0000-\u0008\u000B-\u001F\u007F-\u009F\u202A-\u202E\u2066-\u2069]/u;
 
 /** Same major, and a minor (then patch) at least `minimum`'s. */
 export const contractAtLeast = (version: string, minimum: string): boolean => {
@@ -257,6 +260,19 @@ export const makeOmpHostBridge = Effect.fn("makeOmpHostBridge")(function* (
     const command = call.arguments["command"];
     if (typeof command !== "string" || command.trim().length === 0) {
       return yield* reply(call.id, text("`command` must be a non-empty string."), true);
+    }
+    // The approval prompt cannot show these, but the shell acts on them (\r ends a line, ESC and
+    // C1 codes drive the terminal, bidi overrides reorder what is displayed): never run them.
+    const hidden = HIDDEN_COMMAND_CHARACTER.exec(command);
+    if (hidden !== null) {
+      const codePoint = (hidden[0].codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, "0");
+      return yield* reply(
+        call.id,
+        text(
+          `The command contains the control character U+${codePoint}, which the approval prompt cannot show; it was not run. Use only printable text, newlines and tabs.`,
+        ),
+        true,
+      );
     }
     const requested = call.arguments["timeout"];
     const timeoutSeconds =

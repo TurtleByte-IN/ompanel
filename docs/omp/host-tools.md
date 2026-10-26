@@ -31,12 +31,20 @@ default 300, maximum 3600).
   there until the user answers.
 - Commands of one thread run one at a time in the same interactive shell, so
   `cd` and exported variables carry over. On timeout or cancel, Ctrl-C is
-  sent to the command.
+  sent to the command. If the shell does not come back to its prompt within
+  3 s (for example `ssh` is still running, or Ctrl-C also cancelled the
+  completion marker), the agent terminal is closed, and the next command starts
+  a new shell in the thread's directory. The next command is never typed into
+  a program that is still running.
 - Permission mode: the thread's mode becomes OMP's `--approval-mode`
   ([processes.md](./processes.md)). OMP's approval gate treats host tools as
   `exec` tools. So Supervised and Auto-accept edits threads are asked before
   each command, and Full access threads are not. The approval prompt shows the
   command (oh-my-pi#38).
+- A command containing a control character other than newline and tab (for
+  example `\r` or ESC), or a bidirectional-override character, is refused
+  without running. The approval prompt cannot show these characters, but the
+  shell would act on them.
 - The tool card is a command card, the same as OMP's own `bash`. It shows the
   exit code from the result's `details.exitCode`.
 

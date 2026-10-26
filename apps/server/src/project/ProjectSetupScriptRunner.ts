@@ -228,6 +228,7 @@ export const make = Effect.gen(function* () {
             script.command,
             completionShell,
             completionSentinel(COMPLETION_SENTINEL_PREFIX, completionToken),
+            "subshell",
           )
         : script.command;
 
