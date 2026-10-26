@@ -30,7 +30,9 @@ cancelled job fails it. Through it, every pull request is gated on:
 - format and lint: `Lint` (`vp check`, which formats every file, plus knip and
   the generated GraphQL checks);
 - typecheck: `Build and Typecheck`;
-- unit tests: `Test`, `Test Web`, `Test Server 1`–`8` and `Rust`.
+- unit tests: `Test`, `Test Web`, `Test Server 1`–`8` and `Rust`;
+- end-to-end: `OMP E2E` (gate G1, [testing.md](testing.md#end-to-end)), for
+  changes that reach the web app or the server.
 
 A new job joins the gate by being added to `Check`'s `needs`; the branch
 protection setting does not change. Workflows other than `ci.yml` (PR size,

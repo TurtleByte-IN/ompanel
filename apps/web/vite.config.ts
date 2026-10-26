@@ -211,9 +211,10 @@ export default defineConfig(() => {
     run: {
       tasks: {
         // tsc (tsc-rs) rewrites the tsbuildinfo it reads, which keeps a task out of the cache.
+        // e2e/ runs under Node (Playwright), so it has its own project.
         typecheck: {
-          command: "tsc --noEmit",
-          cache: { input: [{ auto: true }, "!*.tsbuildinfo"] },
+          command: "tsc --noEmit && tsc --noEmit -p e2e",
+          cache: { input: [{ auto: true }, "!*.tsbuildinfo", "!e2e/*.tsbuildinfo"] },
         },
       },
     },
