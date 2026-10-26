@@ -1,26 +1,54 @@
+import * as NodeSqlite from "node:sqlite";
 import { HOME_DIR_NAME, LEGACY_HOME_DIR_NAME, UPSTREAM_PRODUCT_NAME } from "@t3tools/shared/brand";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
-
 import { isProcessAlive, readPersistedServerRuntimeState } from "./serverRuntimeState.ts";
 
 /** Written once the migration has decided; its presence makes every later run a no-op. */
 export const LEGACY_HOME_MIGRATION_MARKER = "legacy-home-migration.json";
+/** Held by the migrating server; never unlinked, so a crashed holder releases it with its process. */
+export const LEGACY_HOME_MIGRATION_LOCK = "legacy-home-migration.lock";
 const STAGING_DIRECTORY = ".legacy-home-migration";
-// Logs stay behind; the rest is one install's identity or live-process state, which must not be shared.
+/**
+ * Written into staging once the copy is whole, listing the staged databases; from then on a
+ * restart finishes moving it in.
+ */
+const STAGING_COMPLETE = ".complete";
+const REPLACED_DIRECTORY = ".legacy-home-migration-replaced";
+/**
+ * Top-level entries that stay behind: logs; one install's identity and keys (`secrets/` holds the
+ * session, MCP, guest-share and asset signing keys and the T3 Connect link credentials); and
+ * live-process state. Databases are copied separately through SQLite.
+ */
 const SKIPPED_ENTRIES: Record<string, true> = {
   logs: true,
+  secrets: true,
   "server-runtime.json": true,
+  "server-owner.sqlite": true,
   "environment-id": true,
   "anonymous-id": true,
 };
+const DATABASES = ["state.sqlite", "statev2.sqlite"] as const;
 const DATABASE_FILE = /\.sqlite(?:-wal|-shm|-journal)?$/u;
+/** Credentials issued by upstream: sessions are paired devices and clients, links are unredeemed pairings. */
+const UPSTREAM_CREDENTIAL_TABLES = ["auth_sessions", "auth_pairing_links"] as const;
+/** Any row here means someone used this database; an Ompanel start alone writes none. */
+const USER_DATA_TABLES = [
+  "orchestration_v2_events",
+  "orchestration_events",
+  "projection_projects",
+  "projection_threads",
+] as const;
+const LOCK_POLL_INTERVAL = Duration.millis(100);
+const DEFAULT_LOCK_WAIT_MS = 60_000;
 
 const MigrationMarker = Schema.Struct({
   status: Schema.Literals(["migrated", "target-has-state"]),
@@ -28,13 +56,18 @@ const MigrationMarker = Schema.Struct({
   at: Schema.String,
 });
 const encodeMigrationMarker = Schema.encodeEffect(Schema.fromJsonString(MigrationMarker));
+const StagedDatabases = Schema.fromJsonString(Schema.Array(Schema.String));
+const encodeStagedDatabases = Schema.encodeEffect(StagedDatabases);
+const decodeStagedDatabases = Schema.decodeEffect(StagedDatabases);
 
 export type LegacyHomeMigrationResult =
   | { readonly status: "migrated"; readonly from: string; readonly to: string }
   | { readonly status: "already-migrated" }
   | { readonly status: "no-legacy-home" }
   | { readonly status: "target-has-state" }
-  | { readonly status: "legacy-server-running"; readonly pid: number };
+  | { readonly status: "legacy-server-running"; readonly pid: number | null }
+  | { readonly status: "target-server-running" }
+  | { readonly status: "migration-locked" };
 
 export class LegacyHomeMigrationError extends Schema.TaggedError<LegacyHomeMigrationError>()(
   "LegacyHomeMigrationError",
@@ -45,17 +78,92 @@ export class LegacyHomeMigrationError extends Schema.TaggedError<LegacyHomeMigra
   },
 ) {
   override get message(): string {
-    return `Could not copy upstream data from ${this.from} to ${this.to}; starting with empty state.`;
+    return `Could not copy upstream data from ${this.from} to ${this.to}; starting with empty state and retrying on the next start.`;
+  }
+}
+
+const isSqliteBusy = (cause: unknown) =>
+  cause instanceof Error &&
+  (("errcode" in cause && cause.errcode === 5) ||
+    ("code" in cause && cause.code === "SQLITE_BUSY"));
+
+/**
+ * True while a server holds its `server-owner.sqlite` lock: that lock is an exclusive
+ * transaction, so even a read-only read is refused. Read-only, so the probed home is not written.
+ */
+function serverOwnsStateDirectory(ownerLockPath: string): boolean {
+  let db: NodeSqlite.DatabaseSync | undefined;
+  try {
+    db = new NodeSqlite.DatabaseSync(ownerLockPath, { readOnly: true, timeout: 0 });
+    db.prepare("SELECT COUNT(*) FROM sqlite_schema").get();
+    return false;
+  } catch (cause) {
+    if (isSqliteBusy(cause)) return true;
+    throw cause;
+  } finally {
+    db?.close();
+  }
+}
+
+function existingTables(db: NodeSqlite.DatabaseSync, names: ReadonlyArray<string>): string[] {
+  const present = new Set(
+    db
+      .prepare("SELECT name FROM sqlite_schema WHERE type = 'table'")
+      .all()
+      .map((row) => String(row.name)),
+  );
+  return names.filter((name) => present.has(name));
+}
+
+/** A database the server created on a start that found nothing to copy holds no user rows. */
+function databaseHasUserData(databasePath: string): boolean {
+  let db: NodeSqlite.DatabaseSync | undefined;
+  try {
+    db = new NodeSqlite.DatabaseSync(databasePath, { readOnly: true });
+    const database = db;
+    return existingTables(database, USER_DATA_TABLES).some(
+      (table) => database.prepare(`SELECT 1 FROM "${table}" LIMIT 1`).get() !== undefined,
+    );
+  } catch {
+    // Unreadable is not proof of empty; never replace it.
+    return true;
+  } finally {
+    db?.close();
+  }
+}
+
+/** A consistent snapshot even if upstream writes meanwhile, without its upstream credentials. */
+async function snapshotDatabase(sourcePath: string, destinationPath: string): Promise<void> {
+  const source = new NodeSqlite.DatabaseSync(sourcePath, { readOnly: true });
+  try {
+    await NodeSqlite.backup(source, destinationPath);
+  } finally {
+    source.close();
+  }
+  const copy = new NodeSqlite.DatabaseSync(destinationPath);
+  try {
+    for (const table of existingTables(copy, UPSTREAM_CREDENTIAL_TABLES)) {
+      copy.exec(`DELETE FROM "${table}"`);
+    }
+    // One self-contained file, so publishing it is a single rename.
+    copy.exec("PRAGMA journal_mode = DELETE");
+  } finally {
+    copy.close();
   }
 }
 
 /**
- * Copies an upstream T3 Code `~/.t3/userdata` into `~/.ompanel/userdata` once. The upstream home
- * is only read, so T3 Code keeps working and its worktrees stay where existing threads expect them.
- * Database files move into place last, so an interrupted run is redone rather than half-applied.
+ * Copies an upstream T3 Code `~/.t3/userdata` into `~/.ompanel/userdata` once, reading upstream
+ * only. Deferrals and failures write no marker, so a later start retries; what is and is not
+ * copied, and crash recovery, are in docs/omp/branding.md.
  */
 export const migrateLegacyHome = Effect.fn("legacyHomeMigration.migrate")(function* (
   homeDirectory: string,
+  options?: {
+    readonly lockWaitMs?: number;
+    /** Runs each time the lock is found held, before waiting for the next poll. */
+    readonly onLockBusy?: Effect.Effect<void>;
+  },
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -64,14 +172,22 @@ export const migrateLegacyHome = Effect.fn("legacyHomeMigration.migrate")(functi
   const legacyUserdata = path.join(homeDirectory, LEGACY_HOME_DIR_NAME, "userdata");
   const marker = path.join(baseDir, LEGACY_HOME_MIGRATION_MARKER);
   const staging = path.join(baseDir, STAGING_DIRECTORY);
+  const fail = (cause: unknown) =>
+    new LegacyHomeMigrationError({ from: legacyUserdata, to: userdata, cause });
+  const attempt = <A>(evaluate: () => A) => Effect.try({ try: evaluate, catch: fail });
+  const serverOwns = Effect.fn("legacyHomeMigration.serverOwns")(function* (stateDir: string) {
+    const ownerLock = path.join(stateDir, "server-owner.sqlite");
+    if (!(yield* fs.exists(ownerLock))) return false;
+    return yield* attempt(() => serverOwnsStateDirectory(ownerLock));
+  });
 
   const writeMarker = Effect.fn("legacyHomeMigration.writeMarker")(function* (
     status: "migrated" | "target-has-state",
   ) {
     const at = DateTime.formatIso(yield* DateTime.now);
     const contents = yield* encodeMigrationMarker({ status, from: legacyUserdata, at });
-    yield* fs.makeDirectory(baseDir, { recursive: true });
     yield* fs.writeFileString(marker, `${contents}\n`);
+    yield* fs.remove(staging, { recursive: true, force: true });
   });
 
   const copyTree: (
@@ -82,8 +198,11 @@ export const migrateLegacyHome = Effect.fn("legacyHomeMigration.migrate")(functi
     function* (from, to, topLevel) {
       yield* fs.makeDirectory(to, { recursive: true });
       for (const name of yield* fs.readDirectory(from)) {
-        if (topLevel && Object.hasOwn(SKIPPED_ENTRIES, name)) continue;
+        if (topLevel && (Object.hasOwn(SKIPPED_ENTRIES, name) || DATABASE_FILE.test(name)))
+          continue;
         const source = path.join(from, name);
+        // Only a symlink has a link target: skip it rather than follow it out of the tree.
+        if (Option.isSome(yield* fs.readLink(source).pipe(Effect.option))) continue;
         const info = yield* fs.stat(source);
         // Sockets and pipes belong to a running T3 Code; they cannot be copied.
         if (info.type === "Directory") yield* copyTree(source, path.join(to, name), false);
@@ -92,47 +211,161 @@ export const migrateLegacyHome = Effect.fn("legacyHomeMigration.migrate")(functi
     },
   );
 
-  return yield* Effect.gen(function* () {
-    if (yield* fs.exists(marker)) return { status: "already-migrated" } as const;
-    if (!(yield* fs.exists(legacyUserdata))) return { status: "no-legacy-home" } as const;
+  // Anything Ompanel already wrote wins; directories it merely created are filled in.
+  const moveInto: (from: string, to: string) => Effect.Effect<void, PlatformError.PlatformError> =
+    Effect.fn("legacyHomeMigration.moveInto")(function* (from, to) {
+      if (!(yield* fs.exists(to))) return yield* fs.rename(from, to);
+      const [source, destination] = yield* Effect.all([fs.stat(from), fs.stat(to)]);
+      if (source.type !== "Directory" || destination.type !== "Directory") return;
+      for (const name of yield* fs.readDirectory(from)) {
+        yield* moveInto(path.join(from, name), path.join(to, name));
+      }
+    });
 
-    const hasState =
-      (yield* fs.exists(path.join(userdata, "statev2.sqlite"))) ||
-      (yield* fs.exists(path.join(userdata, "state.sqlite")));
-    if (hasState) {
-      yield* writeMarker("target-has-state");
-      return { status: "target-has-state" } as const;
+  const stage = Effect.fn("legacyHomeMigration.stage")(function* () {
+    yield* fs.remove(staging, { recursive: true, force: true });
+    yield* copyTree(legacyUserdata, staging, true);
+    const staged: string[] = [];
+    for (const name of DATABASES) {
+      const source = path.join(legacyUserdata, name);
+      if (!(yield* fs.exists(source))) continue;
+      yield* Effect.tryPromise({
+        try: () => snapshotDatabase(source, path.join(staging, name)),
+        catch: fail,
+      });
+      staged.push(name);
+    }
+    yield* fs.writeFileString(
+      path.join(staging, STAGING_COMPLETE),
+      yield* encodeStagedDatabases(staged),
+    );
+  });
+
+  /** Returns false, moving nothing, when Ompanel has since gained real data of its own. */
+  const publish = Effect.fn("legacyHomeMigration.publish")(function* () {
+    const staged = yield* decodeStagedDatabases(
+      yield* fs.readFileString(path.join(staging, STAGING_COMPLETE)),
+    );
+    const pending: string[] = [];
+    for (const name of staged) {
+      if (yield* fs.exists(path.join(staging, name))) pending.push(name);
+    }
+    // Databases already moved in by an interrupted run are upstream's; every other one must be
+    // empty, and is set aside so a staged v1 database is not hidden behind an empty v2 one.
+    const replaceable = DATABASES.filter(
+      (name) => pending.includes(name) || !staged.includes(name),
+    );
+    for (const name of replaceable) {
+      const existing = path.join(userdata, name);
+      if ((yield* fs.exists(existing)) && databaseHasUserData(existing)) return false;
+    }
+    yield* fs.makeDirectory(userdata, { recursive: true });
+    if (pending.length > 0) {
+      const replaced = path.join(
+        baseDir,
+        `${REPLACED_DIRECTORY}-${DateTime.formatIso(yield* DateTime.now).replaceAll(":", "-")}`,
+      );
+      for (const name of replaceable) {
+        for (const file of [name, `${name}-wal`, `${name}-shm`, `${name}-journal`]) {
+          const existing = path.join(userdata, file);
+          if (!(yield* fs.exists(existing))) continue;
+          yield* fs.makeDirectory(replaced, { recursive: true });
+          yield* fs.rename(existing, path.join(replaced, file));
+        }
+      }
+    }
+    for (const name of yield* fs.readDirectory(staging)) {
+      if (name === STAGING_COMPLETE || DATABASE_FILE.test(name)) continue;
+      yield* moveInto(path.join(staging, name), path.join(userdata, name));
+    }
+    // statev2.sqlite last: once it is in place, only the marker remains to write.
+    for (const name of pending) {
+      yield* fs.rename(path.join(staging, name), path.join(userdata, name));
+    }
+    return true;
+  });
+
+  const migrateLocked = Effect.gen(function* () {
+    if (yield* fs.exists(marker)) return { status: "already-migrated" } as const;
+    if (yield* serverOwns(userdata)) return { status: "target-server-running" } as const;
+    const migrated = { status: "migrated", from: legacyUserdata, to: userdata } as const;
+
+    // A crash after the copy was whole: finish moving it in rather than copying again.
+    if (yield* fs.exists(path.join(staging, STAGING_COMPLETE))) {
+      if (!(yield* publish())) {
+        yield* writeMarker("target-has-state");
+        return { status: "target-has-state" } as const;
+      }
+      yield* writeMarker("migrated");
+      return migrated;
     }
 
-    // A copy taken while T3 Code writes its database could be torn; retry on a later start.
+    for (const name of DATABASES) {
+      const existing = path.join(userdata, name);
+      if ((yield* fs.exists(existing)) && databaseHasUserData(existing)) {
+        yield* writeMarker("target-has-state");
+        return { status: "target-has-state" } as const;
+      }
+    }
+
     const legacyRuntime = yield* readPersistedServerRuntimeState(
       path.join(legacyUserdata, "server-runtime.json"),
     );
-    if (Option.isSome(legacyRuntime) && isProcessAlive(legacyRuntime.value.pid)) {
-      return { status: "legacy-server-running", pid: legacyRuntime.value.pid } as const;
+    const legacyPid =
+      Option.isSome(legacyRuntime) && isProcessAlive(legacyRuntime.value.pid)
+        ? legacyRuntime.value.pid
+        : null;
+    if (legacyPid !== null || (yield* serverOwns(legacyUserdata))) {
+      return { status: "legacy-server-running", pid: legacyPid } as const;
     }
 
-    yield* fs.remove(staging, { recursive: true, force: true });
-    yield* copyTree(legacyUserdata, staging, true);
-    yield* fs.makeDirectory(userdata, { recursive: true });
-    const entries = yield* fs.readDirectory(staging);
-    const ordered = [
-      ...entries.filter((name) => !DATABASE_FILE.test(name)),
-      ...entries.filter((name) => DATABASE_FILE.test(name)),
-    ];
-    for (const name of ordered) {
-      const destination = path.join(userdata, name);
-      // Anything the desktop app already wrote for this install wins over the copy.
-      if (yield* fs.exists(destination)) continue;
-      yield* fs.rename(path.join(staging, name), destination);
+    yield* stage();
+    if (!(yield* publish())) {
+      yield* writeMarker("target-has-state");
+      return { status: "target-has-state" } as const;
     }
-    yield* fs.remove(staging, { recursive: true, force: true });
     yield* writeMarker("migrated");
-    return { status: "migrated", from: legacyUserdata, to: userdata } as const;
+    return migrated;
+  });
+
+  // Two Ompanel servers starting together (desktop backend and the OS service) take turns.
+  const lockPath = path.join(baseDir, LEGACY_HOME_MIGRATION_LOCK);
+  const tryLock = attempt(() => {
+    const db = new NodeSqlite.DatabaseSync(lockPath, { timeout: 0 });
+    try {
+      db.exec("BEGIN EXCLUSIVE");
+      return Option.some(db);
+    } catch (cause) {
+      db.close();
+      if (isSqliteBusy(cause)) return Option.none<NodeSqlite.DatabaseSync>();
+      throw cause;
+    }
+  });
+  const acquireLock = Effect.gen(function* () {
+    const deadline =
+      (yield* Clock.currentTimeMillis) + (options?.lockWaitMs ?? DEFAULT_LOCK_WAIT_MS);
+    while (true) {
+      const lock = yield* tryLock;
+      if (Option.isSome(lock) || (yield* Clock.currentTimeMillis) >= deadline) return lock;
+      if (options?.onLockBusy) yield* options.onLockBusy;
+      yield* Effect.sleep(LOCK_POLL_INTERVAL);
+    }
+  });
+
+  return yield* Effect.gen(function* () {
+    if (yield* fs.exists(marker)) return { status: "already-migrated" } as const;
+    if (!(yield* fs.exists(legacyUserdata))) return { status: "no-legacy-home" } as const;
+    yield* fs.makeDirectory(baseDir, { recursive: true });
+    return yield* Effect.acquireUseRelease(
+      acquireLock,
+      (lock) =>
+        Option.isNone(lock)
+          ? Effect.succeed<LegacyHomeMigrationResult>({ status: "migration-locked" })
+          : migrateLocked,
+      (lock) => Effect.sync(() => Option.map(lock, (db) => db.close())),
+    );
   }).pipe(
-    Effect.mapError(
-      (cause) => new LegacyHomeMigrationError({ from: legacyUserdata, to: userdata, cause }),
-    ),
+    Effect.mapError((cause) => (cause._tag === "LegacyHomeMigrationError" ? cause : fail(cause))),
   );
 });
 
@@ -149,13 +382,19 @@ export const migrateLegacyHomeOnStartup = Effect.fn("legacyHomeMigration.onStart
         Effect.logWarning(error.message, { cause: error.cause }).pipe(Effect.as(undefined)),
     }),
   );
-  if (result?.status === "migrated") {
-    yield* Effect.logInfo(
-      `Copied ${UPSTREAM_PRODUCT_NAME} data from ${result.from} to ${result.to}.`,
-    );
-  } else if (result?.status === "legacy-server-running") {
-    yield* Effect.logWarning(
-      `${UPSTREAM_PRODUCT_NAME} is running (pid ${result.pid}); its data will be copied on the next start after it quits.`,
-    );
+  switch (result?.status) {
+    case "migrated":
+      return yield* Effect.logInfo(
+        `Copied ${UPSTREAM_PRODUCT_NAME} data from ${result.from} to ${result.to}.`,
+      );
+    case "legacy-server-running":
+      return yield* Effect.logWarning(
+        `${UPSTREAM_PRODUCT_NAME} is running${result.pid === null ? "" : ` (pid ${result.pid})`}; its data will be copied on the next start after it quits.`,
+      );
+    case "target-server-running":
+    case "migration-locked":
+      return yield* Effect.logWarning(
+        `Another Ompanel server is using ${path.join(homeDirectory, HOME_DIR_NAME)}; ${UPSTREAM_PRODUCT_NAME} data will be copied on a later start.`,
+      );
   }
 });

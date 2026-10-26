@@ -2849,7 +2849,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       },
       protocols: [
         {
-          name: "T3 Code",
+          name: "Ompanel",
           schemes: [PRODUCT_SLUG, `${PRODUCT_SLUG}-dev`],
         },
         {
@@ -2901,7 +2901,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       maintainer: "T3 Tools <hello@t3.codes>",
       protocols: [
         {
-          name: "T3 Code",
+          name: "Ompanel",
           schemes: [PRODUCT_SLUG, `${PRODUCT_SLUG}-dev`],
         },
       ],
@@ -2915,7 +2915,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       // FPM runs outside the staged app directory, so source paths must be absolute.
       fpm: [
         `${path.join(repoRoot, "apps/desktop/resources/linux/in.turtlebyte.ompanel.metainfo.xml")}=/usr/share/metainfo/in.turtlebyte.ompanel.metainfo.xml`,
-        `${path.join(repoRoot, "LICENSE")}=/usr/share/doc/t3code/copyright`,
+        `${path.join(repoRoot, "LICENSE")}=/usr/share/doc/${PRODUCT_SLUG}/copyright`,
       ],
       // Debian 13 and Ubuntu 24.04 use 64-bit-time names; retain old-name fallbacks.
       depends: [

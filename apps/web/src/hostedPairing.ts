@@ -1,4 +1,4 @@
-import { DEFAULT_HOSTED_APP_URL } from "@t3tools/shared/connectAuth";
+import { HOSTED_APP_URL } from "@t3tools/shared/brand";
 
 import { getPairingTokenFromUrl, setPairingTokenOnUrl } from "./pairingUrl";
 
@@ -10,8 +10,9 @@ export interface HostedPairingRequest {
 
 export type HostedAppChannel = "latest" | "nightly";
 
-export function configuredHostedAppUrl(): string {
-  return import.meta.env.VITE_HOSTED_APP_URL?.trim() || DEFAULT_HOSTED_APP_URL;
+/** The hosted app origin, or null when this build has none (Ompanel ships none by default). */
+export function configuredHostedAppUrl(): string | null {
+  return import.meta.env.VITE_HOSTED_APP_URL?.trim() || HOSTED_APP_URL || null;
 }
 
 function configuredBackendUrl(): string {
@@ -44,7 +45,8 @@ export function isHostedStaticApp(url?: URL): boolean {
     return false;
   }
 
-  const hostedOrigin = originFromUrl(configuredHostedAppUrl());
+  const hostedAppUrl = configuredHostedAppUrl();
+  const hostedOrigin = hostedAppUrl === null ? null : originFromUrl(hostedAppUrl);
   return hostedOrigin !== null && (url ?? new URL(window.location.href)).origin === hostedOrigin;
 }
 
@@ -68,12 +70,15 @@ export function hasHostedPairingRequest(url: URL = new URL(window.location.href)
   return readHostedPairingRequest(url) !== null;
 }
 
+/** Null without a configured hosted app: the credential must not leave for any other origin. */
 export function buildHostedPairingUrl(input: {
   readonly host: string;
   readonly token: string;
   readonly label?: string | null;
-}): string {
-  const url = new URL("/pair", configuredHostedAppUrl());
+}): string | null {
+  const hostedAppUrl = configuredHostedAppUrl();
+  if (hostedAppUrl === null) return null;
+  const url = new URL("/pair", hostedAppUrl);
   url.searchParams.set("host", input.host);
 
   const label = input.label?.trim();
@@ -87,7 +92,8 @@ export function buildHostedPairingUrl(input: {
 export function buildHostedChannelSelectionUrl(input: {
   readonly channel: HostedAppChannel;
 }): string {
-  const url = new URL("/__t3code/channel", configuredHostedAppUrl());
+  // Only the hosted app shows this control, so its own origin is the router when none is configured.
+  const url = new URL("/__t3code/channel", configuredHostedAppUrl() ?? window.location.origin);
   url.searchParams.set("channel", input.channel);
   return url.toString();
 }

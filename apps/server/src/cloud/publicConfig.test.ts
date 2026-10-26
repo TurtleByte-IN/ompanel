@@ -37,6 +37,17 @@ it.effect("rejects malformed or insecure hosted app URLs", () =>
   }),
 );
 
+it.effect("has no hosted app URL by default, upstream's included", () =>
+  Effect.gen(function* () {
+    const unset = yield* hostedAppUrlConfig.pipe(provideEnv({}), Effect.result);
+    assert.isTrue(Result.isFailure(unset));
+    const configured = yield* hostedAppUrlConfig.pipe(
+      provideEnv({ OMPANEL_HOSTED_APP_URL: "https://hosted.example.test" }),
+    );
+    assert.equal(configured, "https://hosted.example.test");
+  }),
+);
+
 it.effect("derives direct Clerk OAuth endpoints from statically injected public config", () =>
   Effect.gen(function* () {
     const config = yield* makeCloudCliOAuthConfig({

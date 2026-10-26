@@ -19,3 +19,11 @@ export const REPOSITORY = "TurtleByte-IN/ompanel";
 export const RAW_CONTENT_URL = `https://raw.githubusercontent.com/${REPOSITORY}/main`;
 
 export const UPSTREAM_PRODUCT_NAME = "T3 Code";
+
+/**
+ * Origin of an Ompanel-run hosted web app. Ompanel runs none, so hosted-only flows (hosted
+ * pairing links, CLI cloud sign-in, Codex return via the hosted app, hosted prompt links) stay off
+ * unless a build or deployment configures one. Never default this to an upstream origin: those
+ * flows hand it pairing credentials.
+ */
+export const HOSTED_APP_URL: string | undefined = undefined;

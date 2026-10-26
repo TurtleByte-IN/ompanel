@@ -1,8 +1,5 @@
-import {
-  connectLoopbackRedirectUri,
-  CONNECT_OAUTH_SCOPES,
-  DEFAULT_HOSTED_APP_URL,
-} from "@t3tools/shared/connectAuth";
+import { HOSTED_APP_URL } from "@t3tools/shared/brand";
+import { connectLoopbackRedirectUri, CONNECT_OAUTH_SCOPES } from "@t3tools/shared/connectAuth";
 import { clerkFrontendApiUrlFromPublishableKey } from "@t3tools/shared/relayAuth";
 import { isRelayTracingEnabled } from "@t3tools/shared/otelEnvironment";
 import { normalizeSecureRelayUrl } from "@t3tools/shared/relayUrl";
@@ -109,9 +106,10 @@ export function makeRelayUrlConfig(fallback = buildTimeRelayUrl) {
 
 export const relayUrlConfig = makeRelayUrlConfig();
 
+// Required when no hosted app is branded in: CLI sign-in then fails with a config error.
 export const hostedAppUrlConfig = makePublicValueConfig(
   "OMPANEL_HOSTED_APP_URL",
-  DEFAULT_HOSTED_APP_URL,
+  HOSTED_APP_URL ?? "",
 ).pipe(Config.mapEffect(validateHostedAppUrl));
 
 function validateHostedAppUrl(value: string) {
@@ -204,7 +202,9 @@ export function makeCloudCliOAuthConfig({
 
 export const cloudCliOAuthConfig = makeCloudCliOAuthConfig();
 
+/** CLI cloud commands sign in through the hosted app, so they stay off without one. */
 export const hasCloudPublicConfig = Boolean(
+  (process.env.OMPANEL_HOSTED_APP_URL?.trim() || HOSTED_APP_URL) &&
   (normalizeSecureRelayUrl(process.env.OMPANEL_RELAY_URL ?? "") ?? buildTimeRelayUrl) &&
   (process.env.OMPANEL_CLERK_PUBLISHABLE_KEY?.trim() || buildTimeClerkPublishableKey) &&
   (process.env.OMPANEL_CLERK_CLI_OAUTH_CLIENT_ID?.trim() || buildTimeClerkCliOAuthClientId),

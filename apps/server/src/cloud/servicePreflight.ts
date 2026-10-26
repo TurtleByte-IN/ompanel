@@ -1,3 +1,5 @@
+import { CLI_COMMAND, RAW_CONTENT_URL } from "@t3tools/shared/brand";
+
 import packageJson from "../../package.json" with { type: "json" };
 import { SERVICE_LAUNCHER_PROTOCOL } from "./serviceProtocol.ts";
 
@@ -27,8 +29,8 @@ export function runServicePreflight(input: {
       // reinstall itself and report success, so name the exact install and the path check.
       reason: [
         `The installed service launcher speaks protocol ${input.launcherProtocol}, but ompanel@${version} requires protocol ${SERVICE_LAUNCHER_PROTOCOL}.`,
-        `On the server machine, install this exact CLI: \`curl -fsSL https://t3.codes/install.sh | OMPANEL_VERSION=${version} sh\`.`,
-        `Check that \`ompanel --version\` prints ${version} and that \`which -a ompanel\` lists no older ompanel (such as an npm or nvm install) first, then run \`~/.local/bin/t3 service install\` (the installer's default path).`,
+        `On the server machine, install this exact CLI: \`curl -fsSL ${RAW_CONTENT_URL}/scripts/install.sh | OMPANEL_VERSION=${version} sh\`.`,
+        `Check that \`${CLI_COMMAND} --version\` prints ${version} and that \`which -a ${CLI_COMMAND}\` lists no older ${CLI_COMMAND} (such as an npm or nvm install) first, then run \`~/.local/bin/${CLI_COMMAND} service install\` (the installer's default path).`,
         "Updating the desktop app does not update this CLI, and `ompanel service update` only repairs the service with whichever CLI runs it.",
       ].join(" "),
     };

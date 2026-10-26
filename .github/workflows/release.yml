@@ -202,7 +202,7 @@ jobs:
             echo "release_channel=stable" >> "$GITHUB_OUTPUT"
             echo "version=$version" >> "$GITHUB_OUTPUT"
             echo "tag=v$version" >> "$GITHUB_OUTPUT"
-            echo "name=T3 Code v$version" >> "$GITHUB_OUTPUT"
+            echo "name=Ompanel v$version" >> "$GITHUB_OUTPUT"
             echo "cli_dist_tag=latest" >> "$GITHUB_OUTPUT"
             if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
               echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
@@ -1074,7 +1074,12 @@ jobs:
             exit 1
           fi
 
-          router_url="${OMPANEL_WEB_ROUTER_URL:-https://app.t3.codes}"
+          # Ompanel runs no hosted app by default; deploying one needs its own origin.
+          router_url="${OMPANEL_WEB_ROUTER_URL:-}"
+          if [[ -z "$router_url" ]]; then
+            echo "OMPANEL_WEB_ROUTER_URL is not set; refusing to build a hosted web app for an unknown origin." >&2
+            exit 1
+          fi
           if [[ "${{ needs.preflight.outputs.release_channel }}" == "stable" ]]; then
             channel_name="latest"
           else
@@ -1153,9 +1158,13 @@ jobs:
             exit 1
           fi
 
-          router_url="${OMPANEL_WEB_ROUTER_URL:-https://app.t3.codes}"
-          latest_domain="${OMPANEL_WEB_LATEST_DOMAIN:-latest.app.t3.codes}"
-          nightly_domain="${OMPANEL_WEB_NIGHTLY_DOMAIN:-nightly.app.t3.codes}"
+          router_url="${OMPANEL_WEB_ROUTER_URL:-}"
+          latest_domain="${OMPANEL_WEB_LATEST_DOMAIN:-}"
+          nightly_domain="${OMPANEL_WEB_NIGHTLY_DOMAIN:-}"
+          if [[ -z "$router_url" || -z "$latest_domain" || -z "$nightly_domain" ]]; then
+            echo "OMPANEL_WEB_ROUTER_URL, OMPANEL_WEB_LATEST_DOMAIN and OMPANEL_WEB_NIGHTLY_DOMAIN must all be set to alias the hosted web app." >&2
+            exit 1
+          fi
           router_domain="${router_url#http://}"
           router_domain="${router_domain#https://}"
           router_domain="${router_domain%%/*}"

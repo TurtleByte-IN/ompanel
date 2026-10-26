@@ -7,8 +7,8 @@ import { nativeImage } from "electron";
 // Keep dbus-next out of desktop detection and PNG reads in the main process.
 
 export const HYPRLAND_CAPTURE_ACTION = "capture-window";
-export const NIRI_CAPTURE_PATH = "/com/t3tools/SnapShot";
-export const NIRI_CAPTURE_INTERFACE = "com.t3tools.SnapShot";
+export const NIRI_CAPTURE_PATH = "/in/turtlebyte/Ompanel/SnapShot";
+export const NIRI_CAPTURE_INTERFACE = "in.turtlebyte.Ompanel.SnapShot";
 
 function isDesktopSession(env: NodeJS.ProcessEnv, desktop: string): boolean {
   return (

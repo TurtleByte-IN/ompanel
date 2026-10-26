@@ -73,7 +73,7 @@ The bundled protocol XML ships with the helper because its BSD license requires 
 ## Niri
 
 Niri does not implement the global-shortcut portal. While capture is enabled the app owns
-`<app-id>.SnapShot` on the session bus and exports `com.t3tools.SnapShot.Capture`; the config
+`<app-id>.SnapShot` on the session bus and exports `in.turtlebyte.Ompanel.SnapShot.Capture`; the config
 binding spawns `gdbus` to call it. Development and packaged app IDs use separate names so a dev
 build does not steal the user's binding.
 
@@ -91,7 +91,8 @@ Modifier serialization writes Linux `Ctrl` explicitly, never the cross-platform 
 
 ## GNOME extension
 
-Source in `apps/desktop/gnome-extension`, UUID `snap-shot@t3.codes`. GNOME only discovers a newly
+Source in `apps/desktop/gnome-extension`, UUID `snap-shot@turtlebyte.in` (D-Bus name
+`org.gnome.Shell.Extensions.OmpanelSnapShot`). GNOME only discovers a newly
 installed extension at login, so setup distinguishes "installed, needs logout" from "discovered but
 disabled" and compares loaded and installed versions.
 

@@ -134,7 +134,7 @@ describe("DesktopClerk", () => {
       name: "development",
       isDevelopment: true,
       platform: "win32" as const,
-      userData: "/tmp/app-data/ompanel-dev",
+      userData: "/tmp/app-data/Ompanel (Dev)",
     },
   ])(
     "creates the bridge before startup can yield to the event loop ($name)",
@@ -353,7 +353,7 @@ it.effect.each(["startup", "open-url", "early-second-instance"] as const)(
       }).toString();
       const request = {
         authorizationUrl: authorize.toString(),
-        returnUrl: "https://app.t3.codes/welcome#agents:remote-one",
+        returnUrl: "http://127.0.0.1:3773/welcome#agents:remote-one",
         environmentId: EnvironmentId.make("remote-one"),
         instanceId: ProviderInstanceId.make("work"),
         flowId: "flow-one",

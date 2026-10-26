@@ -15,10 +15,20 @@ describe("settings pairing URL helpers", () => {
   });
 
   it("uses hosted pairing URLs for HTTPS endpoints", () => {
-    vi.stubEnv("VITE_HOSTED_APP_URL", "https://preview.t3.codes");
+    vi.stubEnv("VITE_HOSTED_APP_URL", "https://hosted.example.test");
 
     expect(resolveHostedPairingUrl("https://host.tailnet.example.ts.net:3773", "PAIRCODE")).toBe(
-      "https://preview.t3.codes/pair?host=https%3A%2F%2Fhost.tailnet.example.ts.net%3A3773#token=PAIRCODE",
+      "https://hosted.example.test/pair?host=https%3A%2F%2Fhost.tailnet.example.ts.net%3A3773#token=PAIRCODE",
     );
+  });
+
+  it("never sends an HTTPS endpoint's credential to a hosted origin when none is configured", () => {
+    vi.stubEnv("VITE_HOSTED_APP_URL", "");
+    const endpoint = "https://host.tailnet.example.ts.net:3773";
+
+    expect(resolveHostedPairingUrl(endpoint, "PAIRCODE")).toBeNull();
+    const direct = resolveDesktopPairingUrl(endpoint, "PAIRCODE");
+    expect(direct).toBe("https://host.tailnet.example.ts.net:3773/pair#token=PAIRCODE");
+    expect(direct).not.toContain("t3.codes");
   });
 });

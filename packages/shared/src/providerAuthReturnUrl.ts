@@ -1,13 +1,20 @@
+import { HOSTED_APP_URL } from "./brand.ts";
 import { isLoopbackHost } from "./preview.ts";
 
-export function providerAuthReturnUrl(value: string | undefined): string | undefined {
+/** Web returns go only to loopback or the configured hosted app; with none configured, loopback only. */
+export function providerAuthReturnUrl(
+  value: string | undefined,
+  hostedAppUrl: string | undefined = HOSTED_APP_URL,
+): string | undefined {
   if (!value) return undefined;
   try {
     const url = new URL(value);
     const desktop = ["ompanel:", "ompanel-dev:"].includes(url.protocol) && url.host === "app";
+    const hostedOrigin =
+      hostedAppUrl && URL.canParse(hostedAppUrl) ? new URL(hostedAppUrl).origin : null;
     const web =
       ["http:", "https:"].includes(url.protocol) &&
-      (isLoopbackHost(url.hostname) || url.origin === "https://app.t3.codes");
+      (isLoopbackHost(url.hostname) || (hostedOrigin !== null && url.origin === hostedOrigin));
     if (
       url.username ||
       url.password ||

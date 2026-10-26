@@ -39,11 +39,11 @@ export const resolveUserDataPath = Effect.fn("desktop.userData.resolveUserDataPa
   }) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const names = input.isDevelopment
-      ? { current: "ompanel-dev", legacy: "T3 Code (Dev)" }
-      : { current: "ompanel", legacy: "T3 Code (Alpha)" };
-    const destinationPath = path.join(input.appDataDirectory, names.current);
-    const legacyPath = path.join(input.appDataDirectory, names.legacy);
+    // Never fall back to upstream's `T3 Code (Dev)`: upstream dev builds still use it, and two
+    // apps must not share one Chromium profile.
+    if (input.isDevelopment) return path.join(input.appDataDirectory, "Ompanel (Dev)");
+    const destinationPath = path.join(input.appDataDirectory, "ompanel");
+    const legacyPath = path.join(input.appDataDirectory, "T3 Code (Alpha)");
     const inspect = (resourcePath: string) =>
       fs
         .exists(resourcePath)
@@ -52,9 +52,6 @@ export const resolveUserDataPath = Effect.fn("desktop.userData.resolveUserDataPa
             DesktopUserDataInitializationError.fromFileSystem(cause, "inspect", resourcePath),
           ),
         );
-    if (input.isDevelopment) {
-      return (yield* inspect(legacyPath)) ? legacyPath : destinationPath;
-    }
     // Chromium databases require their own profile for each running version.
     if (input.platform !== "win32") return destinationPath;
     const destinationState = path.join(destinationPath, "Local State");

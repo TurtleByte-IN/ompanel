@@ -178,18 +178,21 @@ For provider-specific setup and accounts, see [Codex](./providers-codex.md),
 ## Moving from T3 Code
 
 Ompanel keeps its data in `~/.ompanel`. The first time an Ompanel server starts with that
-default home, it copies your T3 Code projects, threads, settings, secrets and attachments from
+default home, it copies your T3 Code projects, threads, settings and attachments from
 `~/.t3/userdata` into `~/.ompanel/userdata`. It does this once, records that in
 `~/.ompanel/legacy-home-migration.json`, and never changes `~/.t3`, so T3 Code keeps working.
 Existing threads keep using their worktrees under `~/.t3/worktrees`; new ones go under
 `~/.ompanel/worktrees`.
 
-- Quit T3 Code first. While its server is running, Ompanel skips the copy and tries again on the
-  next start.
-- Nothing is copied when `~/.ompanel/userdata` already has a database, when you start with
-  `--base-dir` or `OMPANEL_HOME` pointing elsewhere, or in development mode.
-- Logs and per-install identifiers stay behind, so Ompanel shows up as a new environment to
-  paired devices.
+- Quit T3 Code first. While its server is running, Ompanel starts without your T3 Code data and
+  copies it on the next start after T3 Code quits. Anything you do in Ompanel in between is kept
+  only if you add projects or threads; otherwise the copy replaces that empty start.
+- Nothing is copied when `~/.ompanel/userdata` already has projects or threads, when you start
+  with `--base-dir` or `OMPANEL_HOME` pointing elsewhere, or in development mode.
+- Paired devices, pairing links, T3 Connect sign-in and stored secrets stay behind. Pair your
+  phone or other clients with Ompanel again, sign in again to providers whose sign-in T3 Code
+  stored, and re-enter secret environment values in provider settings.
+- Logs and per-install identifiers stay behind too, so Ompanel shows up as a new environment.
 - Environment variables use the `OMPANEL_` prefix. Ompanel does not read `T3CODE_*` variables,
   so rename any you set, for example `T3CODE_HOME` to `OMPANEL_HOME`.
 

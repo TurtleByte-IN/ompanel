@@ -3,14 +3,14 @@
   <id>in.turtlebyte.ompanel</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>MIT</project_license>
-  <name>T3 Code</name>
+  <name>Ompanel</name>
   <summary>Desktop GUI for coding agents</summary>
-  <developer id="com.t3tools">
-    <name>T3 Tools Inc.</name>
+  <developer id="in.turtlebyte">
+    <name>TurtleByte</name>
   </developer>
   <description>
     <p>
-      T3 Code is an open-source desktop app for coding agents. Work with your
+      Ompanel is an open-source desktop app for coding agents. Work with your
       existing agent subscriptions, review code changes, and run commands in
       your projects.
     </p>
@@ -18,15 +18,15 @@
       Connect from desktop, web, or mobile to continue working remotely.
     </p>
   </description>
-  <launchable type="desktop-id">t3code.desktop</launchable>
-  <icon type="stock">t3code</icon>
+  <launchable type="desktop-id">ompanel.desktop</launchable>
+  <icon type="stock">ompanel</icon>
   <provides>
-    <binary>t3code</binary>
+    <binary>ompanel</binary>
   </provides>
   <categories>
     <category>Development</category>
   </categories>
-  <url type="homepage">https://t3.codes</url>
-  <url type="bugtracker">https://github.com/pingdotgg/t3code/issues</url>
-  <url type="vcs-browser">https://github.com/pingdotgg/t3code</url>
+  <url type="homepage">https://github.com/TurtleByte-IN/ompanel</url>
+  <url type="bugtracker">https://github.com/TurtleByte-IN/ompanel/issues</url>
+  <url type="vcs-browser">https://github.com/TurtleByte-IN/ompanel</url>
 </component>
