@@ -208,7 +208,15 @@ export const useOmpSuite = (options: {
     }
     await context?.tracing.stop();
     await context?.close();
-    await suite?.stack.stop();
+    const stopped = await suite?.stack.stop();
+    // PRD §9: no secret the run handled reaches the server's logs, traces or OMP's thread state.
+    if (stopped !== undefined) {
+      NodeFS.writeFileSync(
+        NodePath.join(options.artifacts, "leaked-secrets.json"),
+        `${JSON.stringify(stopped.leakedSecrets, null, 2)}\n`,
+      );
+      expect(stopped.leakedSecrets).toEqual([]);
+    }
   });
 
   return {

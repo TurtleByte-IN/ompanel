@@ -66,7 +66,15 @@ export interface OmpStack {
   readonly completeOmpSetup: () => void;
   /** The server's output, pairing token redacted. */
   readonly serverLog: () => string;
-  readonly stop: () => Promise<void>;
+  /**
+   * Stops the server and its `omp` processes, then reports every secret the run handled (the
+   * pairing token, `secretEnvironment` values, the fake vendor's OAuth codes and the tokens it
+   * issued for them) found where Ompanel records things: the server's output, its logs and
+   * traces (`<state>/logs`, flushed on shutdown) and OMP's per-thread state (`<state>/omp`:
+   * journals, overlays, exports), as `"<secret> in <file>"`. The pairing announcement the
+   * server prints on start is the one place the pairing link belongs (PRD §9).
+   */
+  readonly stop: () => Promise<{ readonly leakedSecrets: ReadonlyArray<string> }>;
 }
 
 const freePort = async () => {
@@ -92,6 +100,44 @@ const commandLine = (pid: number) => {
   } catch {
     return undefined;
   }
+};
+
+/** The server's start-up line that hands the operator the pairing link (`announceStartupPairingUrl`). */
+const PAIRING_ANNOUNCEMENT = /^\s*pairingUrl: \S+$/;
+
+/**
+ * Where each secret appears: the server log (except its pairing announcement) and every file
+ * under the `recorded` directories. Reports name the secret's label and the file, never the value.
+ */
+const scanForSecrets = (input: {
+  readonly secrets: ReadonlyArray<{ readonly label: string; readonly value: string }>;
+  readonly serverLog: string;
+  readonly recorded: ReadonlyArray<string>;
+}): ReadonlyArray<string> => {
+  const sources: Array<{ readonly file: string; readonly text: string }> = [
+    {
+      file: "server log",
+      text: NodeFS.readFileSync(input.serverLog, "utf8")
+        .split("\n")
+        .filter((line) => !PAIRING_ANNOUNCEMENT.test(line))
+        .join("\n"),
+    },
+  ];
+  for (const dir of input.recorded) {
+    if (!NodeFS.existsSync(dir)) continue;
+    for (const entry of NodeFS.readdirSync(dir, { recursive: true, withFileTypes: true })) {
+      if (!entry.isFile()) continue;
+      const file = NodePath.join(entry.parentPath, entry.name);
+      sources.push({ file, text: NodeFS.readFileSync(file, "latin1") });
+    }
+  }
+  return input.secrets
+    .filter((secret) => secret.value.length >= 8)
+    .flatMap((secret) =>
+      sources
+        .filter((source) => source.text.includes(secret.value))
+        .map((source) => `${secret.label} in ${source.file}`),
+    );
 };
 
 export const startOmpStack = async (options: OmpStackOptions = {}): Promise<OmpStack> => {
@@ -268,10 +314,20 @@ export const startOmpStack = async (options: OmpStackOptions = {}): Promise<OmpS
           process.kill(leaked.pid, "SIGKILL");
       }
       NodeFS.closeSync(log);
+      const leakedSecrets = scanForSecrets({
+        secrets: [
+          { label: "pairing token", value: new URL(pairingUrl).hash.replace(/^#token=/, "") },
+          ...secrets.map((value, index) => ({ label: `secretEnvironment[${index}]`, value })),
+          ...(vendor?.exchanged() ?? []).map((value) => ({ label: "OAuth code", value })),
+        ],
+        serverLog: logPath,
+        recorded: [NodePath.join(userdata, "logs"), NodePath.join(userdata, "omp")],
+      });
       await model.close();
       await metrics.close();
       await vendor?.close();
       NodeFS.rmSync(root, { recursive: true, force: true });
+      return { leakedSecrets };
     },
   };
 };
