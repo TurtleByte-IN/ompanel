@@ -55,9 +55,9 @@ runs:
 
     # setup-vp's shared cache key ignores install filters. Keep full installs in a
     # separate namespace, including fallback restores.
-    # The pnpm store stays a cache tarball on the runner's own disk. A store on a
-    # Blacksmith sticky disk mounts in under a second, but pnpm then copies every
-    # package across filesystems instead of hard-linking it: install took 28-49s
+    # The pnpm store stays a cache tarball on the runner's own disk, so pnpm can
+    # hard-link packages into node_modules. A store on a separately mounted disk
+    # forces pnpm to copy every package across filesystems: install took 28-49s
     # against 9s plus an 11s restore.
     - name: Cache full pnpm store
       uses: actions/cache@v6
