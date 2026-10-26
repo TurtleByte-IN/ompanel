@@ -1,16 +1,17 @@
 # Testing the OMP provider
 
-Five layers, from fastest to most faithful.
+Six layers, from fastest to most faithful.
 
 | Layer           | Where                                                                                                                  | Drives                                                           |
 | --------------- | ---------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
 | Unit            | `packages/provider-omp/src/**/*.test.ts`                                                                               | Pure functions: launch arguments, approval-mode mapping, frames  |
 | Adapter         | `packages/provider-omp/src/server/adapter.test.ts` (and the process-layer tests next to it)                            | The adapter and thread process against the scripted fake `omp`   |
+| Control plane   | `packages/provider-omp/src/server/controlBinary.test.ts`                                                               | `OmpControlService` against the scripted control fake `omp`      |
 | Replay fixtures | `apps/server/src/orchestration-v2/testkit/OmpReplayFixtures.integration.test.ts`, fixtures in `testkit/fixtures/omp_*` | The process layer against stdout recorded from the pinned fork   |
 | End-to-end      | `apps/web/e2e/omp/omp-thread.spec.ts` (Playwright)                                                                     | The web app and server against a real `omp` and a scripted model |
 | Live            | `apps/web/e2e/omp/omp-live.spec.ts` (Playwright, `OMPANEL_LIVE=1`)                                                     | The web app and server against a real `omp` and a real model     |
 
-The first three run in CI with the rest of the suite; none needs a model, an
+The first four run in CI with the rest of the suite; none needs a model, an
 account or a built `omp`. The end-to-end test has its own CI job, `OMP E2E`,
 which builds `omp` from the pinned tag ([End-to-end](#end-to-end)). The live
 suite runs nightly in its own workflow and needs a model key
@@ -82,6 +83,42 @@ newest session, like OMP's `autoResume`.
 `agent_start`, streamed thinking and text, an optional tool execution,
 `agent_end`, `prompt_result`), `sessionInfoUpdate`, `subagentLifecycle`,
 `subagentEvent`, `commandOutput`, `notice`, `assistant`.
+
+## The control fake `omp`
+
+`testing/fakeOmpControl.fixture.mjs` stands in for the short-lived `omp`
+processes `OmpControlService` starts (`control.ts`): one-shot CLI commands
+(`--version`, `config list|set|reset|path`, `usage`, `stats`, `skill list`,
+`plugin list`, `agents unpack`, each with an optional `--profile`) and
+`--mode rpc` control servers (`get_login_providers`, `login`).
+`makeFakeOmpControl` in `testing/fakeOmpControl.ts` gives a scratch directory,
+an executable `omp`, a `workspace` and what the fake saw: `starts()` (pid,
+argv, cwd of every process) and `frames()` (every RPC line it read).
+`controlBinary.test.ts` runs the real service on the real spawner against it.
+
+`target(script)` returns an `OmpControlTarget` whose `omp` answers with the
+pinned fork's output (`PINNED_*`, captured from the v18.12.6-ompanel.3
+sidecar in a scratch `HOME` and typed against the vendored CLI and wire
+contracts) unless `script` replaces a command:
+
+```ts
+const omp = yield * makeFakeOmpControl;
+const target = omp.target({
+  cli: { usage: { stdout: "{", exitCode: 0 }, "skill list": { hang: true } },
+  rpc: {
+    commands: {
+      login: [{ emit: input }, { await: input.id, onCancel: [{ fail: "API key is required" }] }],
+    },
+  },
+});
+```
+
+A CLI command prints `stdout`/`stderr` and exits with `exitCode`, or hangs.
+An RPC server runs `beforeReady`, writes `ready`, runs `afterReady` (the
+pinned `setWidget` and `available_commands_update` frames), then the steps of
+each command: `emit`, `respond`, `fail`, `raw`, `stderr`, `await` (a UI
+response, with `onCancel` when it is cancelled), `exit` and `hang`. It exits
+when its stdin closes, as OMP does.
 
 ## Replay fixtures
 
