@@ -24,6 +24,7 @@ import * as Stream from "effect/Stream";
 import { makeOmpAdapter } from "./adapter.ts";
 import { makeOmpPidfiles } from "./pidfiles.ts";
 import { ompStateDirs } from "./session.ts";
+import { makeOmpThreadSessions } from "./threadSessions.ts";
 import { makeFakeOmpState, waitUntil, type FakeOmpStep } from "./testing/fakeOmp.ts";
 
 const platform = HostProcess.Platform.defaultValue();
@@ -76,6 +77,7 @@ const startUiTurn = Effect.fnUntraced(function* (script: {
     dirs,
     pidfiles: yield* makeOmpPidfiles({ dir: dirs.pidfiles, platform }),
     expectedContractVersion: "1.0.0",
+    threadSessions: makeOmpThreadSessions(),
   });
   const session = yield* adapter.openSession({
     threadId: THREAD_ID,
