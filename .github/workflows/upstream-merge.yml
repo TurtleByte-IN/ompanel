@@ -65,7 +65,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          summary() { printf '%s\n' "$@" >> "$GITHUB_STEP_SUMMARY"; }
+          summary() { printf '%s\n' "$@" | tee -a "$GITHUB_STEP_SUMMARY"; }
           run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
 
           if [[ ! "$UPSTREAM_REF" =~ ^[A-Za-z0-9._/-]+$ ]]; then
