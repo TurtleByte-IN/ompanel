@@ -1,0 +1,11 @@
+{
+  "repository": "TurtleByte-IN/oh-my-pi",
+  "tag": "v18.12.6-ompanel.1",
+  "commit": "dd272e929a4e1b607df1a3242bb46c047cac6a4f",
+  "version": "18.12.6",
+  "contract": {
+    "version": "1.0.0",
+    "schemaHash": "sha256:7163c1c55792ee38a975e8d7cbba53b5c10762b338dc82838ffa21b1ea3a4797"
+  },
+  "sidecars": {}
+}
