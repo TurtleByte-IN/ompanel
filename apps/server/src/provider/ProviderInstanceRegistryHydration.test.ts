@@ -3,6 +3,7 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  resolveProviderInstanceEnabled,
   type ServerSettings,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
@@ -17,6 +18,14 @@ function settingsWith(overrides: Partial<ServerSettings>): ServerSettings {
 }
 
 describe("deriveProviderInstanceConfigMap", () => {
+  it("lists the built-in OMP driver as a default instance that starts disabled", () => {
+    const merged = deriveProviderInstanceConfigMap(DEFAULT_SERVER_SETTINGS);
+    const omp = merged[ProviderInstanceId.make("omp")];
+
+    expect(omp).toEqual({ driver: ProviderDriverKind.make("omp") });
+    expect(resolveProviderInstanceEnabled(omp!)).toBe(false);
+  });
+
   it("turns a machine-disabled instance on when a project enables it", () => {
     const settings = settingsWith({
       providerInstances: {

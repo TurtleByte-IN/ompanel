@@ -12,6 +12,9 @@ import * as Stream from "effect/Stream";
 
 import { OMP_LOCK, type OmpLock, type OmpSidecarPlatform } from "../ompLock.ts";
 
+/** Set by the desktop app to the sidecar it ships in its resources. */
+export const OMP_BUNDLED_SIDECAR_ENV = "OMPANEL_OMP_BUNDLED_PATH";
+
 export type OmpLinuxLibc = "gnu" | "musl";
 
 function detectOmpLinuxLibc(): OmpLinuxLibc {

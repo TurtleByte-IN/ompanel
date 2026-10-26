@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-10-21T06:20:00Z",
+  "updatedAt": "2026-10-26T06:00:00Z",
   "compatibility": [
     {
       "driver": "codex",
@@ -85,6 +85,15 @@
       "ranges": [
         { "range": ">=0.80.5", "status": "supported" },
         { "range": "<0.80.5", "status": "unsupported" }
+      ]
+    },
+    {
+      "driver": "omp",
+      "t3CodeRange": ">=0.1.2",
+      "recommendedRange": ">=18.12.6",
+      "ranges": [
+        { "range": ">=18.12.6", "status": "supported" },
+        { "range": "<18.12.6", "status": "unsupported" }
       ]
     },
     {
