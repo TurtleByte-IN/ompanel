@@ -48,6 +48,34 @@ default 300, maximum 3600).
 - The tool card is a command card, the same as OMP's own `bash`. It shows the
   exit code from the result's `details.exitCode`.
 
+### Fallback: OMP's own `bash`
+
+OMP keeps its built-in `bash` when the T3 terminal is not routed: outside the
+T3 server (no `ProviderHostTools`), when the pinned contract has no
+`set_tool_enabled`, or when `set_tool_enabled` fails. If OMP turns `bash` off
+but then refuses `set_host_tools`, the bridge turns `bash` back on, so the
+thread always has a shell. These commands run inside OMP, without a PTY
+(`rpc-ui` sets `PI_NO_PTY`), so they do not appear in the terminal drawer and
+cannot answer a password prompt.
+
+Their output streams anyway. OMP reports a running command with
+`tool_execution_update`, whose `partialResult` is a snapshot of its output
+window (it grows, then scrolls past its budget). The mapper sends the part not
+yet shown as `command_output.delta` on the command card, the same live,
+unpersisted channel Codex uses; the persisted card gets the whole output at
+`tool_execution_end`. Terminal escapes are stripped from both. `bash` output
+never arrives as `command_output` (that frame is builtin slash-command output)
+or `tool_stream_update` (only `edit` streams its arguments that way). The T3
+terminal host tool streams through the same path, from its
+`host_tool_update` tail.
+
+### Keyboard shortcuts
+
+Keyboard shortcuts in a thread are T3's own (Settings → Keybindings).
+OMP's `keybindings.yml` and its TUI settings belong to OMP's terminal app: no
+OMP process here has a TUI, and the Terminal prefs settings page shows those
+keys read-only ([settings.md](./settings.md)).
+
 ## T3 MCP tools
 
 When T3 issues the thread an MCP credential (`McpProviderSessions`), the

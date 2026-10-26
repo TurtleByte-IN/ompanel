@@ -172,8 +172,20 @@ export const makeOmpHostBridge = Effect.fn("makeOmpHostBridge")(function* (
     ),
   );
 
+  const restoreBuiltinBash = process
+    .request("set_tool_enabled", { tool: "bash", enabled: true })
+    .pipe(
+      Effect.asVoid,
+      Effect.catch((error) =>
+        Effect.logWarning("Could not turn OMP's bash back on; the thread has no shell", {
+          detail: error.message,
+        }),
+      ),
+    );
+
   const setup = Effect.gen(function* () {
     terminalRegistered = yield* disableBuiltinBash;
+    const bashDisabled = terminalRegistered;
     const tools = [
       ...(terminalRegistered ? [OMP_HOST_TERMINAL_DEFINITION] : []),
       ...(yield* connectMcp),
@@ -188,6 +200,8 @@ export const makeOmpHostBridge = Effect.fn("makeOmpHostBridge")(function* (
                 mcpToolNames = new Set();
               }),
             ),
+            // Without the T3 terminal the thread needs OMP's own bash back (the terminal fallback).
+            Effect.andThen(bashDisabled ? restoreBuiltinBash : Effect.void),
           ),
         ),
       );

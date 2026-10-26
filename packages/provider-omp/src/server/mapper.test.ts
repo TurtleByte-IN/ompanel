@@ -14,7 +14,7 @@ import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAda
 import * as DateTime from "effect/DateTime";
 
 import type { SessionState, SessionStats } from "../../contract/src/wire.generated.ts";
-import { OMP_PROVIDER, OmpThreadMapper, ompTodoSteps } from "./mapper.ts";
+import { OMP_PROVIDER, OmpThreadMapper, ompTodoSteps, streamedOutputChunk } from "./mapper.ts";
 
 type Event = ProviderAdapter.ProviderAdapterV2Event;
 
@@ -309,6 +309,81 @@ describe("OmpThreadMapper", () => {
       generic?.type === "dynamic_tool" ? [generic.toolName, generic.input] : null,
       ["find", { pattern: "*.ts" }],
     );
+  });
+
+  it("streams OMP's own bash output live when the T3 terminal is not routed (fallback)", () => {
+    const { mapper } = startedTurn();
+    const bash = (frame: Record<string, unknown>, seconds: number) =>
+      mapper.handleFrame(
+        { toolCallId: "call-bash", toolName: "bash", ...frame } as never,
+        at(seconds),
+      ).events;
+    const snapshot = (text: string) => ({ content: [{ type: "text", text }], details: {} });
+
+    const started = turnItems(bash({ type: "tool_execution_start", args: { command: "make" } }, 1));
+    assert.deepStrictEqual(
+      started.map((item) =>
+        item.type === "command_execution" ? [item.status, item.input, item.output] : null,
+      ),
+      [["running", "make", undefined]],
+    );
+    const cardId = started[0]?.id;
+
+    // Each update carries OMP's whole output window; only the new part goes out, unpersisted.
+    const updates = [
+      bash({ type: "tool_execution_update", partialResult: snapshot("cc a.c\n") }, 2),
+      bash({ type: "tool_execution_update", partialResult: snapshot("cc a.c\n") }, 3),
+      bash(
+        {
+          type: "tool_execution_update",
+          partialResult: snapshot("cc a.c\n\u001b[32mcc b.c\u001b[0m\n"),
+        },
+        4,
+      ),
+    ];
+    assert.deepStrictEqual(
+      updates.map((events) =>
+        events.map((event) =>
+          event.type === "command_output.delta"
+            ? [event.type, event.itemId === cardId, event.threadId, event.chunk]
+            : [event.type],
+        ),
+      ),
+      [
+        [["command_output.delta", true, THREAD_ID, "cc a.c\n"]],
+        [],
+        [["command_output.delta", true, THREAD_ID, "cc b.c\n"]],
+      ],
+    );
+
+    const [done] = turnItems(
+      bash(
+        {
+          type: "tool_execution_end",
+          result: {
+            content: [{ type: "text", text: "cc a.c\n\u001b[32mcc b.c\u001b[0m" }],
+            details: { exitCode: 0 },
+          },
+          isError: false,
+        },
+        5,
+      ),
+    );
+    assert.deepStrictEqual(
+      done?.type === "command_execution"
+        ? [done.id === cardId, done.status, done.output, done.exitCode]
+        : null,
+      [true, "completed", "cc a.c\ncc b.c", 0],
+    );
+  });
+
+  it("sends only the unsent part of a scrolled output window", () => {
+    assert.strictEqual(streamedOutputChunk("", "a\n"), "a\n");
+    assert.strictEqual(streamedOutputChunk("a\nb\n", "a\nb\nc\n"), "c\n");
+    // The window dropped its head: continue after what was already sent.
+    assert.strictEqual(streamedOutputChunk("1\n2\n3\n", "2\n3\n4\n5\n"), "4\n5\n");
+    // Nothing in common: send the window whole.
+    assert.strictEqual(streamedOutputChunk("old\n", "new\n"), "new\n");
   });
 
   it("shows todo tool results as the turn's todo list", () => {

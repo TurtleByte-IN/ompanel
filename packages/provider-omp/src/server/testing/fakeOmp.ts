@@ -165,6 +165,8 @@ export interface FakeOmpTool {
   readonly args: Record<string, unknown>;
   readonly result: unknown;
   readonly isError?: boolean;
+  /** `partialResult`s sent as `tool_execution_update` between start and end. */
+  readonly updates?: ReadonlyArray<unknown>;
 }
 
 export interface FakeOmpPromptTurn {
@@ -232,6 +234,9 @@ export const fakeOmpFrames = {
       const isError = turn.tool.isError ?? false;
       toolSteps.push(
         { emit: { type: "tool_execution_start", toolCallId, toolName, args } },
+        ...(turn.tool.updates ?? []).map((partialResult): FakeOmpStep => ({
+          emit: { type: "tool_execution_update", toolCallId, toolName, args, partialResult },
+        })),
         { emit: { type: "tool_execution_end", toolCallId, toolName, result, isError } },
       );
       messages.push({

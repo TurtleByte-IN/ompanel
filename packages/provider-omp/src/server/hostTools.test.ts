@@ -115,6 +115,10 @@ const runSession = (input: {
   readonly contract: string;
   readonly runtimeMode: RuntimeMode;
   readonly promptSteps: ReadonlyArray<FakeOmpStep>;
+  /** How OMP answers `set_host_tools`; it accepts by default. */
+  readonly setHostTools?: FakeOmpStep;
+  /** Without T3's host services (outside the T3 server) the bridge registers nothing. */
+  readonly withoutHostServices?: boolean;
 }) =>
   Effect.gen(function* () {
     const state = yield* makeFakeOmpState;
@@ -123,7 +127,7 @@ const runSession = (input: {
     const script = state.script({
       commands: {
         set_tool_enabled: [{ respond: { enabled: false } }],
-        set_host_tools: [{ respond: { toolNames: ["$id"] } }],
+        set_host_tools: [input.setHostTools ?? { respond: { toolNames: ["$id"] } }],
         set_host_cwd_change: [{ respond: { enabled: true } }],
         set_session_name: [{ respond: null }],
         prompt: [ack, ...input.promptSteps],
@@ -148,7 +152,7 @@ const runSession = (input: {
     }).pipe(Effect.provide(McpProviderSessions.layer));
     const path = yield* Path.Path;
     const dirs = ompStateDirs(path, NodePath.join(state.dir, "state"));
-    const adapter = yield* makeOmpAdapter({
+    const makeAdapter = makeOmpAdapter({
       instanceId: INSTANCE_ID,
       profile: "",
       environment: state.env({ ...script, FAKE_OMP_CONTRACT: input.contract }),
@@ -160,10 +164,10 @@ const runSession = (input: {
       expectedContractVersion: input.contract,
       threadSessions: makeOmpThreadSessions(),
       sessions: state.sessions,
-    }).pipe(
-      Effect.provideService(ProviderHostTools.ProviderHostTools, host.service),
-      Effect.provideService(McpProviderSessions.McpProviderSessions, mcpSessions),
-    );
+    }).pipe(Effect.provideService(McpProviderSessions.McpProviderSessions, mcpSessions));
+    const adapter = yield* input.withoutHostServices === true
+      ? makeAdapter
+      : makeAdapter.pipe(Effect.provideService(ProviderHostTools.ProviderHostTools, host.service));
 
     const events = yield* Effect.gen(function* () {
       const policy = runtimePolicy(input.runtimeMode);
@@ -482,6 +486,72 @@ posixOnly("OMP host tools", () => {
         registered?.map((tool) => tool.name),
         ["preview_open", "delegate_task"],
       );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("turns OMP's bash back on when OMP refuses the T3 terminal", () =>
+    Effect.gen(function* () {
+      const { state } = yield* runSession({
+        contract: OMP_HOST_CWD_CHANGE_CONTRACT,
+        runtimeMode: "full-access",
+        promptSteps: fakeOmpFrames.promptTurn({ text: ["ok"] }).slice(1),
+        setHostTools: { fail: "host tools are off" },
+      });
+      assert.deepStrictEqual(
+        framesOfType(state.commands(), "set_tool_enabled").map((frame) => [
+          frame["tool"],
+          frame["enabled"],
+        ]),
+        [
+          ["bash", false],
+          ["bash", true],
+        ],
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("streams OMP's own bash output when T3 routes no terminal (fallback)", () =>
+    Effect.gen(function* () {
+      const { state, host, events } = yield* runSession({
+        contract: OMP_HOST_CWD_CHANGE_CONTRACT,
+        runtimeMode: "full-access",
+        withoutHostServices: true,
+        promptSteps: fakeOmpFrames
+          .promptTurn({
+            text: ["running it"],
+            tool: {
+              toolCallId: "call-bash",
+              toolName: "bash",
+              args: { command: "make" },
+              updates: [
+                { content: [{ type: "text", text: "cc a.c\n" }], details: {} },
+                { content: [{ type: "text", text: "cc a.c\ncc b.c\n" }], details: {} },
+              ],
+              result: {
+                content: [{ type: "text", text: "cc a.c\ncc b.c" }],
+                details: { exitCode: 0 },
+              },
+            },
+          })
+          .slice(1),
+      });
+      const types = state.commands().map((command) => command["type"]);
+      assert.notInclude(types, "set_tool_enabled");
+      assert.notInclude(types, "set_host_tools");
+      assert.lengthOf(host.calls.terminal, 0);
+
+      const deltas = events.flatMap((event) =>
+        event.type === "command_output.delta" ? [event.chunk] : [],
+      );
+      assert.deepStrictEqual(deltas, ["cc a.c\n", "cc b.c\n"]);
+      const commands = events.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "command_execution"
+          ? [[event.turnItem.status, event.turnItem.input, event.turnItem.output ?? null]]
+          : [],
+      );
+      assert.deepStrictEqual(commands.at(-1), ["completed", "make", "cc a.c\ncc b.c"]);
+      // Output while running travels only as deltas; no running card carries it.
+      assert.isTrue(commands.slice(0, -1).every(([, , output]) => output === null));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
