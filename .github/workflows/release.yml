@@ -59,6 +59,7 @@ jobs:
       ref: ${{ steps.resolve.outputs.ref }}
       nightly_version: ${{ steps.resolve.outputs.nightly_version }}
       has_changes: ${{ steps.resolve.outputs.has_changes }}
+      signing: ${{ steps.resolve.outputs.signing }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -75,6 +76,7 @@ jobs:
             const {
               assertCommitOnDefaultBranch,
               assertReleaseSource,
+              mayReleaseSign,
               shouldReleaseNightly,
               resolveLatestNightlyCommit,
             } = require('./.github/scripts/check-nightly-release.cjs');
@@ -88,18 +90,23 @@ jobs:
 
             await assertReleaseSource({ github, context, releaseChannel });
 
+            let ref = context.sha;
             if (context.eventName === 'schedule') {
               core.setOutput('has_changes', await shouldReleaseNightly({ github, context, core }));
-              core.setOutput('ref', context.sha);
             } else if (context.eventName === 'workflow_dispatch' && dispatchChannel === 'stable') {
               const { tag, sha, version } = await resolveLatestNightlyCommit({ github, context, core });
               await assertCommitOnDefaultBranch({ github, context, sha });
               core.notice(`Stable release builds ${sha}, the commit shipped by ${tag}.`);
-              core.setOutput('ref', sha);
+              ref = sha;
               core.setOutput('nightly_version', version);
-            } else {
-              core.setOutput('ref', context.sha);
             }
+            core.setOutput('ref', ref);
+
+            // Signing and npm publishing run in the `release` environment, and only for a
+            // commit on main; anything else builds unsigned and is never published to npm.
+            const signing = await mayReleaseSign({ github, context, releaseChannel, sha: ref });
+            if (!signing) core.notice(`${ref} is a preview or not on the default branch: unsigned, no npm.`);
+            core.setOutput('signing', String(signing));
 
   preflight:
     name: Preflight
@@ -122,6 +129,7 @@ jobs:
       ref: ${{ needs.resolve_commit.outputs.ref }}
       has_vercel: ${{ steps.credentials.outputs.has_vercel }}
       has_release_app: ${{ steps.credentials.outputs.has_release_app }}
+      signing: ${{ needs.resolve_commit.outputs.signing }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -676,6 +684,8 @@ jobs:
       rust_target: aarch64-apple-darwin
       resource_key: darwin-arm64
       cli_archive: true
+      sign: ${{ needs.preflight.outputs.signing == 'true' }}
+      environment: ${{ needs.preflight.outputs.signing == 'true' && 'release' || '' }}
 
   desktop_mac_x64:
     name: Desktop macOS x64
@@ -702,6 +712,8 @@ jobs:
       # (the SEA docs list macOS as arm64 only) and the built binary segfaults
       # on start. The x64 desktop app is Electron and unaffected.
       cli_archive: false
+      sign: ${{ needs.preflight.outputs.signing == 'true' }}
+      environment: ${{ needs.preflight.outputs.signing == 'true' && 'release' || '' }}
 
   desktop_linux_x64:
     name: Desktop Linux x64
@@ -725,6 +737,8 @@ jobs:
       rust_target: x86_64-unknown-linux-gnu
       resource_key: linux-x64
       cli_archive: true
+      sign: ${{ needs.preflight.outputs.signing == 'true' }}
+      environment: ${{ needs.preflight.outputs.signing == 'true' && 'release' || '' }}
 
   # node-pty has no Linux prebuild and compiles from source, so the arm64 app
   # and archive are built on arm64 hardware rather than cross-built.
@@ -750,6 +764,8 @@ jobs:
       rust_target: aarch64-unknown-linux-gnu
       resource_key: linux-arm64
       cli_archive: true
+      sign: ${{ needs.preflight.outputs.signing == 'true' }}
+      environment: ${{ needs.preflight.outputs.signing == 'true' && 'release' || '' }}
 
   # The Windows jobs start with the other platforms and wait for the same-arch
   # Linux CLI archive after their other setup. Packaging is mostly CPU and
@@ -779,6 +795,8 @@ jobs:
       rust_target: x86_64-pc-windows-msvc
       resource_key: win32-x64
       cli_archive: true
+      sign: ${{ needs.preflight.outputs.signing == 'true' }}
+      environment: ${{ needs.preflight.outputs.signing == 'true' && 'release' || '' }}
 
   desktop_win_arm64:
     name: Desktop Windows arm64
@@ -803,9 +821,14 @@ jobs:
       rust_target: aarch64-pc-windows-msvc
       resource_key: win32-arm64
       cli_archive: true
+      sign: ${{ needs.preflight.outputs.signing == 'true' }}
+      environment: ${{ needs.preflight.outputs.signing == 'true' && 'release' || '' }}
 
+  # Uploads everything as a draft. verify_release checks the draft and
+  # publish_release makes it public only after every check passed, so a broken
+  # release never reaches the installers or `releases/latest`.
   release:
-    name: Publish GitHub Release
+    name: Create draft GitHub Release
     needs:
       [
         preflight,
@@ -826,6 +849,8 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: write
+    outputs:
+      release_id: ${{ steps.publish.outputs.id || steps.publish_first.outputs.id }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -975,7 +1000,8 @@ jobs:
           Built from `${{ needs.preflight.outputs.ref }}`.
           EOF
 
-      - name: Publish release
+      - name: Create draft release
+        id: publish
         if: needs.preflight.outputs.previous_tag != ''
         uses: softprops/action-gh-release@v3
         with:
@@ -985,13 +1011,15 @@ jobs:
           generate_release_notes: ${{ needs.preflight.outputs.release_channel != 'preview' }}
           body_path: ${{ needs.preflight.outputs.release_channel == 'preview' && 'release-notes.md' || '' }}
           previous_tag: ${{ needs.preflight.outputs.previous_tag }}
+          draft: true
           prerelease: ${{ needs.preflight.outputs.is_prerelease }}
-          make_latest: ${{ needs.preflight.outputs.make_latest }}
+          make_latest: false
           files: ${{ steps.release_files.outputs.files }}
           fail_on_unmatched_files: true
           token: ${{ github.token }}
 
-      - name: Publish first release
+      - name: Create first draft release
+        id: publish_first
         if: needs.preflight.outputs.previous_tag == ''
         uses: softprops/action-gh-release@v3
         with:
@@ -1000,24 +1028,30 @@ jobs:
           name: ${{ needs.preflight.outputs.release_name }}
           generate_release_notes: ${{ needs.preflight.outputs.release_channel != 'preview' }}
           body_path: ${{ needs.preflight.outputs.release_channel == 'preview' && 'release-notes.md' || '' }}
+          draft: true
           prerelease: ${{ needs.preflight.outputs.is_prerelease }}
-          make_latest: ${{ needs.preflight.outputs.make_latest }}
+          make_latest: false
           files: ${{ steps.release_files.outputs.files }}
           fail_on_unmatched_files: true
           token: ${{ github.token }}
 
-  # Installs what was just published, the way users get it, on each OS
-  # (docs/omp/release.md#verification). Every downloaded asset must match
-  # SHA256SUMS; the one-line installer from the release commit installs the
-  # CLI, whose server must download the pinned OMP sidecar on first use; and
-  # the installed desktop app must start and turn OMP ready on the sidecar it
-  # bundles. Linux also checks that every platform's assets were published.
+  # Installs the draft release the way users will get it, on each OS
+  # (docs/omp/release.md#verification), before anyone can download it. Every
+  # downloaded asset must match SHA256SUMS; the one-line installer from the
+  # release commit installs the CLI (from a local mirror of the draft, since a
+  # draft has no public download URL), whose server must download the pinned
+  # OMP sidecar on first use; and the installed desktop app must start and turn
+  # OMP ready on the sidecar it bundles. Linux also checks that every
+  # platform's assets are there.
   verify_release:
-    name: Verify published release ${{ matrix.label }}
+    name: Verify draft release ${{ matrix.label }}
     needs: [preflight, release]
     if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' }}
+    # Draft releases are visible only to tokens that can write contents. The
+    # token is handed to the download step alone, and checkout does not keep it,
+    # so the binaries this job runs never see it.
     permissions:
-      contents: read
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -1040,14 +1074,15 @@ jobs:
       run:
         shell: bash
     env:
-      GH_TOKEN: ${{ github.token }}
       TAG: ${{ needs.preflight.outputs.tag }}
       VERSION: ${{ needs.preflight.outputs.version }}
+      RELEASE_ID: ${{ needs.release.outputs.release_id }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
           ref: ${{ needs.preflight.outputs.ref }}
+          persist-credentials: false
           sparse-checkout: |
             /*
             !/.repos/
@@ -1059,16 +1094,25 @@ jobs:
         with:
           task-cache-read-token: ${{ secrets.T3_TASK_CACHE_READ_TOKEN }}
 
-      - name: Download the published release
+      - name: Download the draft release
         env:
+          GH_TOKEN: ${{ github.token }}
           ASSETS: ${{ matrix.assets }}
         run: |
           set -euo pipefail -f
           release_dir="$RUNNER_TEMP/release"
           echo "RELEASE_DIR=$release_dir" >> "$GITHUB_ENV"
-          args=()
-          for pattern in $ASSETS; do args+=(--pattern "$pattern"); done
-          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir "$release_dir" "${args[@]}"
+          mkdir -p "$release_dir"
+          gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" --jq '"\(.tag_name) draft=\(.draft) prerelease=\(.prerelease)"'
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?per_page=100" --jq '.[] | "\(.id) \(.name)"' |
+            while read -r id name; do
+              for pattern in $ASSETS; do
+                if [[ "$name" == $pattern ]]; then
+                  gh api -H "Accept: application/octet-stream" "repos/$GITHUB_REPOSITORY/releases/assets/$id" > "$release_dir/$name"
+                  break
+                fi
+              done
+            done
           ls -l "$release_dir"
 
       - name: Verify downloads against SHA256SUMS
@@ -1116,12 +1160,22 @@ jobs:
           for target in win32-x64 win32-arm64; do expect "ompanel-*-$target.zip" 1; done
           exit "$missing"
 
+      # A draft has no public download URL, so the installer reads the draft's
+      # bytes from a local mirror (OMPANEL_RELEASE_BASE_URL). Everything else
+      # is the published one-liner: same script, same SHA256SUMS check.
       - name: Install the CLI with the one-line installer
         if: runner.os != 'Windows'
         run: |
           set -euo pipefail
+          mirror="$RUNNER_TEMP/mirror"
+          mkdir -p "$mirror/v$VERSION"
+          cp "$RELEASE_DIR"/SHA256SUMS "$RELEASE_DIR"/ompanel-*.tar.gz "$mirror/v$VERSION/"
+          python3 -m http.server 47801 --bind 127.0.0.1 --directory "$mirror" >/dev/null 2>&1 &
+          server=$!
+          trap 'kill "$server"' EXIT
+          for _ in $(seq 1 50); do curl -fsS -o /dev/null "http://127.0.0.1:47801/v$VERSION/SHA256SUMS" && break; sleep 0.2; done
           curl -fsSL "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${TAG}/scripts/install.sh" \
-            | OMPANEL_VERSION="$VERSION" OMPANEL_HOME="$RUNNER_TEMP/ompanel-home" OMPANEL_INSTALL_BIN_DIR="$RUNNER_TEMP/bin" sh
+            | OMPANEL_RELEASE_BASE_URL=http://127.0.0.1:47801 OMPANEL_VERSION="$VERSION" OMPANEL_HOME="$RUNNER_TEMP/ompanel-home" OMPANEL_INSTALL_BIN_DIR="$RUNNER_TEMP/bin" sh
           installed="$("$RUNNER_TEMP/bin/ompanel" --version)"
           echo "$installed"
           [[ "$installed" == *"$VERSION"* ]]
@@ -1131,10 +1185,23 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $env:OMPANEL_VERSION = $env:VERSION
-          $env:OMPANEL_HOME = Join-Path $env:RUNNER_TEMP "ompanel-home"
-          $env:OMPANEL_INSTALL_BIN_DIR = Join-Path $env:RUNNER_TEMP "bin"
-          irm "https://raw.githubusercontent.com/$env:GITHUB_REPOSITORY/$env:TAG/scripts/install.ps1" | iex
+          $mirror = Join-Path $env:RUNNER_TEMP "mirror"
+          $versionDir = Join-Path $mirror "v$env:VERSION"
+          New-Item -ItemType Directory -Force -Path $versionDir | Out-Null
+          Copy-Item (Join-Path $env:RELEASE_DIR "SHA256SUMS"), (Join-Path $env:RELEASE_DIR "ompanel-*.zip") $versionDir
+          $server = Start-Process python -ArgumentList "-m", "http.server", "47801", "--bind", "127.0.0.1", "--directory", $mirror -PassThru -WindowStyle Hidden
+          try {
+            foreach ($attempt in 1..50) {
+              try { Invoke-WebRequest "http://127.0.0.1:47801/v$env:VERSION/SHA256SUMS" -UseBasicParsing | Out-Null; break } catch { Start-Sleep -Milliseconds 200 }
+            }
+            $env:OMPANEL_RELEASE_BASE_URL = "http://127.0.0.1:47801"
+            $env:OMPANEL_VERSION = $env:VERSION
+            $env:OMPANEL_HOME = Join-Path $env:RUNNER_TEMP "ompanel-home"
+            $env:OMPANEL_INSTALL_BIN_DIR = Join-Path $env:RUNNER_TEMP "bin"
+            irm "https://raw.githubusercontent.com/$env:GITHUB_REPOSITORY/$env:TAG/scripts/install.ps1" | iex
+          } finally {
+            Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
+          }
           $installed = & (Join-Path $env:OMPANEL_INSTALL_BIN_DIR "ompanel.cmd") --version
           Write-Host $installed
           if (-not "$installed".Contains($env:VERSION)) { throw "ompanel --version printed '$installed'" }
@@ -1220,14 +1287,44 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  # Makes the verified draft public. Only now can installers, `releases/latest`
+  # and updaters reach it; the jobs below that announce or publish elsewhere
+  # wait for this one.
+  publish_release:
+    name: Publish GitHub Release
+    needs: [preflight, release, verify_release]
+    if: ${{ !failure() && !cancelled() && needs.release.result == 'success' && needs.verify_release.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Publish the verified draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ needs.release.outputs.release_id }}
+          TAG: ${{ needs.preflight.outputs.tag }}
+          MAKE_LATEST: ${{ needs.preflight.outputs.make_latest }}
+        run: |
+          set -euo pipefail
+          gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
+            -F draft=false -f make_latest="$MAKE_LATEST" \
+            --jq '"\(.tag_name) draft=\(.draft) prerelease=\(.prerelease) \(.html_url)"'
+          # The public URL the installers use now serves the verified checksums.
+          curl -fsSL --retry 5 --retry-all-errors "https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/SHA256SUMS" -o public-sums
+          gh api -H "Accept: application/octet-stream" "repos/$GITHUB_REPOSITORY/releases/assets/$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets" --jq '.[] | select(.name == "SHA256SUMS") | .id')" > draft-sums
+          cmp public-sums draft-sums
+
   # The `ompanel` npm package is a launcher that downloads this version's CLI
   # archive from the GitHub Release, so it publishes only once that release
-  # exists. Preview publishes too, under the `preview` dist-tag, which
-  # nothing resolves unless asked for by name.
+  # is public. Only builds of a commit on main publish, from the `release`
+  # environment (required reviewers); its npm trusted publisher should name
+  # that environment. Preview publishes never happen here (unsigned channel).
   publish_cli:
     name: Publish CLI to npm
-    needs: [preflight, release]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' && vars.OMPANEL_NPM_PUBLISH == 'true' }}
+    needs: [preflight, publish_release]
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.publish_release.result == 'success' && needs.preflight.outputs.signing == 'true' && vars.OMPANEL_NPM_PUBLISH == 'true' }}
+    environment: release
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -1265,8 +1362,8 @@ jobs:
 
   publish_aur:
     name: Publish AUR package
-    needs: [preflight, release]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' && needs.preflight.outputs.release_channel != 'preview' }}
+    needs: [preflight, publish_release]
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.publish_release.result == 'success' && needs.preflight.outputs.release_channel != 'preview' }}
     uses: ./.github/workflows/publish-aur.yml
     with:
       release_tag: ${{ needs.preflight.outputs.tag }}
@@ -1392,8 +1489,8 @@ jobs:
 
   deploy_web:
     name: Deploy hosted web app
-    needs: [preflight, build_web, release, publish_cli]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.build_web.result == 'success' && needs.release.result == 'success' && needs.publish_cli.result == 'success' && needs.preflight.outputs.release_channel != 'preview' }}
+    needs: [preflight, build_web, publish_release, publish_cli]
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.build_web.result == 'success' && needs.publish_release.result == 'success' && needs.publish_cli.result == 'success' && needs.preflight.outputs.release_channel != 'preview' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     env:
@@ -1541,8 +1638,8 @@ jobs:
 
   deploy_marketing:
     name: Deploy marketing site
-    needs: [preflight, build_marketing, release]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.build_marketing.result == 'success' && needs.release.result == 'success' && needs.preflight.outputs.release_channel == 'nightly' }}
+    needs: [preflight, build_marketing, publish_release]
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.build_marketing.result == 'success' && needs.publish_release.result == 'success' && needs.preflight.outputs.release_channel == 'nightly' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     env:
@@ -1586,8 +1683,8 @@ jobs:
 
   finalize:
     name: Finalize release
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' && needs.preflight.outputs.release_channel == 'stable' && needs.preflight.outputs.is_prerelease == 'false' && needs.preflight.outputs.has_release_app == 'true' }}
-    needs: [preflight, release]
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.publish_release.result == 'success' && needs.preflight.outputs.release_channel == 'stable' && needs.preflight.outputs.is_prerelease == 'false' && needs.preflight.outputs.has_release_app == 'true' }}
+    needs: [preflight, publish_release]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -1670,10 +1767,10 @@ jobs:
       needs.preflight.result == 'success' &&
       needs.preflight.outputs.release_channel != 'preview' &&
       needs.relay_public_config.result == 'success' &&
-      needs.release.result == 'success' &&
+      needs.publish_release.result == 'success' &&
       needs.deploy_web.result == 'success' &&
       (needs.finalize.result == 'success' || needs.finalize.result == 'skipped')
-    needs: [preflight, relay_public_config, release, deploy_web, finalize]
+    needs: [preflight, relay_public_config, publish_release, deploy_web, finalize]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:

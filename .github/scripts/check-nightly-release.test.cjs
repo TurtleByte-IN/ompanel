@@ -3,6 +3,7 @@ const test = require("node:test");
 const {
   assertCommitOnDefaultBranch,
   assertReleaseSource,
+  mayReleaseSign,
   shouldReleaseNightly,
 } = require("./check-nightly-release.cjs");
 
@@ -72,6 +73,30 @@ test("rejects a pushed plain version tag that is not on main", async () => {
     assertReleaseSource({ ...options, releaseChannel: "stable" }),
     /not contained in main \(diverged\)/,
   );
+});
+
+for (const [comparisonStatus, expected] of [
+  ["ahead", true],
+  ["identical", true],
+  ["diverged", false],
+  ["behind", false],
+]) {
+  test(`signs a stable build only from main (${comparisonStatus})`, async () => {
+    const { options } = releaseSourceFixture({ comparisonStatus, eventName: "push" });
+    assert.equal(
+      await mayReleaseSign({ ...options, releaseChannel: "stable", sha: "candidate" }),
+      expected,
+    );
+  });
+}
+
+test("never signs a preview build, even from main", async () => {
+  const { options, calls } = releaseSourceFixture();
+  assert.equal(
+    await mayReleaseSign({ ...options, releaseChannel: "preview", sha: "candidate" }),
+    false,
+  );
+  assert.equal(calls.length, 0);
 });
 
 for (const releaseChannel of ["stable", "nightly"]) {

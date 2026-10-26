@@ -545,8 +545,10 @@ Checklist:
 ## 1) Release validation and unsigned builds
 
 On the Ompanel fork, a tag with a suffix after `X.Y.Z` (for example `v0.0.0-ompanel-rc.1`) is a
-release candidate: a GitHub prerelease that may come from any commit, publishes npm under `next`
-only when npm publishing is enabled, and never runs the finalize job
+release candidate: a GitHub prerelease that may come from any commit. From a commit on `main` it
+is signed and publishes npm under `next` (when npm publishing is enabled), after a `release`
+environment reviewer approves; from any other commit it builds unsigned and skips npm. It never
+runs the finalize job, and every release is verified as a draft before it is published
 ([docs/omp/release.md](../omp/release.md#cutting-a-release)). Pushing a plain `vX.Y.Z` tag is a
 real stable release: it publishes `ompanel` with npm dist-tag `latest` when npm publishing is
 enabled, creates a real GitHub Release marked latest, aliases the hosted app when Vercel is

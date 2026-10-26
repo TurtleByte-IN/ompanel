@@ -30,23 +30,34 @@ pinned sidecar into `<OMPANEL_HOME>/tools/omp/<tag>/` on first use and checks it
 
 ## Cutting a release
 
-| Kind              | How                                                                                       | Built from  | GitHub Release           |
-| ----------------- | ----------------------------------------------------------------------------------------- | ----------- | ------------------------ |
-| Release candidate | `git tag vX.Y.Z-rc.N <commit> && git push origin vX.Y.Z-rc.N`                             | any commit  | prerelease, never latest |
-| Stable            | `git tag vX.Y.Z <commit on main> && git push origin vX.Y.Z`, or dispatch `channel=stable` | `main` only | latest                   |
-| Preview           | Actions → Release → Run workflow, `channel=preview`, any branch                           | that branch | prerelease, no updater   |
-| Nightly           | scheduled, once `OMPANEL_NIGHTLY_RELEASES` is `true`, or dispatch `channel=nightly`       | `main` only | prerelease               |
+| Kind              | How                                                                                       | Built from  | Signed, npm                     | GitHub Release           |
+| ----------------- | ----------------------------------------------------------------------------------------- | ----------- | ------------------------------- | ------------------------ |
+| Release candidate | `git tag vX.Y.Z-rc.N <commit> && git push origin vX.Y.Z-rc.N`                             | any commit  | only if `<commit>` is on `main` | prerelease, never latest |
+| Stable            | `git tag vX.Y.Z <commit on main> && git push origin vX.Y.Z`, or dispatch `channel=stable` | `main` only | yes                             | latest                   |
+| Preview           | Actions → Release → Run workflow, `channel=preview`, any branch                           | that branch | never                           | prerelease, no updater   |
+| Nightly           | scheduled, once `OMPANEL_NIGHTLY_RELEASES` is `true`, or dispatch `channel=nightly`       | `main` only | yes                             | prerelease               |
+
+Only repository admins can create, move or delete `v*` tags (ruleset "Release tags (v\*): admins
+only"; `-nightly.` and `-preview.` tags, which the release workflow creates itself, are exempt).
 
 Any tag with a suffix after `X.Y.Z` (other than `-nightly.` and `-preview.`, which the trigger
-ignores) is a release candidate. It may be cut from any commit, like a preview, so a branch can be
-released before it merges; the first one was `v0.0.0-ompanel-rc.1`, cut from the branch that set
-this pipeline up. A candidate is a GitHub prerelease, is never marked latest, would publish to npm
-under `next`, and never runs the finalize job, so it never commits a version bump to `main`.
-Plain `vX.Y.Z` tags must point at a commit on `main`.
+ignores) is a release candidate. It may be cut from any commit, so a branch can be released before
+it merges; `v0.0.0-ompanel-rc.1` and `-rc.2` were cut from the branch that set this pipeline up.
+A candidate is a GitHub prerelease, is never marked latest, and never runs the finalize job, so it
+never commits a version bump to `main`. A candidate from a commit that is not on `main` builds
+unsigned and never publishes to npm, whatever secrets exist: only reviewed code gets the signing
+identity. Plain `vX.Y.Z` tags must point at a commit on `main`.
+
+Those rules live in the workflow, which a tagged commit can edit, so they are not the security
+boundary. The boundary is the `release` environment ([Signing](#signing)): the signing secrets and
+npm publishing exist only there, and every run that reaches it waits for a reviewer.
 
 Watch the run with `gh run watch -R TurtleByte-IN/ompanel`. It takes about half an hour (the first
-candidate took 27 minutes): the release reruns lint, typecheck and the test suites, builds six desktop
-targets and five CLI archives, publishes, then verifies the published release.
+candidate took 27 minutes): the release reruns lint, typecheck and the test suites, builds six
+desktop targets and five CLI archives, uploads them as a draft release, verifies the draft, then
+publishes it. A run that signs stops twice for approval (the desktop builds, then npm): approve it
+under the run's "Review deployments", or with
+`gh api -X POST repos/TurtleByte-IN/ompanel/actions/runs/<run>/pending_deployments -F 'environment_ids[]=<id>' -f state=approved -f comment=…`.
 
 Scheduled nightlies are off on the fork because each one is a full release run that competes with
 pull request CI for runners. Set the repository variable `OMPANEL_NIGHTLY_RELEASES` to `true` to
@@ -54,20 +65,22 @@ turn them on.
 
 ## Verification
 
-Before anything is published, every build job smoke-tests its own CLI archive
+Before anything is uploaded, every build job smoke-tests its own CLI archive
 (`scripts/smoke-cli-archive.ts --omp-sidecar`): the archive must report the release version,
 serve the web app, and download the pinned OMP sidecar with the sha256 in `omp.lock`. Windows
 archives run this on a Windows runner of their own architecture.
 
-After publishing, `verify_release` installs the release the way users get it, on Linux x64,
-macOS arm64 and Windows x64:
+The `release` job then uploads everything as a draft release, which nobody outside the
+repository can see or download. `verify_release` installs the draft the way users will get it,
+on Linux x64, macOS arm64 and Windows x64:
 
-1. Downloads the assets from the published release and checks each one against `SHA256SUMS`.
-   The Linux job downloads everything and also fails if any platform's assets are missing.
+1. Downloads the assets from the draft and checks each one against `SHA256SUMS`. The Linux job
+   downloads everything and also fails if any platform's assets are missing.
 2. Runs the one-line installer from the release commit
    (`raw.githubusercontent.com/TurtleByte-IN/ompanel/<tag>/scripts/install.sh`, or
    `install.ps1`) with `OMPANEL_VERSION` set, in a throwaway `OMPANEL_HOME`, and runs
-   `ompanel --version`.
+   `ompanel --version`. A draft has no public download URL, so `OMPANEL_RELEASE_BASE_URL` points
+   the installer at a local mirror of the draft's `SHA256SUMS` and CLI archive.
 3. Starts the installed CLI's server in a fresh home and waits for it to download the OMP sidecar
    and verify its sha256.
 4. Installs and launches the desktop app: the `.AppImage` and the `.deb` on Linux (under
@@ -75,6 +88,11 @@ macOS arm64 and Windows x64:
    Windows. `apps/desktop/scripts/smoke-omp.mjs` with `OMPANEL_DESKTOP_SMOKE_EXECUTABLE` set
    launches the installed executable, and passes only when the backend answers, the main window
    opens, and OMP turns ready on the bundled sidecar without downloading one.
+
+Only when all three pass does `publish_release` make the draft public (and, for a plain `vX.Y.Z`,
+the latest release), then checks that the public `SHA256SUMS` URL serves the verified file. npm,
+the hosted web app, the version bump and announcements all wait for it. A failed check leaves an
+unpublished draft: fix the cause, delete the draft, and cut the next tag.
 
 Screenshots and logs are uploaded as `release-verify-<target>`.
 
@@ -103,21 +121,34 @@ reports "the downloaded executable does not run" (ompanel#168). Unset the variab
 
 ## Signing
 
-Signing is decided per platform from the secrets present, at build time. With none, the release
-still ships, unsigned.
+Signing is decided per platform from the secrets present, at build time, and only for a build of a
+commit on `main` (see [Cutting a release](#cutting-a-release)). With no secrets the release still
+ships, unsigned.
+
+Store every signing secret below as an **environment secret of `release`** (Settings →
+Environments → `release`), never as a repository secret. That environment:
+
+- requires a reviewer before any job that uses it starts; the reviewer is `Quelaan1`, the
+  repository admin account the release tooling runs as. Add maintainers there as reviewers.
+- accepts deployments only from `v*` tags and `main`.
+- is used by the six desktop build jobs when the build may sign, and by `publish_cli`.
+
+A run from an unreviewed commit therefore never sees a signing key, and a run that would sign
+waits for a human. The npm trusted publisher for `ompanel` should name `release.yml` and the
+`release` environment, so npm refuses an OIDC token from anywhere else.
 
 **macOS** (B-001): signed and notarized only when all of these exist; with any of the first five
 missing the app is unsigned, and with those five but not the last two the build fails.
 
-| Name                         | Kind     | Value                                                               |
-| ---------------------------- | -------- | ------------------------------------------------------------------- |
-| `CSC_LINK`                   | secret   | base64 of the Developer ID Application certificate and key (`.p12`) |
-| `CSC_KEY_PASSWORD`           | secret   | password of that `.p12`                                             |
-| `APPLE_API_KEY`              | secret   | contents of an App Store Connect API key (`.p8`), used to notarize  |
-| `APPLE_API_KEY_ID`           | secret   | that key's ID                                                       |
-| `APPLE_API_ISSUER`           | secret   | that key's issuer ID                                                |
-| `MACOS_PROVISIONING_PROFILE` | secret   | base64 provisioning profile for `in.turtlebyte.ompanel`             |
-| `APPLE_TEAM_ID`              | variable | 10-character Apple Developer Team ID                                |
+| Name                         | Kind                | Value                                                               |
+| ---------------------------- | ------------------- | ------------------------------------------------------------------- |
+| `CSC_LINK`                   | `release` secret    | base64 of the Developer ID Application certificate and key (`.p12`) |
+| `CSC_KEY_PASSWORD`           | `release` secret    | password of that `.p12`                                             |
+| `APPLE_API_KEY`              | `release` secret    | contents of an App Store Connect API key (`.p8`), used to notarize  |
+| `APPLE_API_KEY_ID`           | `release` secret    | that key's ID                                                       |
+| `APPLE_API_ISSUER`           | `release` secret    | that key's issuer ID                                                |
+| `MACOS_PROVISIONING_PROFILE` | `release` secret    | base64 provisioning profile for `in.turtlebyte.ompanel`             |
+| `APPLE_TEAM_ID`              | repository variable | 10-character Apple Developer Team ID                                |
 
 The workflow notarizes with an App Store Connect API key, not an Apple ID and app-specific
 password. `CSC_LINK` and `CSC_KEY_PASSWORD` alone also sign the macOS CLI archive with the
@@ -128,7 +159,7 @@ checklist walks through creating each value
 ([macOS](../operations/release.md#2-apple-signing--notarization-setup-macos)).
 
 **Windows** (B-002): signed through Azure Trusted Signing, not a `.pfx` certificate, when all
-seven secrets exist: `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`,
+seven `release` environment secrets exist: `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`,
 `AZURE_TRUSTED_SIGNING_ENDPOINT`, `AZURE_TRUSTED_SIGNING_ACCOUNT_NAME`,
 `AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME`, `AZURE_TRUSTED_SIGNING_PUBLISHER_NAME`
 ([setup](../operations/release.md#3-azure-trusted-signing-setup-windows)). They sign the
@@ -144,14 +175,14 @@ Windows, SmartScreen's "More info", then "Run anyway".
 
 Jobs that need a service the fork does not have yet are skipped, not failed:
 
-| Job                                                              | Runs when                                                                                                                 |
-| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `publish_cli` (npm `ompanel` launcher)                           | repository variable `OMPANEL_NPM_PUBLISH` is `true` (needs B-003 and an npm trusted publisher)                            |
-| `build_web`, `deploy_web`, `build_marketing`, `deploy_marketing` | secret `VERCEL_TOKEN` is set                                                                                              |
-| `announce_discord`                                               | the hosted web app deployed                                                                                               |
-| `finalize` (version bump on `main`)                              | a plain `vX.Y.Z` release and secret `RELEASE_APP_ID` is set                                                               |
-| `publish_aur`                                                    | never on the fork (`publish-aur.yml` is upstream-only)                                                                    |
-| relay tracing and Ompanel Connect config                         | secret `CLOUDFLARE_API_TOKEN` and the relay variables are set (B-009); without them the apps ship without Ompanel Connect |
+| Job                                                              | Runs when                                                                                                                                                        |
+| ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `publish_cli` (npm `ompanel` launcher)                           | a build of a commit on `main`, repository variable `OMPANEL_NPM_PUBLISH` is `true` (needs B-003 and an npm trusted publisher), and a `release` reviewer approved |
+| `build_web`, `deploy_web`, `build_marketing`, `deploy_marketing` | secret `VERCEL_TOKEN` is set                                                                                                                                     |
+| `announce_discord`                                               | the hosted web app deployed                                                                                                                                      |
+| `finalize` (version bump on `main`)                              | a plain `vX.Y.Z` release and secret `RELEASE_APP_ID` is set                                                                                                      |
+| `publish_aur`                                                    | never on the fork (`publish-aur.yml` is upstream-only)                                                                                                           |
+| relay tracing and Ompanel Connect config                         | secret `CLOUDFLARE_API_TOKEN` and the relay variables are set (B-009); without them the apps ship without Ompanel Connect                                        |
 
 A partly configured relay (some of `RELAY_DOMAIN`/`RELAY_API_ZONE_NAME`, `CLERK_PUBLISHABLE_KEY`,
 `CLERK_JWT_TEMPLATE`, `CLERK_CLI_OAUTH_CLIENT_ID` set, others not) still fails the release.
