@@ -328,6 +328,74 @@ posixOnly("OMP rewind and fork", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.live("rewind works on a thread whose omp process was restarted", () =>
+    Effect.gen(function* () {
+      const state = yield* makeFakeOmpState;
+      const ran = yield* Effect.gen(function* () {
+        const { adapter } = yield* makeServer(state);
+        const session = yield* openThread(adapter, SOURCE);
+        return yield* runTurns(session, SOURCE, yield* bindThread(session, SOURCE), ["one", "two"]);
+      }).pipe(Effect.scoped);
+
+      // A new server process: the thread's session reopens, but nothing has bound it yet.
+      const { adapter, dirs } = yield* makeServer(state);
+      const session = yield* adapter.openSession({
+        threadId: SOURCE,
+        providerSessionId: ProviderSessionId.make("session:restarted"),
+        modelSelection: MODEL,
+        runtimePolicy: policy,
+        initialNativeThreadId: ran.providerThread.nativeThreadRef?.nativeId ?? "",
+      });
+      const snapshot = yield* session.rollbackThread({
+        providerThread: ran.providerThread,
+        target: {
+          type: "provider_turn",
+          checkpointId: CheckpointId.make("checkpoint-1"),
+          appRunOrdinal: 1,
+          providerTurn: ran.turns[0]!,
+        },
+        providerThreadTurns: ran.turns,
+      });
+      assert.deepStrictEqual(snapshotText(snapshot), ["user:one", "assistant:pong"]);
+      assert.strictEqual(snapshot.providerThread.id, ran.providerThread.id);
+      assert.strictEqual(
+        (yield* readOmpThreadSessionRecord(dirs.threads, SOURCE))?.sessionId,
+        snapshot.providerThread.nativeThreadRef?.nativeId,
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("once OMP has branched, failed reads do not fail the rewind", () =>
+    Effect.gen(function* () {
+      const state = yield* makeFakeOmpState;
+      const { adapter, dirs } = yield* makeServer(state, {
+        get_tree: [{ fail: "tree unavailable" }],
+        get_messages_page: [{ fail: "history unavailable" }],
+      });
+      const session = yield* openThread(adapter, SOURCE);
+      const ran = yield* runTurns(session, SOURCE, yield* bindThread(session, SOURCE), [
+        "one",
+        "two",
+      ]);
+      const snapshot = yield* session.rollbackThread({
+        providerThread: ran.providerThread,
+        target: {
+          type: "provider_turn",
+          checkpointId: CheckpointId.make("checkpoint-1"),
+          appRunOrdinal: 1,
+          providerTurn: ran.turns[0]!,
+        },
+        providerThreadTurns: ran.turns,
+      });
+      assert.lengthOf(commandsOfType(state, "branch"), 1);
+      assert.deepStrictEqual(snapshot.messages, []);
+      // The thread still follows OMP onto the branched file.
+      const record = yield* readOmpThreadSessionRecord(dirs.threads, SOURCE);
+      assert.strictEqual(record?.sessionId, snapshot.providerThread.nativeThreadRef?.nativeId);
+      assert.notStrictEqual(record?.sessionId, ran.providerThread.nativeThreadRef?.nativeId);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.live("rewinding to the latest turn changes nothing", () =>
     Effect.gen(function* () {
       const state = yield* makeFakeOmpState;

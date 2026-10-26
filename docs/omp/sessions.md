@@ -149,7 +149,12 @@ message of the first later turn that left one still in the session
    message, OMP's `branch` result), `branchMessages` (the user messages left,
    each a later rewind point) and `branchTree`.
 
-The next prompt continues from the cut.
+The next prompt continues from the cut. A thread whose process was stopped
+(idle, server restart) is first bound to its recorded session, as a turn would
+bind it. Once `branch` succeeded, a failed read after it (state, messages,
+tree, history) is logged and left out of the snapshot instead of failing the
+rewind, so T3 never keeps turns OMP dropped; the next turn's `get_state`
+records the file if the rewind could not.
 
 ### Fork
 

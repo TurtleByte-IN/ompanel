@@ -932,8 +932,15 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
     const rollbackThread = Effect.fnUntraced(function* (
       rollbackInput: ProviderAdapter.ProviderAdapterV2RollbackThreadInput,
     ) {
-      const bound = mapper.providerThread;
-      if (bound === null || bound.id !== rollbackInput.providerThread.id) {
+      // A thread whose process was stopped (idle, server restart) comes back unbound: bind it to
+      // its recorded session first, as a turn would (docs/omp/sessions.md).
+      const bound =
+        mapper.providerThread ??
+        (yield* bindThread(
+          rollbackInput.providerThread.appThreadId ?? input.threadId,
+          rollbackInput.providerThread,
+        ));
+      if (bound.id !== rollbackInput.providerThread.id) {
         return yield* protocolError("OMP rewind requested for a thread this session does not run");
       }
       const target = rollbackInput.target;
@@ -960,43 +967,67 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
           restoredText = result.text;
           sessionLeaf = undefined;
         }
-        const state = yield* process
-          .request("get_state", undefined, { timeoutMs: SIDE_REQUEST_TIMEOUT_MS })
-          .pipe(Effect.mapError(treeError("read the rewound session")));
-        yield* exclusive(
-          Effect.gen(function* () {
-            yield* emit(mapper.adoptSession(state.sessionId, yield* DateTime.now));
-          }),
+        // `branch` has moved OMP on: from here a failed read must not fail the rewind, or T3 would
+        // keep the turns OMP dropped. The next turn's `get_state` adopts and records the file.
+        const optional = <A, E extends { readonly message: string }>(
+          what: string,
+          effect: Effect.Effect<A, E>,
+        ) =>
+          effect.pipe(
+            Effect.tapError((error) =>
+              Effect.logWarning(`omp rewind: could not ${what}`, { detail: error.message }),
+            ),
+            Effect.option,
+          );
+        const state = yield* optional(
+          "read the rewound session",
+          process.request("get_state", undefined, { timeoutMs: SESSION_CHANGE_TIMEOUT_MS }),
         );
-        yield* recordSession(state);
-        const kept = yield* process
-          .request("get_branch_messages", undefined, { timeoutMs: TREE_READ_TIMEOUT_MS })
-          .pipe(Effect.mapError(treeError("list the rewound session's messages")));
+        if (Option.isSome(state)) {
+          yield* exclusive(
+            Effect.gen(function* () {
+              yield* emit(mapper.adoptSession(state.value.sessionId, yield* DateTime.now));
+            }),
+          );
+          yield* recordSession(state.value);
+        }
+        const kept = yield* optional(
+          "list the rewound session's messages",
+          process.request("get_branch_messages", undefined, { timeoutMs: TREE_READ_TIMEOUT_MS }),
+        );
         if (
           cut.entryId !== null &&
-          kept.messages.some((message) => message.entryId === cut.entryId)
+          Option.isSome(kept) &&
+          kept.value.messages.some((message) => message.entryId === cut.entryId)
         ) {
-          return yield* protocolError(`OMP kept message ${cut.entryId} the rewind was to remove`);
+          yield* Effect.logWarning("omp rewind: OMP kept the message it was to remove", {
+            entryId: cut.entryId,
+          });
         }
-        const tree = yield* process
-          .request("get_tree", undefined, { timeoutMs: TREE_READ_TIMEOUT_MS })
-          .pipe(Effect.option);
+        const tree = yield* optional(
+          "read the rewound session tree",
+          process.request("get_tree", undefined, { timeoutMs: TREE_READ_TIMEOUT_MS }),
+        );
         if (Option.isSome(tree)) sessionLeaf = tree.value.leafId;
-        const messages = yield* readHistory(input.threadId, state.sessionId).pipe(
-          Effect.mapError(treeError("re-read the rewound conversation")),
+        const sessionId = Option.isSome(state)
+          ? state.value.sessionId
+          : (bound.nativeThreadRef?.nativeId ?? "");
+        const messages = yield* optional(
+          "re-read the rewound conversation",
+          readHistory(input.threadId, sessionId),
         );
         return {
           providerThread: mapper.providerThread ?? bound,
           providerTurns: [],
-          messages,
+          messages: Option.getOrElse(messages, () => []),
           runtimeRequests: [],
           providerPayload: {
-            sessionId: state.sessionId,
-            sessionFile: state.sessionFile ?? null,
+            sessionId,
+            sessionFile: Option.isSome(state) ? (state.value.sessionFile ?? null) : null,
             /** The user message the rewind removed, for the composer to offer again. */
             restoredText,
             /** The user messages the session keeps, each a point a later rewind can go back to. */
-            branchMessages: kept.messages,
+            branchMessages: Option.isSome(kept) ? kept.value.messages : null,
             branchTree: Option.isSome(tree) ? ompBranchTree(tree.value) : null,
           },
         } satisfies ProviderAdapter.ProviderAdapterV2ThreadSnapshot;
