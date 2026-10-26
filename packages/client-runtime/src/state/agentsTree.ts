@@ -5,7 +5,10 @@ import type {
   OrchestrationV2SubagentTranscriptEntry,
   OrchestrationV2SubagentTranscriptPage,
 } from "@t3tools/contracts";
+import { formatCount, formatTokens } from "@t3tools/shared/usageFormat";
 import * as DateTime from "effect/DateTime";
+
+import { formatSubagentDisplayTitle } from "./subagentDisplay.ts";
 
 type SubagentStatus = OrchestrationV2Subagent["status"];
 
@@ -122,6 +125,28 @@ export function canKill(subagent: ControlledSubagent): boolean {
 
 export function canRevive(subagent: ControlledSubagent): boolean {
   return subagent.controls?.revive === true && REVIVABLE_STATUS[subagent.status];
+}
+
+/** The subagent's title, or the first line of its prompt. */
+export function subagentTitle(subagent: Pick<OrchestrationV2Subagent, "title" | "prompt">): string {
+  const title = subagent.title?.trim();
+  if (title) return formatSubagentDisplayTitle(title);
+  return subagent.prompt.trim().split("\n", 1)[0] || "Subagent";
+}
+
+/** Model, cost, tokens and tool calls the provider reports for the subagent, in that order. */
+export function subagentUsageLabels(
+  subagent: Pick<OrchestrationV2Subagent, "model" | "usage">,
+): ReadonlyArray<string> {
+  const usage = subagent.usage;
+  return [
+    subagent.model,
+    usage?.costUsd === undefined ? null : `$${usage.costUsd.toFixed(4)}`,
+    usage?.totalTokens === undefined ? null : `${formatTokens(usage.totalTokens)} tokens`,
+    usage?.toolCalls === undefined
+      ? null
+      : `${formatCount(usage.toolCalls)} ${usage.toolCalls === 1 ? "tool call" : "tool calls"}`,
+  ].filter((label): label is string => label !== null && label !== undefined && label.length > 0);
 }
 
 /** How often a client re-reads a running subagent's transcript. */

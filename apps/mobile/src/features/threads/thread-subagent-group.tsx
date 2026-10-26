@@ -92,6 +92,7 @@ export function ThreadSubagentGroup(props: {
       result: live?.result ?? item.result,
       progress: live?.progress ?? item.progress,
       model: live?.model ?? null,
+      controls: live?.controls,
     };
   });
   const grouped = agents.length > 1;
@@ -151,17 +152,31 @@ export function ThreadSubagentGroup(props: {
         <View className="mb-1 gap-px rounded-xl border border-border bg-card/30 p-1">
           {agents.map((agent) => {
             const threadId = agent.childThreadId;
+            // A provider-native subagent (OMP) has no thread; its transcript is in the agents tree.
+            const opensTree = threadId === null && agent.controls !== undefined;
             return (
               <Pressable
                 key={agent.item.id}
                 accessible
-                accessibilityRole={threadId === null ? undefined : "link"}
+                accessibilityRole={threadId === null && !opensTree ? undefined : "link"}
                 accessibilityHint={
-                  threadId === null ? "Provider-managed agent" : "Opens this agent's thread"
+                  opensTree
+                    ? "Opens the agents panel with this agent's transcript"
+                    : threadId === null
+                      ? "Provider-managed agent"
+                      : "Opens this agent's thread"
                 }
-                disabled={threadId === null}
+                disabled={threadId === null && !opensTree}
                 onPress={() => {
-                  if (threadId === null) return;
+                  if (threadId === null) {
+                    if (!opensTree) return;
+                    navigation.navigate("ThreadAgents", {
+                      environmentId: props.environmentId,
+                      threadId: members[0]!.threadId,
+                      subagentId: agent.item.subagentId,
+                    });
+                    return;
+                  }
                   if (
                     openInspector(
                       { environmentId: props.environmentId, threadId: members[0]!.threadId },

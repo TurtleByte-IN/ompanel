@@ -16,6 +16,8 @@ const reactTests = [
   "src/state/queries.debounce.test.tsx",
   "src/state/use-selected-thread-git-actions.test.tsx",
   "src/features/threads/OmpToolCard.test.tsx",
+  "src/features/threads/OmpRuntimeRequestCards.test.tsx",
+  "src/features/threads/ThreadAgentsTree.test.tsx",
 ];
 
 export default defineConfig({

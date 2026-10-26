@@ -6,9 +6,10 @@ import {
   canRevive,
   canSteer,
   isSubagentActive,
+  subagentTitle,
+  subagentUsageLabels,
 } from "@t3tools/client-runtime/state/agents-tree";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
-import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
 import type {
   EnvironmentId,
   OrchestrationV2Subagent,
@@ -17,7 +18,6 @@ import type {
   ScopedThreadRef,
   ThreadId,
 } from "@t3tools/contracts";
-import { formatCount, formatTokens } from "@t3tools/shared/usageFormat";
 import { BotIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
@@ -72,24 +72,6 @@ const EMPTY_SUBAGENTS: ReadonlyArray<OrchestrationV2Subagent> = [];
 function scrollTranscriptToEnd(entry: HTMLElement | null) {
   const transcript = entry?.parentElement;
   if (transcript) transcript.scrollTop = transcript.scrollHeight;
-}
-
-function subagentTitle(subagent: OrchestrationV2Subagent): string {
-  const title = subagent.title?.trim();
-  if (title) return formatSubagentDisplayTitle(title);
-  return subagent.prompt.trim().split("\n", 1)[0] || "Subagent";
-}
-
-function usageLabels(subagent: OrchestrationV2Subagent): ReadonlyArray<string> {
-  const usage = subagent.usage;
-  return [
-    subagent.model,
-    usage?.costUsd === undefined ? null : `$${usage.costUsd.toFixed(4)}`,
-    usage?.totalTokens === undefined ? null : `${formatTokens(usage.totalTokens)} tokens`,
-    usage?.toolCalls === undefined
-      ? null
-      : `${formatCount(usage.toolCalls)} ${usage.toolCalls === 1 ? "tool call" : "tool calls"}`,
-  ].filter((label): label is string => label !== null && label.length > 0);
 }
 
 /** A thread's provider-native subagents as a tree, with the selected one's transcript and controls. */
@@ -155,7 +137,7 @@ function AgentsTreeList(props: {
         const { subagent } = node;
         const status = STATUS_BADGE[subagent.status];
         const title = subagentTitle(subagent);
-        const meta = usageLabels(subagent);
+        const meta = subagentUsageLabels(subagent);
         return (
           <li key={subagent.id} data-agent-row={subagent.id} data-depth={node.depth}>
             <button
