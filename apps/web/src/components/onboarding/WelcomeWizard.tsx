@@ -1,3 +1,4 @@
+import { PRODUCT_NAME } from "@t3tools/shared/brand";
 import { useAuth } from "@clerk/react";
 import { useAtomValue } from "@effect/atom-react";
 import type {
@@ -231,11 +232,8 @@ export function WelcomeWizard({
         <WizardHeader
           title="Set up Ompanel"
           identity={
-            <div className="flex items-baseline gap-1.5" role="img" aria-label="Ompanel">
+            <div className="flex items-baseline gap-1.5" role="img" aria-label={PRODUCT_NAME}>
               <T3Wordmark className="h-4 w-auto shrink-0" aria-hidden />
-              <span className="text-2xl font-medium tracking-tight text-muted-foreground">
-                Code
-              </span>
             </div>
           }
         >
