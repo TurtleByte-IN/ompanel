@@ -1,7 +1,7 @@
-// Launches the built desktop app (`dist-electron/boot.cjs`, the packaged entry) in a throwaway
-// home with OMP enabled and no binary path, and passes only when the backend is healthy and OMP
-// turns ready on the omp.lock sidecar for this platform, downloaded and sha256-verified. CI runs
-// it on macOS, Windows and Linux (docs/omp/ci.md).
+// Launches the built app (`dist-electron/boot.cjs`), or the installed release app named by
+// OMPANEL_DESKTOP_SMOKE_EXECUTABLE, in a throwaway home with OMP enabled and no binary path. Passes
+// only when the backend is healthy and OMP turns ready on this platform's omp.lock sidecar:
+// downloaded and sha256-verified, or for a release app its bundled copy (docs/omp/release.md).
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
@@ -185,14 +185,24 @@ const fail = async (message, app, page) => {
 
 if (sidecar === undefined) await fail(`omp.lock has no sidecar for ${hostPlatform}-${hostArch}`);
 
-const launch = resolveElectronLaunchCommand([NodePath.join(desktopDir, "dist-electron/boot.cjs")]);
+// A release build under test, or the workspace's Electron running the built entry.
+const packagedExecutable = process.env.OMPANEL_DESKTOP_SMOKE_EXECUTABLE?.trim() || undefined;
+const launch =
+  packagedExecutable === undefined
+    ? resolveElectronLaunchCommand([NodePath.join(desktopDir, "dist-electron/boot.cjs")])
+    : {
+        electronPath: NodePath.resolve(packagedExecutable),
+        // An AppImage cannot carry a setuid chrome-sandbox, and Ubuntu 24.04 blocks the
+        // unprivileged user namespaces the fallback sandbox needs.
+        args: hostPlatform === "linux" ? ["--no-sandbox"] : [],
+      };
 record(`[smoke-omp] ${hostPlatform}-${hostArch}: launching ${launch.electronPath}`);
 const app = await _electron
   .launch({
     executablePath: launch.electronPath,
     // A runner's login keychain may be locked; a keychain prompt would block the main process.
     args: hostPlatform === "darwin" ? ["--use-mock-keychain", ...launch.args] : launch.args,
-    cwd: desktopDir,
+    cwd: packagedExecutable === undefined ? desktopDir : root,
     env,
     timeout: WINDOW_TIMEOUT_MS,
   })
@@ -311,14 +321,31 @@ if (row?.status !== "ready") {
 }
 record(`[smoke-omp] OMP provider ready: ${row.text}`);
 
-// The sidecar it ran is this platform's omp.lock asset, downloaded into the cache and verified.
-const digest = NodeFS.existsSync(cachedSidecar)
-  ? NodeCrypto.createHash("sha256").update(NodeFS.readFileSync(cachedSidecar)).digest("hex")
-  : null;
-if (digest !== sidecar.sha256) {
-  await fail(`${cachedSidecar} is ${digest === null ? "missing" : `sha256 ${digest}`}`, app, page);
+if (packagedExecutable !== undefined) {
+  // The server checks a bundled sidecar against the omp.lock it was built with before it runs
+  // it, and downloads only when none is bundled; a cached copy means the bundle was missing.
+  if (NodeFS.existsSync(cachedSidecar)) {
+    await fail(
+      `the packaged app downloaded ${cachedSidecar} instead of running its own`,
+      app,
+      page,
+    );
+  }
+  record(`[smoke-omp] ran the bundled ${lock.tag} ${sidecar.asset}`);
+} else {
+  // The sidecar it ran is this platform's omp.lock asset, downloaded into the cache and verified.
+  const digest = NodeFS.existsSync(cachedSidecar)
+    ? NodeCrypto.createHash("sha256").update(NodeFS.readFileSync(cachedSidecar)).digest("hex")
+    : null;
+  if (digest !== sidecar.sha256) {
+    await fail(
+      `${cachedSidecar} is ${digest === null ? "missing" : `sha256 ${digest}`}`,
+      app,
+      page,
+    );
+  }
+  record(`[smoke-omp] ran ${lock.tag} ${sidecar.asset} (sha256 ${digest})`);
 }
-record(`[smoke-omp] ran ${lock.tag} ${sidecar.asset} (sha256 ${digest})`);
 
 NodeFS.writeFileSync(NodePath.join(artifactsDir, "output.log"), `${log.join("\n")}\n`);
 await stopApp(app);

@@ -22,8 +22,15 @@ async function assertCommitOnDefaultBranch({ github, context, sha }) {
   }
 }
 
+// A pushed prerelease tag (`v1.2.3-rc.1`) is a release candidate: like a preview it may come
+// from any commit, never becomes the latest release, and is never what a stable or nightly
+// install updates to. Plain `vX.Y.Z` tags still have to be on the default branch.
+const isPrereleaseTagPush = (context) =>
+  context.eventName === "push" && /^refs\/tags\/v\d+\.\d+\.\d+-[0-9A-Za-z.-]+$/.test(context.ref);
+
 async function assertReleaseSource({ github, context, releaseChannel }) {
   if (releaseChannel === "preview") return;
+  if (releaseChannel === "stable" && isPrereleaseTagPush(context)) return;
   if (releaseChannel !== "stable" && releaseChannel !== "nightly") {
     throw new Error(`Unsupported release channel: ${releaseChannel}`);
   }

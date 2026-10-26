@@ -199,7 +199,7 @@ jobs:
         run: |
           config_path="$RUNNER_TEMP/relay-client-tracing/relay-client-tracing.env"
           tracing_token="$(sed -n 's/^OMPANEL_RELAY_CLIENT_OTLP_TRACES_TOKEN=//p' "$config_path")"
-          echo "::add-mask::$tracing_token"
+          if [[ -n "$tracing_token" ]]; then echo "::add-mask::$tracing_token"; fi
           cat "$config_path" >> "$GITHUB_ENV"
 
       - name: Align package versions to release version
@@ -336,10 +336,12 @@ jobs:
             --resource-monitor-dir "$RUNNER_TEMP/cli-resource-monitor" \
             --output-dir release-cli
 
+      # Also proves the archive's server downloads and verifies the pinned OMP
+      # sidecar on first use, as a fresh web/server install does.
       - name: Smoke-test CLI archive
         if: inputs.cli_archive && inputs.verify_runner == ''
         shell: bash
-        run: node scripts/smoke-cli-archive.ts --archive release-cli/* --expect-version "${{ inputs.version }}"
+        run: node scripts/smoke-cli-archive.ts --archive release-cli/* --expect-version "${{ inputs.version }}" --omp-sidecar
 
       - name: Upload CLI archive
         if: inputs.cli_archive
@@ -497,7 +499,7 @@ jobs:
           elif [[ "${{ inputs.platform }}" == "win" ]]; then
             # Embed the Linux CLI archive built by the same-arch Linux job as
             # the WSL runtime. Required for a working WSL backend on Windows.
-            args+=(--wsl-runtime "$GITHUB_WORKSPACE"/wsl-runtime/t3-*-linux-${{ inputs.arch }}.tar.gz)
+            args+=(--wsl-runtime "$GITHUB_WORKSPACE"/wsl-runtime/ompanel-*-linux-${{ inputs.arch }}.tar.gz)
             if has_all \
               "$AZURE_TENANT_ID" \
               "$AZURE_CLIENT_ID" \
@@ -651,7 +653,7 @@ jobs:
       - name: Smoke-test CLI archive
         if: inputs.cli_archive
         shell: bash
-        run: node verify/smoke-cli-archive.mjs --archive release-cli/* --expect-version "${{ inputs.version }}"
+        run: node verify/smoke-cli-archive.mjs --archive release-cli/* --expect-version "${{ inputs.version }}" --omp-sidecar
 
       # cargo-xwin links this binary on Linux, and nothing else runs it before users do.
       # Node rather than pwsh: PowerShell on Windows ARM crashes intermittently

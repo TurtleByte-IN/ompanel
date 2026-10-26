@@ -52,6 +52,28 @@ test("allows preview releases from any branch without consulting main", async ()
   assert.equal(calls.length, 0);
 });
 
+test("allows a pushed prerelease tag from any commit without consulting main", async () => {
+  const { options, calls } = releaseSourceFixture({
+    comparisonStatus: "diverged",
+    eventName: "push",
+    ref: "refs/tags/v0.0.0-ompanel-rc.1",
+  });
+  await assertReleaseSource({ ...options, releaseChannel: "stable" });
+  assert.equal(calls.length, 0);
+});
+
+test("rejects a pushed plain version tag that is not on main", async () => {
+  const { options } = releaseSourceFixture({
+    comparisonStatus: "diverged",
+    eventName: "push",
+    ref: "refs/tags/v1.2.3",
+  });
+  await assert.rejects(
+    assertReleaseSource({ ...options, releaseChannel: "stable" }),
+    /not contained in main \(diverged\)/,
+  );
+});
+
 for (const releaseChannel of ["stable", "nightly"]) {
   test(`rejects a manual ${releaseChannel} release from a feature branch`, async () => {
     const { options, calls } = releaseSourceFixture({ ref: "refs/heads/feature" });
