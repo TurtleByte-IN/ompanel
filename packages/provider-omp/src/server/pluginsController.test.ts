@@ -236,6 +236,7 @@ describe("OMP plugin commands", () => {
     assert.isFalse(ompPluginTargetAllowed(" exa"));
     assert.isFalse(ompPluginTargetAllowed("exa\n--force"));
     assert.isFalse(ompPluginTargetAllowed(""));
+    assert.isFalse(ompPluginTargetAllowed("~/my-plugin"));
   });
 
   it("shows the command line the way a shell would take it", () => {
@@ -245,7 +246,12 @@ describe("OMP plugin commands", () => {
     );
     assert.strictEqual(
       formatOmpCommandLine(["omp"], ["plugin", "install", "@oh-my-pi/exa[search]"]),
-      "omp plugin install @oh-my-pi/exa[search]",
+      "omp plugin install '@oh-my-pi/exa[search]'",
+    );
+    // Shell expansions (globs, zsh's `=`) are quoted, so the shown line runs what Ompanel runs.
+    assert.strictEqual(
+      formatOmpCommandLine(["omp"], ["plugin", "install", "=ls", "a*b", "it's"]),
+      "omp plugin install '=ls' 'a*b' 'it'\\''s'",
     );
   });
 });

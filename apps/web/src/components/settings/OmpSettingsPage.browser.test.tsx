@@ -1,6 +1,7 @@
 import {
   EnvironmentId,
   OmpAgentFilesOperationError,
+  type EditorId,
   ProviderInstanceId,
   type OmpConfigType,
 } from "@t3tools/contracts";
@@ -164,7 +165,7 @@ vi.mock(import("../../state/server"), async (original) => {
   const { Atom } = await import("effect/reactivity");
   return {
     ...(await original()),
-    primaryServerAvailableEditorsAtom: Atom.make(["vscode"] as never),
+    primaryServerAvailableEditorsAtom: Atom.make((): ReadonlyArray<EditorId> => ["vscode"]),
   };
 });
 

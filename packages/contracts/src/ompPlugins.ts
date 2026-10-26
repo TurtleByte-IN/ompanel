@@ -11,19 +11,21 @@ const OMP_PLUGIN_TARGET_MAX_LENGTH = 512;
 
 /**
  * A spec, name or source Ompanel may pass to `omp plugin`: one argument with no surrounding
- * space, no control characters and no leading `-`, so it can never read as a flag.
+ * space, no control characters and no leading `-`, so it can never read as a flag. A leading `~`
+ * is refused too: no shell expands it on the way to omp, so it would not name the home directory.
  */
 export const ompPluginTargetAllowed = (target: string): boolean =>
   target.length > 0 &&
   target.length <= OMP_PLUGIN_TARGET_MAX_LENGTH &&
   target.trim() === target &&
   !target.startsWith("-") &&
+  !target.startsWith("~") &&
   // oxlint-disable-next-line no-control-regex -- control characters are what is refused.
   !/[\u0000-\u001f\u007f]/.test(target);
 
 const OmpPluginTarget = Schema.String.check(
   Schema.makeFilter((target: string) => ompPluginTargetAllowed(target), {
-    expected: "one argument without control characters, surrounding space or a leading '-'",
+    expected: "one argument without control characters, surrounding space or a leading '-' or '~'",
   }),
 );
 
@@ -67,9 +69,13 @@ export const ompPluginCommandRunsThirdPartyCode = (command: OmpPluginCommand): b
   command.action === "enable" ||
   command.action === "marketplace_add";
 
-/** POSIX-shell quoting of one argument, for showing a command the way a terminal takes it. */
+/**
+ * POSIX-shell quoting of one argument, for showing a command the way a terminal takes it.
+ * `[ ]` (globs), `~` (home) and `=` (zsh equals expansion) are quoted too, so a shell runs
+ * exactly the argument Ompanel passes.
+ */
 const shellQuote = (arg: string): string =>
-  /^[\w@%+=:,./[\]~-]+$/.test(arg) ? arg : `'${arg.replaceAll("'", `'\\''`)}'`;
+  /^[\w@%+:,./-]+$/.test(arg) ? arg : `'${arg.replaceAll("'", `'\\''`)}'`;
 
 /** The command line shown before a command runs: `prefix` from {@link OmpPluginList.command}. */
 export const formatOmpCommandLine = (

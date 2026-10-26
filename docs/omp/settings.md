@@ -315,7 +315,10 @@ the server runs). Install, enable and adding a marketplace also say the plugin
 or catalog is third-party code: a plugin runs with the user's permissions in
 every thread, and its tools reach the agent as `xd://` devices. A spec, name or
 source must be one argument with no control characters, surrounding space or
-leading `-` (`ompPluginTargetAllowed`), so it never reads as a flag. A command
+leading `-` (`ompPluginTargetAllowed`), so it never reads as a flag; a leading
+`~` is refused as well, since no shell expands it on the way to omp. The shown
+line quotes every argument a shell would expand (`[ ]`, `~`, `=`, spaces), so
+pasting it into a terminal passes omp the same arguments. A command
 that exits non-zero reports only its exit code; run the shown command in a
 terminal to see OMP's message.
 
