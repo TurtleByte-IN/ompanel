@@ -212,6 +212,8 @@ function fakeOmp(
     readonly rpc?: Behaviour;
     readonly config?: Behaviour;
     readonly skills?: Behaviour;
+    readonly plugins?: Behaviour;
+    readonly update?: Behaviour;
   } = {},
 ): FakeOmp {
   const launches: Array<ChildProcess.StandardCommand> = [];
@@ -229,7 +231,11 @@ function fakeOmp(
             ? (input.config ?? { stdout: "{}\n", exitCode: 0 })
             : command.args.includes("skill")
               ? (input.skills ?? { stdout: SKILL_LIST_JSON, exitCode: 0 })
-              : (input.rpc ?? { rpc: answerLoginProviders });
+              : command.args.includes("plugin")
+                ? (input.plugins ?? { stdout: '{"npm":[],"marketplace":[]}\n', exitCode: 0 })
+                : command.args.includes("update")
+                  ? (input.update ?? { stdout: "Current version: 18.12.6\n", exitCode: 0 })
+                  : (input.rpc ?? { rpc: answerLoginProviders });
     // The real spawner stops the process group when this scope closes.
     return Effect.addFinalizer(() => Effect.sync(() => void stopped++)).pipe(
       Effect.as(handle(command, behaviour)),
@@ -371,6 +377,18 @@ describe("OmpControlService deadlines", () => {
     },
     { budget: "config", behaviour: { config: "hang" }, run: (c) => c.configList(TARGET) },
     { budget: "catalog", behaviour: { skills: "hang" }, run: (c) => c.skillList(TARGET) },
+    { budget: "plugins", behaviour: { plugins: "hang" }, run: (c) => c.pluginList(TARGET) },
+    {
+      budget: "plugins",
+      behaviour: { plugins: "hang" },
+      run: (c) => c.marketplaceDiscover(TARGET, "trailofbits"),
+    },
+    {
+      budget: "pluginCommand",
+      behaviour: { plugins: "hang" },
+      run: (c) => c.pluginCommand(TARGET, ["plugin", "install", "exa"]),
+    },
+    { budget: "update", behaviour: { update: "hang" }, run: (c) => c.updateCheck(TARGET) },
   ];
 
   it.effect.each(cases)("stops a hung $budget at its deadline", ({ budget, behaviour, run }) =>
@@ -751,6 +769,35 @@ describe("OmpControlService catalogs", () => {
         (c) => c.skillList(TARGET).pipe(Effect.flip),
       );
       assert.strictEqual(invalid.reason, "invalid");
+    }),
+  );
+
+  it.effect("reads `omp plugin list --json` and reports unreadable or failing runs", () =>
+    Effect.gen(function* () {
+      const omp = fakeOmp();
+      const list = yield* withControl(omp, (control) =>
+        control.pluginList({ ...TARGET, profile: "work" }),
+      );
+      assert.deepStrictEqual(list, { npm: [], marketplace: [] });
+      assert.deepStrictEqual(omp.launches[0]?.args, [
+        "--profile",
+        "work",
+        "plugin",
+        "list",
+        "--json",
+      ]);
+      const invalid = yield* withControl(
+        fakeOmp({ plugins: { stdout: '{"npm":[{"name":1}]}', exitCode: 0 } }),
+        (c) => c.pluginList(TARGET).pipe(Effect.flip),
+      );
+      assert.deepStrictEqual([invalid.operation, invalid.reason], ["plugin_list", "invalid"]);
+      const failed = yield* withControl(fakeOmp({ plugins: { stdout: "", exitCode: 1 } }), (c) =>
+        c.pluginCommand(TARGET, ["plugin", "uninstall", "x"]).pipe(Effect.flip),
+      );
+      assert.deepStrictEqual(
+        [failed.operation, failed.reason, failed.exitCode],
+        ["plugin_command", "exit", 1],
+      );
     }),
   );
 

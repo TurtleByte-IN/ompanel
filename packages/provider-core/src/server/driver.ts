@@ -31,6 +31,13 @@ import type {
   OmpSessionUsageList,
   OmpStatsSummary,
   OmpUsageOperationError,
+  OmpMarketplaceDiscover,
+  OmpPluginCommand,
+  OmpPluginList,
+  OmpPluginsOperationError,
+  OmpPluginsReloadResult,
+  OmpSkillsList,
+  OmpUpdateCheck,
   ThreadId,
 } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
@@ -112,6 +119,31 @@ export interface ProviderInstance {
   readonly ompAgentFiles?: ProviderOmpAgentFilesController;
   /** The Usage page's OMP tab: account quotas, `omp stats` totals, running threads' stats. */
   readonly ompUsage?: ProviderOmpUsageController;
+  /** Settings → OMP → Plugins and Skills: `omp plugin`, `omp skill list`, `omp update --check`. */
+  readonly ompPlugins?: ProviderOmpPluginsController;
+}
+
+/**
+ * OMP's plugins, marketplaces and skills through the instance's omp, in a directory with no
+ * project config, so everything is user scope. Nothing here installs an OMP update.
+ */
+export interface ProviderOmpPluginsController {
+  /** `omp plugin list --json` and `omp plugin marketplace list`. */
+  readonly list: Effect.Effect<OmpPluginList, OmpPluginsOperationError>;
+  /** Runs the one `omp plugin` command the page showed, then lists again. */
+  readonly run: (
+    command: OmpPluginCommand,
+  ) => Effect.Effect<OmpPluginList, OmpPluginsOperationError>;
+  /** `omp plugin discover <marketplace>`. */
+  readonly discover: (
+    marketplace: string,
+  ) => Effect.Effect<OmpMarketplaceDiscover, OmpPluginsOperationError>;
+  /** `/reload-plugins` in every idle running thread of the instance. */
+  readonly reload: Effect.Effect<OmpPluginsReloadResult>;
+  /** `omp update --check`: reports only, never installs. */
+  readonly checkUpdate: Effect.Effect<OmpUpdateCheck, OmpPluginsOperationError>;
+  /** `omp skill list <dir> --json` in the instance's global directory. */
+  readonly skills: Effect.Effect<OmpSkillsList, OmpPluginsOperationError>;
 }
 
 export interface ProviderOmpUsageController {

@@ -9,6 +9,7 @@ export * from "./ompAccounts.ts";
 export * from "./ompSessions.ts";
 export * from "./ompAgentFiles.ts";
 export * from "./ompUsage.ts";
+export * from "./ompPlugins.ts";
 export * from "./ompToolCard.ts";
 export * from "./auth.ts";
 export * from "./environment.ts";

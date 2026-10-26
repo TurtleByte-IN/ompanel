@@ -26,10 +26,16 @@ import type {
   ExtensionUiResponse,
   ReadyEvent,
 } from "../../contract/src/wire.generated.ts";
-import type { OmpConfigScope } from "@t3tools/contracts";
+import type {
+  OmpConfigScope,
+  OmpMarketplace,
+  OmpMarketplacePlugin,
+  OmpUpdateCheck,
+} from "@t3tools/contracts";
 
 import { OmpConfigList, OmpConfigResetResult, OmpConfigSetResult } from "../configForm.ts";
 import { OmpCatalogModel } from "./modelTraits.ts";
+import { OmpAnsi } from "./ompAnsi.ts";
 
 /** Hard deadline per operation, from spawn to exit. */
 export const OMP_CONTROL_TIMEOUTS_MS = {
@@ -57,6 +63,15 @@ export const OMP_CONTROL_TIMEOUTS_MS = {
   modelsCheck: 15_000,
   /** `omp agents unpack --user --json`. */
   agents: 10_000,
+  /** `omp plugin list --json`, `omp plugin marketplace list` and `omp plugin discover`. */
+  plugins: 15_000,
+  /**
+   * An `omp plugin` command that changes something: an install or a new marketplace clones or
+   * downloads, so it gets far longer than a read.
+   */
+  pluginCommand: 180_000,
+  /** `omp update --check`: one request to OMP's release service. */
+  update: 20_000,
 } as const;
 export type OmpControlBudget = keyof typeof OMP_CONTROL_TIMEOUTS_MS;
 
@@ -129,7 +144,12 @@ export type OmpControlOperation =
   | "skill_list"
   | "available_commands"
   | "models_check"
-  | "agents_unpack";
+  | "agents_unpack"
+  | "plugin_list"
+  | "plugin_command"
+  | "marketplace_list"
+  | "marketplace_discover"
+  | "update_check";
 
 /** Carries no process output: stderr and stdout may contain credentials. */
 export class OmpControlError extends Schema.TaggedError<OmpControlError>()("OmpControlError", {
@@ -150,6 +170,11 @@ export class OmpControlError extends Schema.TaggedError<OmpControlError>()("OmpC
     "available_commands",
     "models_check",
     "agents_unpack",
+    "plugin_list",
+    "plugin_command",
+    "marketplace_list",
+    "marketplace_discover",
+    "update_check",
   ]),
   reason: Schema.Literals([
     "missing",
@@ -345,6 +370,89 @@ const OmpAgentsUnpack = Schema.Struct({
 export type OmpAgentsUnpack = typeof OmpAgentsUnpack.Type;
 const decodeAgentsUnpack = Schema.decodeEffect(Schema.fromJsonString(OmpAgentsUnpack));
 
+/**
+ * `omp plugin list --json` (`cli/plugin-cli.ts` `handleList`): npm plugins as `InstalledPlugin`,
+ * marketplace plugins as `InstalledPluginSummary`. Only the fields Ompanel shows are read.
+ */
+export const OmpPluginListReport = Schema.Struct({
+  npm: Schema.Array(
+    Schema.Struct({
+      name: Schema.String,
+      version: Schema.String,
+      enabled: Schema.Boolean,
+      manifest: Schema.Struct({ description: Schema.optionalKey(Schema.String) }),
+    }),
+  ),
+  marketplace: Schema.Array(
+    Schema.Struct({
+      id: Schema.String,
+      scope: Schema.Literals(["user", "project"]),
+      entries: Schema.Array(
+        Schema.Struct({ version: Schema.String, enabled: Schema.optionalKey(Schema.Boolean) }),
+      ),
+      shadowedBy: Schema.optionalKey(Schema.Literal("project")),
+    }),
+  ),
+});
+export type OmpPluginListReport = typeof OmpPluginListReport.Type;
+const decodePluginList = Schema.decodeEffect(Schema.fromJsonString(OmpPluginListReport));
+
+const textLines = (stdout: string): ReadonlyArray<string> =>
+  OmpAnsi.strip(stdout).replaceAll("\r", "").split("\n");
+
+/**
+ * `omp plugin marketplace list` has no `--json` in the pinned omp: after a heading it prints
+ * `  <name>  <source>` per marketplace, or `No marketplaces configured`.
+ */
+export const parseOmpMarketplaceList = (stdout: string): ReadonlyArray<OmpMarketplace> =>
+  textLines(stdout).flatMap((line) => {
+    const match = /^ {2}(\S+) {2}(\S.*)$/.exec(line);
+    return match === null ? [] : [{ name: match[1]!, source: match[2]!.trim() }];
+  });
+
+/**
+ * `omp plugin discover <marketplace>` has no `--json` either: `  <name>[@<version>]` per plugin,
+ * its description on the next line indented by four.
+ */
+export const parseOmpMarketplaceDiscover = (
+  stdout: string,
+): ReadonlyArray<OmpMarketplacePlugin> => {
+  const plugins: Array<OmpMarketplacePlugin> = [];
+  for (const line of textLines(stdout)) {
+    const description = /^ {4}(\S.*)$/.exec(line);
+    if (description !== null) {
+      const last = plugins.at(-1);
+      if (last !== undefined && last.description === undefined) {
+        plugins[plugins.length - 1] = { ...last, description: description[1]!.trim() };
+      }
+      continue;
+    }
+    const entry = /^ {2}(\S+)$/.exec(line);
+    if (entry === null) continue;
+    const spec = entry[1]!;
+    const at = spec.lastIndexOf("@");
+    plugins.push(
+      at > 0 ? { name: spec.slice(0, at), version: spec.slice(at + 1) } : { name: spec },
+    );
+  }
+  return plugins;
+};
+
+/** `omp update --check` prints text only (`cli/update-cli.ts` `runUpdateCommand`). */
+export const parseOmpUpdateCheck = (stdout: string): OmpUpdateCheck => {
+  const text = textLines(stdout).join("\n");
+  const currentVersion = /Current version: (\S+)/.exec(text)?.[1] ?? null;
+  const offered = /New version available: (\S+)/.exec(text)?.[1] ?? null;
+  if (/is installed and kept up to date by /.test(text)) {
+    return { status: "managed", currentVersion, latestVersion: null };
+  }
+  if (offered !== null) return { status: "available", currentVersion, latestVersion: offered };
+  if (/Already up to date/.test(text)) {
+    return { status: "current", currentVersion, latestVersion: currentVersion };
+  }
+  return { status: "unknown", currentVersion, latestVersion: null };
+};
+
 export type OmpProbeFailure =
   | { readonly stage: "version"; readonly reason: "missing" | "spawn" | "timeout" | "exit" }
   | { readonly stage: "ready"; readonly reason: "spawn" | "timeout" | "exit" | "invalid" };
@@ -473,6 +581,31 @@ export interface OmpControlService {
   readonly agentsUnpack: (
     target: OmpControlTarget,
   ) => Effect.Effect<OmpAgentsUnpack, OmpControlError>;
+  /** `omp [--profile p] plugin list --json` (15 s), uncached. */
+  readonly pluginList: (
+    target: OmpControlTarget,
+  ) => Effect.Effect<OmpPluginListReport, OmpControlError>;
+  /** `omp [--profile p] plugin marketplace list` (15 s), uncached. */
+  readonly marketplaceList: (
+    target: OmpControlTarget,
+  ) => Effect.Effect<ReadonlyArray<OmpMarketplace>, OmpControlError>;
+  /** `omp [--profile p] plugin discover <marketplace>` (15 s), uncached. */
+  readonly marketplaceDiscover: (
+    target: OmpControlTarget,
+    marketplace: string,
+  ) => Effect.Effect<ReadonlyArray<OmpMarketplacePlugin>, OmpControlError>;
+  /**
+   * `omp [--profile p] <args>` (180 s) for one `omp plugin` command that changes something;
+   * succeeds on exit 0. Drops this instance's cache.
+   */
+  readonly pluginCommand: (
+    target: OmpControlTarget,
+    args: ReadonlyArray<string>,
+  ) => Effect.Effect<void, OmpControlError>;
+  /** `omp [--profile p] update --check` (20 s): reports, never installs. */
+  readonly updateCheck: (
+    target: OmpControlTarget,
+  ) => Effect.Effect<OmpUpdateCheck, OmpControlError>;
 }
 
 export interface OmpControlServiceOptions {
@@ -1108,6 +1241,58 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
     );
   });
 
+  /** Runs `omp [--profile p] <args>` and fails `exit` unless it exits 0. */
+  const runText = (
+    operation: OmpControlOperation,
+    budget: OmpControlBudget,
+    target: OmpControlTarget,
+    args: ReadonlyArray<string>,
+  ) =>
+    collect(operation, budget, target, [...profileArgs(target.profile), ...args]).pipe(
+      Effect.flatMap((output) =>
+        output.code === 0
+          ? Effect.succeed(output.stdout)
+          : Effect.fail(new OmpControlError({ operation, reason: "exit", exitCode: output.code })),
+      ),
+    );
+
+  const pluginList = Effect.fn("OmpControl.pluginList")(function* (target: OmpControlTarget) {
+    const stdout = yield* runText("plugin_list", "plugins", target, ["plugin", "list", "--json"]);
+    return yield* decodePluginList(stdout.trim()).pipe(
+      Effect.mapError(
+        (cause) => new OmpControlError({ operation: "plugin_list", reason: "invalid", cause }),
+      ),
+    );
+  });
+
+  const marketplaceList = Effect.fn("OmpControl.marketplaceList")(function* (
+    target: OmpControlTarget,
+  ) {
+    const stdout = yield* runText("marketplace_list", "plugins", target, [
+      "plugin",
+      "marketplace",
+      "list",
+    ]);
+    return parseOmpMarketplaceList(stdout);
+  });
+
+  const marketplaceDiscover = Effect.fn("OmpControl.marketplaceDiscover")(function* (
+    target: OmpControlTarget,
+    marketplace: string,
+  ) {
+    const stdout = yield* runText("marketplace_discover", "plugins", target, [
+      "plugin",
+      "discover",
+      marketplace,
+    ]);
+    return parseOmpMarketplaceDiscover(stdout);
+  });
+
+  const updateCheck = Effect.fn("OmpControl.updateCheck")(function* (target: OmpControlTarget) {
+    const stdout = yield* runText("update_check", "update", target, ["update", "--check"]);
+    return parseOmpUpdateCheck(stdout);
+  });
+
   interface CacheEntry {
     readonly deferred: Deferred.Deferred<unknown, unknown>;
     settledAt: number | null;
@@ -1172,5 +1357,13 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
     availableCommands,
     modelsInAgentDir,
     agentsUnpack,
+    pluginList,
+    marketplaceList,
+    marketplaceDiscover,
+    pluginCommand: Effect.fn("OmpControl.pluginCommand")(function* (target, args) {
+      yield* runText("plugin_command", "pluginCommand", target, args);
+      yield* invalidate;
+    }),
+    updateCheck,
   } satisfies OmpControlService;
 });

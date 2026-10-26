@@ -27,6 +27,7 @@ import {
   OmpAgentFilesOperationError,
   type OmpAgentFileRef,
   OmpUsageOperationError,
+  OmpPluginsOperationError,
   OmpSettingsOperationError,
   OmpSessionsOperationError,
   type OmpImportSessionInput,
@@ -1556,6 +1557,25 @@ export const layerWsRpc = (
         return instance.ompUsage;
       });
 
+      const ompPluginsController = Effect.fn("ws.ompPlugins.controller")(function* (
+        instanceId: ProviderInstanceId,
+      ) {
+        const instance = yield* providerInstances.getInstance(instanceId);
+        if (instance === undefined) {
+          return yield* new OmpPluginsOperationError({
+            reason: "instance_not_found",
+            message: `Provider instance ${instanceId} was not found.`,
+          });
+        }
+        if (instance.ompPlugins === undefined) {
+          return yield* new OmpPluginsOperationError({
+            reason: "unsupported",
+            message: `Provider instance ${instanceId} has no OMP plugins.`,
+          });
+        }
+        return instance.ompPlugins;
+      });
+
       const ompAgentFilesController = Effect.fn("ws.ompAgentFiles.controller")(function* (
         instanceId: ProviderInstanceId,
       ) {
@@ -2842,6 +2862,40 @@ export const layerWsRpc = (
           Effect.annotateCurrentSpan({ "provider.instance_id": input.instanceId }).pipe(
             Effect.andThen(ompUsageController(input.instanceId)),
             Effect.flatMap((usage) => usage.sessions),
+          ),
+        [WS_METHODS.serverListOmpPlugins]: (input) =>
+          Effect.annotateCurrentSpan({ "provider.instance_id": input.instanceId }).pipe(
+            Effect.andThen(ompPluginsController(input.instanceId)),
+            Effect.flatMap((plugins) => plugins.list),
+          ),
+        [WS_METHODS.serverRunOmpPluginCommand]: (input) =>
+          // The action only: a spec or source may carry credentials.
+          Effect.annotateCurrentSpan({
+            "provider.instance_id": input.instanceId,
+            "omp.plugin_action": input.command.action,
+          }).pipe(
+            Effect.andThen(ompPluginsController(input.instanceId)),
+            Effect.flatMap((plugins) => plugins.run(input.command)),
+          ),
+        [WS_METHODS.serverDiscoverOmpMarketplace]: (input) =>
+          Effect.annotateCurrentSpan({ "provider.instance_id": input.instanceId }).pipe(
+            Effect.andThen(ompPluginsController(input.instanceId)),
+            Effect.flatMap((plugins) => plugins.discover(input.marketplace)),
+          ),
+        [WS_METHODS.serverReloadOmpPlugins]: (input) =>
+          Effect.annotateCurrentSpan({ "provider.instance_id": input.instanceId }).pipe(
+            Effect.andThen(ompPluginsController(input.instanceId)),
+            Effect.flatMap((plugins) => plugins.reload),
+          ),
+        [WS_METHODS.serverCheckOmpUpdate]: (input) =>
+          Effect.annotateCurrentSpan({ "provider.instance_id": input.instanceId }).pipe(
+            Effect.andThen(ompPluginsController(input.instanceId)),
+            Effect.flatMap((plugins) => plugins.checkUpdate),
+          ),
+        [WS_METHODS.serverListOmpSkills]: (input) =>
+          Effect.annotateCurrentSpan({ "provider.instance_id": input.instanceId }).pipe(
+            Effect.andThen(ompPluginsController(input.instanceId)),
+            Effect.flatMap((plugins) => plugins.skills),
           ),
         [WS_METHODS.serverRefreshProviders]:
           /* Request instrumentation already owns the span; keep this helper in that context. */
