@@ -2898,7 +2898,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       icon: "icons",
       category: "Development",
       synopsis: "Desktop GUI for coding agents",
-      maintainer: "TurtleByte",
+      maintainer: "TurtleByte <ompanel@users.noreply.github.com>",
       protocols: [
         {
           name: "Ompanel",
