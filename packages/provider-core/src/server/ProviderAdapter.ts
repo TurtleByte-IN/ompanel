@@ -1,4 +1,8 @@
-import type { OrchestrationV2HistoricalMessage } from "@t3tools/contracts";
+import type {
+  OrchestrationV2HistoricalMessage,
+  OrchestrationV2SubagentControlAction,
+  OrchestrationV2SubagentTranscriptPage,
+} from "@t3tools/contracts";
 import {
   ChatAttachment,
   CheckpointId,
@@ -606,6 +610,21 @@ export interface ProviderAdapterV2SessionRuntime {
     /** A delayed Stop must not interrupt a task resumed after this request. */
     readonly requestedAt?: NonNullable<OrchestrationV2Subagent["startedAt"]>;
   }) => Effect.Effect<void | ProviderAdapterV2SubagentOutcome, ProviderAdapterV2Error>;
+  /**
+   * Steers, kills or revives one provider-native subagent by the id the provider reported
+   * (`nativeTaskRef`). Adapters offering it stamp `controls` on the subagents they emit.
+   */
+  readonly controlSubagent?: (input: {
+    readonly providerThread: OrchestrationV2ProviderThread;
+    readonly nativeTaskId: string;
+    readonly action: OrchestrationV2SubagentControlAction;
+  }) => Effect.Effect<void, ProviderAdapterV2Error>;
+  /** Reads a provider-native subagent's transcript incrementally, from `fromByte`. */
+  readonly readSubagentTranscript?: (input: {
+    readonly providerThread: OrchestrationV2ProviderThread;
+    readonly nativeTaskId: string;
+    readonly fromByte: number;
+  }) => Effect.Effect<OrchestrationV2SubagentTranscriptPage, ProviderAdapterV2Error>;
   readonly unloadThread?: (input: {
     readonly providerThread: OrchestrationV2ProviderThread;
   }) => Effect.Effect<void, ProviderAdapterV2Error>;

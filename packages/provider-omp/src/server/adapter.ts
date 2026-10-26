@@ -21,6 +21,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import type { RpcServerFrame } from "../../contract/src/wire.generated.ts";
 import { OMP_PROVIDER, OmpThreadMapper, type OmpTurnOutcome } from "./mapper.ts";
+import type { OmpRpcRequestError, OmpRpcRequestOptions } from "./rpcProcess.ts";
 import type { OmpPidfiles } from "./pidfiles.ts";
 import { type OmpStateDirs, startOmpSessionProcess } from "./session.ts";
 import type { OmpSidecarError } from "./sidecar.ts";
@@ -31,11 +32,32 @@ import {
   type OmpCancelRequest,
   type OmpDialogRequest,
 } from "./uiRequests.ts";
+import {
+  OMP_REVIVE_CONTRACT,
+  OmpSubagentTracker,
+  ompSubagentControls,
+  ompTranscriptPage,
+} from "./subagents.ts";
 
 /** Streamed text is held this long so a burst of deltas becomes one update. */
 const STREAM_FLUSH = Duration.millis(50);
 /** Reads and title syncs around a turn; a slow answer costs only the meter or the title. */
 const SIDE_REQUEST_TIMEOUT_MS = 2_000;
+/** Subagent controls wait for OMP to accept them, which can include a subagent's turn setup. */
+const SUBAGENT_REQUEST_TIMEOUT_MS = 30_000;
+/** Reviving rebuilds a subagent session from its transcript (models, tools, extensions). */
+const SUBAGENT_REVIVE_TIMEOUT_MS = 60_000;
+
+/**
+ * `revive_subagent` (RPC contract 1.4.0) is newer than the pinned contract's typed command
+ * table. It is only sent when the pinned contract has it (see `ompSubagentControls`), so the
+ * call is typed here until the vendored contract is re-pinned.
+ */
+type OmpReviveRequest = (
+  command: "revive_subagent",
+  params: { readonly subagentId: string; readonly message?: string },
+  options?: OmpRpcRequestOptions,
+) => Effect.Effect<{ readonly revived: boolean }, OmpRpcRequestError>;
 
 /**
  * What an `omp --mode rpc-ui` session supports. Rollback and fork map to OMP's `branch` and
@@ -226,6 +248,11 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
     const uiRequests = new OmpUiRequests({ providerSessionId: input.providerSessionId });
     /** OMP's answer deadlines, by native request id. */
     const dialogTimers = new Map<string, Fiber.Fiber<void>>();
+    const subagentControls = ompSubagentControls(process.contractVersion);
+    const subagents = new OmpSubagentTracker({
+      instanceId: options.instanceId,
+      controls: subagentControls,
+    });
     const events = yield* Queue.unbounded<
       ProviderAdapter.ProviderAdapterV2Event,
       ProviderAdapter.ProviderAdapterV2Error | Cause.Done
@@ -319,6 +346,10 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       if (isOmpDialogRequest(frame) || isOmpCancelRequest(frame)) {
         return yield* handleDialogFrame(frame);
       }
+      if (frame.type === "subagent_lifecycle" || frame.type === "subagent_progress") {
+        yield* emit(subagents.handleFrame(frame, mapper.subagentScope, yield* DateTime.now));
+        return;
+      }
       const result = mapper.handleFrame(frame, yield* DateTime.now);
       yield* emit(result.events);
       if (result.streaming && !flushScheduled) {
@@ -375,6 +406,19 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
     yield* Effect.addFinalizer(() =>
       process.close().pipe(Effect.andThen(exclusive(settle("stopped", null))), Effect.ignore),
     );
+    // Subagent lifecycle and progress frames feed the agents panel; their own session events
+    // ("events") are not needed, the panel pages transcripts instead.
+    yield* process
+      .request(
+        "set_subagent_subscription",
+        { level: "progress" },
+        { timeoutMs: SIDE_REQUEST_TIMEOUT_MS },
+      )
+      .pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("omp subagent subscription failed", { error: error.message }),
+        ),
+      );
 
     yield* Effect.annotateCurrentSpan({ pid: process.pid });
     // Multi-select and free-text questions reach the host only through OMP's `ask` dialog, which
@@ -485,6 +529,73 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       yield* emit(uiRequests.resolve(requestInput.requestId, yield* DateTime.now));
     });
 
+    // OMP's own refusal ("Subagent not running: X") is what the user should read.
+    const subagentRequestError = (error: OmpRpcRequestError) =>
+      protocolError(error._tag === "OmpRpcCommandError" ? error.detail : error.message);
+    const assertOwnThread = (providerThread: { readonly id: string }) =>
+      mapper.providerThread?.id === providerThread.id
+        ? Effect.void
+        : Effect.fail(protocolError("OMP subagent requested for a different provider thread"));
+
+    const controlSubagent = Effect.fnUntraced(function* (
+      controlInput: Parameters<
+        NonNullable<ProviderAdapter.ProviderAdapterV2SessionRuntime["controlSubagent"]>
+      >[0],
+    ) {
+      yield* assertOwnThread(controlInput.providerThread);
+      const subagentId = controlInput.nativeTaskId;
+      const action = controlInput.action;
+      switch (action.type) {
+        case "kill": {
+          const { cancelled } = yield* process
+            .request("cancel_subagent", { subagentId }, { timeoutMs: SUBAGENT_REQUEST_TIMEOUT_MS })
+            .pipe(Effect.mapError(subagentRequestError));
+          if (!cancelled) return yield* protocolError(`Subagent ${subagentId} is not running`);
+          return;
+        }
+        case "steer":
+          return yield* process
+            .request(
+              "steer_subagent",
+              { subagentId, message: action.message },
+              { timeoutMs: SUBAGENT_REQUEST_TIMEOUT_MS },
+            )
+            .pipe(Effect.asVoid, Effect.mapError(subagentRequestError));
+        case "revive": {
+          if (!subagentControls.revive) {
+            return yield* protocolError(
+              `Reviving a subagent needs OMP RPC contract ${OMP_REVIVE_CONTRACT} or later; this build pins ${process.contractVersion}`,
+            );
+          }
+          const requestRevive = process.request as unknown as OmpReviveRequest;
+          return yield* requestRevive(
+            "revive_subagent",
+            {
+              subagentId,
+              ...(action.message === undefined ? {} : { message: action.message }),
+            },
+            { timeoutMs: SUBAGENT_REVIVE_TIMEOUT_MS },
+          ).pipe(Effect.asVoid, Effect.mapError(subagentRequestError));
+        }
+      }
+    });
+
+    const readSubagentTranscript = Effect.fnUntraced(function* (
+      readInput: Parameters<
+        NonNullable<ProviderAdapter.ProviderAdapterV2SessionRuntime["readSubagentTranscript"]>
+      >[0],
+    ) {
+      yield* assertOwnThread(readInput.providerThread);
+      const page = yield* process
+        .request(
+          "get_subagent_messages",
+          { subagentId: readInput.nativeTaskId, fromByte: readInput.fromByte },
+          { timeoutMs: SUBAGENT_REQUEST_TIMEOUT_MS },
+        )
+        .pipe(Effect.mapError(subagentRequestError));
+      return ompTranscriptPage(page);
+    });
+
     return {
       instanceId: options.instanceId,
       driver: OMP_PROVIDER,
@@ -533,6 +644,8 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
               }),
           ),
         ),
+      controlSubagent,
+      readSubagentTranscript,
       steerTurn: () => unavailable("steering"),
       interruptTurn: () => unavailable("interrupts"),
       respondToRuntimeRequest: (requestInput) =>

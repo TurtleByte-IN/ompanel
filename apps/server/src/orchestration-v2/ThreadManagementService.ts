@@ -14,6 +14,10 @@ import {
   MessageId,
   OrchestrationV2StopWorkflowError,
   type OrchestrationV2StopWorkflowInput,
+  OrchestrationV2SubagentControlError,
+  type OrchestrationV2ControlSubagentInput,
+  type OrchestrationV2ReadSubagentTranscriptInput,
+  type OrchestrationV2SubagentTranscriptPage,
   type ModelSelection,
   type OrchestrationV2Actor,
   type OrchestrationV2Command,
@@ -434,6 +438,13 @@ export interface ThreadManagementServiceShape {
   readonly stopWorkflow: (
     input: OrchestrationV2StopWorkflowInput,
   ) => Effect.Effect<void, OrchestrationV2StopWorkflowError>;
+  /** Steers, kills or revives a provider-native subagent through its live provider session. */
+  readonly controlSubagent: (
+    input: OrchestrationV2ControlSubagentInput,
+  ) => Effect.Effect<void, OrchestrationV2SubagentControlError>;
+  readonly readSubagentTranscript: (
+    input: OrchestrationV2ReadSubagentTranscriptInput,
+  ) => Effect.Effect<OrchestrationV2SubagentTranscriptPage, OrchestrationV2SubagentControlError>;
   readonly awaitBackgroundTasks: (input: {
     readonly threadId: ThreadId;
     readonly taskIds: ReadonlyArray<string>;
@@ -1116,6 +1127,97 @@ const make = Effect.gen(function* () {
     (effect, input) => effect.pipe((effect) => threadDispatch.withLock(input.threadId, effect)),
   );
 
+  /**
+   * The live provider session that owns a provider-native subagent, and the subagent's native
+   * id. Neither call takes the thread lock: they act on the provider's own subagent, and the
+   * projection only changes through the frames the provider sends back.
+   */
+  const resolveSubagentSession = Effect.fnUntraced(function* (input: {
+    readonly threadId: ThreadId;
+    readonly subagentId: OrchestrationV2ControlSubagentInput["subagentId"];
+  }) {
+    const fail = (
+      reason: OrchestrationV2SubagentControlError["reason"],
+      cause?: unknown,
+    ): OrchestrationV2SubagentControlError =>
+      new OrchestrationV2SubagentControlError({
+        threadId: input.threadId,
+        subagentId: input.subagentId,
+        reason,
+        ...(cause === undefined ? {} : { cause }),
+      });
+    const records = yield* orchestrator
+      .getThreadRecords(input.threadId, ["subagents", "runs", "providerThreads"])
+      .pipe(Effect.mapError((cause) => fail("not-found", cause)));
+    if (records.thread.deletedAt !== null) return yield* fail("not-found");
+    const subagent = records.subagents.find(
+      (candidate) => candidate.id === input.subagentId && candidate.threadId === input.threadId,
+    );
+    if (subagent === undefined) return yield* fail("not-found");
+    const nativeTaskId = subagent.nativeTaskRef?.nativeId;
+    if (subagent.origin !== "provider_native" || nativeTaskId == null || nativeTaskId === "") {
+      return yield* fail("unsupported");
+    }
+    const providerThreadId =
+      subagent.providerThreadId ??
+      records.runs.find((run) => run.id === subagent.runId)?.providerThreadId;
+    const providerThread = records.providerThreads.find(
+      (candidate) =>
+        candidate.id === providerThreadId &&
+        candidate.appThreadId === input.threadId &&
+        candidate.providerInstanceId === subagent.providerInstanceId &&
+        candidate.driver === subagent.driver,
+    );
+    if (providerThread?.providerSessionId == null) return yield* fail("unavailable");
+    const runtime = yield* sessions
+      .get(providerThread.providerSessionId)
+      .pipe(Effect.mapError((cause) => fail("unavailable", cause)));
+    if (Option.isNone(runtime)) return yield* fail("unavailable");
+    return { runtime: runtime.value, providerThread, nativeTaskId, fail } as const;
+  });
+
+  /** A provider's refusal; protocol errors carry the provider's own words in `detail`. */
+  const providerRefused =
+    (input: OrchestrationV2ReadSubagentTranscriptInput) =>
+    (cause: unknown): OrchestrationV2SubagentControlError =>
+      new OrchestrationV2SubagentControlError({
+        threadId: input.threadId,
+        subagentId: input.subagentId,
+        reason: "failed",
+        detail:
+          typeof cause === "object" &&
+          cause !== null &&
+          "detail" in cause &&
+          typeof cause.detail === "string"
+            ? cause.detail
+            : cause instanceof Error
+              ? cause.message
+              : String(cause),
+        cause,
+      });
+
+  const controlSubagent: ThreadManagementServiceShape["controlSubagent"] = Effect.fn(
+    "ThreadManagementService.controlSubagent",
+  )(function* (input) {
+    const { runtime, providerThread, nativeTaskId, fail } = yield* resolveSubagentSession(input);
+    if (runtime.controlSubagent === undefined) return yield* fail("unsupported");
+    // Reviving rebuilds a whole subagent session from its transcript, so it gets longer.
+    const timeout = input.action.type === "revive" ? "60 seconds" : "30 seconds";
+    yield* runtime
+      .controlSubagent({ providerThread, nativeTaskId, action: input.action })
+      .pipe(Effect.timeout(timeout), Effect.mapError(providerRefused(input)));
+  });
+
+  const readSubagentTranscript: ThreadManagementServiceShape["readSubagentTranscript"] = Effect.fn(
+    "ThreadManagementService.readSubagentTranscript",
+  )(function* (input) {
+    const { runtime, providerThread, nativeTaskId, fail } = yield* resolveSubagentSession(input);
+    if (runtime.readSubagentTranscript === undefined) return yield* fail("unsupported");
+    return yield* runtime
+      .readSubagentTranscript({ providerThread, nativeTaskId, fromByte: input.fromByte ?? 0 })
+      .pipe(Effect.timeout("10 seconds"), Effect.mapError(providerRefused(input)));
+  });
+
   const awaitBackgroundTasks: ThreadManagementServiceShape["awaitBackgroundTasks"] = Effect.fn(
     "ThreadManagementService.awaitBackgroundTasks",
   )(function* (input) {
@@ -1258,6 +1360,8 @@ const make = Effect.gen(function* () {
     interruptThread,
     stopDelegatedTasks,
     stopWorkflow,
+    controlSubagent,
+    readSubagentTranscript,
     awaitBackgroundTasks,
     getThreadEventSequence: orchestrator.getThreadEventSequence,
     recoverDelegatedTask: orchestrator.recoverDelegatedTask,

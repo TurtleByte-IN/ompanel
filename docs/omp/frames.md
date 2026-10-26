@@ -25,21 +25,22 @@ frames of one `omp --mode rpc-ui` process into V2 thread events. The adapter
 
 ## Frames
 
-| Frame                                                                                   | Shown as                                                           |
-| --------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| `message_update` `text_delta` / `text_end`                                              | Assistant message, streamed (deltas held 50 ms and sent together). |
-| `message_update` `thinking_delta` / `_end`                                              | Reasoning. Thinking marked `narration` is shown as answer text.    |
-| `message_end` (assistant)                                                               | Closes open text; adds its `usage` to the turn (see Usage).        |
-| `tool_execution_start` / `_update` / `_end`                                             | Tool-call card, updated in place (see Tool cards).                 |
-| `notice`                                                                                | System notice; the title is the notice's `source`.                 |
-| `command_output`                                                                        | Notification: first line as summary, full text as detail.          |
-| `extension_ui_request` `notify`                                                         | Notification.                                                      |
-| `extension_ui_request` `open_url`                                                       | Notification: the instructions' first line, the link as detail.    |
-| `extension_ui_request` `set_editor_text`                                                | Notification carrying the text (T has no remote composer channel). |
-| `extension_ui_request` dialogs and `cancel`                                             | Approval cards and question cards (see Dialogs).                   |
-| `extension_ui_request` `setStatus` / `setWidget` / `setTitle`                           | Ignored: they style OMP's own TUI; T keeps its own title.          |
-| `session_info_update`                                                                   | Session id and title (see Title and /fresh).                       |
-| anything else; any frame above outside a turn, except `session_info_update` and dialogs | Ignored.                                                           |
+| Frame                                                                                                    | Shown as                                                                                                   |
+| -------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `message_update` `text_delta` / `text_end`                                                               | Assistant message, streamed (deltas held 50 ms and sent together).                                         |
+| `message_update` `thinking_delta` / `_end`                                                               | Reasoning. Thinking marked `narration` is shown as answer text.                                            |
+| `message_end` (assistant)                                                                                | Closes open text; adds its `usage` to the turn (see Usage).                                                |
+| `tool_execution_start` / `_update` / `_end`                                                              | Tool-call card, updated in place (see Tool cards).                                                         |
+| `notice`                                                                                                 | System notice; the title is the notice's `source`.                                                         |
+| `command_output`                                                                                         | Notification: first line as summary, full text as detail.                                                  |
+| `extension_ui_request` `notify`                                                                          | Notification.                                                                                              |
+| `extension_ui_request` `open_url`                                                                        | Notification: the instructions' first line, the link as detail.                                            |
+| `extension_ui_request` `set_editor_text`                                                                 | Notification carrying the text (T has no remote composer channel).                                         |
+| `extension_ui_request` dialogs and `cancel`                                                              | Approval cards and question cards (see Dialogs).                                                           |
+| `extension_ui_request` `setStatus` / `setWidget` / `setTitle`                                            | Ignored: they style OMP's own TUI; T keeps its own title.                                                  |
+| `session_info_update`                                                                                    | Session id and title (see Title and /fresh).                                                               |
+| `subagent_lifecycle` / `subagent_progress`                                                               | Subagent records for the agents panel (see [subagents.md](subagents.md)); at any time, not only in a turn. |
+| anything else; any frame above outside a turn, except `session_info_update`, dialogs and subagent frames | Ignored.                                                                                                   |
 
 ## Tool cards
 

@@ -37,6 +37,7 @@ import type {
   TodoPhase,
   Usage,
 } from "../../contract/src/wire.generated.ts";
+import type { OmpSubagentScope } from "./subagents.ts";
 
 export const OMP_PROVIDER = ProviderDriverKind.make("omp");
 
@@ -426,6 +427,19 @@ export class OmpThreadMapper {
       providerThreadId: thread?.id ?? null,
       providerTurnId: null,
       ordinal: 0,
+    };
+  }
+
+  /** Where subagent records hang (see `subagents.ts`): the bound thread and the active turn. */
+  get subagentScope(): OmpSubagentScope | null {
+    const thread = this.#thread;
+    const threadId = thread?.providerThread.appThreadId;
+    if (thread === null || threadId == null) return null;
+    return {
+      threadId,
+      providerThreadId: thread.providerThread.id,
+      runId: this.#turn?.input.runId ?? null,
+      rootNodeId: this.#turn?.input.rootNodeId ?? null,
     };
   }
 
