@@ -21,6 +21,19 @@ The binary is resolved (and its sha256 checked, see [sidecar.md](./sidecar.md))
 right before each spawn. The process gets the server's environment plus the
 instance's environment overrides.
 
+### Approval mode is required (O-9)
+
+OMP's own default for `tools.approvalMode` is `yolo`, so an `omp` started
+without `--approval-mode` would run every tool unasked. The process layer
+(`startOmpRpcProcess`) therefore refuses to spawn any command line that does not
+carry `--approval-mode` followed by one of `always-ask`, `always-ask-cached`,
+`write` or `yolo`; the session then fails to start with an `OmpRpcError`
+(`reason: "spawn"`) and no process is created. This covers a runtime mode the
+build does not know as well as a caller that builds its own command line. The
+fork's `omp --mode rpc-ui` refuses to start without the flag as well
+(TurtleByte-IN/oh-my-pi#46), from the first fork tag that carries it; until the
+lock is re-pinned to such a tag, the check here is the only one.
+
 ## Permission mode changes
 
 Changing a live thread's permission mode keeps its process: the adapter declares

@@ -21,6 +21,7 @@ import type {
   RpcServerFrame,
   RpcWireCommands,
 } from "../../contract/src/wire.generated.ts";
+import { ompArgsApprovalMode } from "./launch.ts";
 import type { OmpPidfiles } from "./pidfiles.ts";
 import { OMP_TREE_KILL_GRACE } from "./processTree.ts";
 import {
@@ -204,6 +205,13 @@ export const startOmpRpcProcess = Effect.fn("startOmpRpcProcess")(function* (
 > {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const scope = yield* Effect.scope;
+  // O-9: OMP defaults to `yolo`, so a command line without an explicit approval mode never runs.
+  if (ompArgsApprovalMode(options.args) === undefined) {
+    return yield* new OmpRpcError({
+      reason: "spawn",
+      detail: "omp was not started: its command line sets no valid --approval-mode",
+    });
+  }
   const outgoing = yield* Queue.unbounded<Uint8Array, Cause.Done>();
   const child = yield* spawner
     .spawn(

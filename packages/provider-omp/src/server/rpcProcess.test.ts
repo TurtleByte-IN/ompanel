@@ -1,3 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -22,7 +26,11 @@ const platform = HostProcess.Platform.defaultValue();
 const posixOnly = describe.skipIf(platform === "win32");
 const MiB = 1024 * 1024;
 
-const start = (state: FakeOmpState, vars: Record<string, string> = {}) =>
+const start = (
+  state: FakeOmpState,
+  vars: Record<string, string> = {},
+  args: ReadonlyArray<string> = ["--mode", "rpc-ui", "--approval-mode", "always-ask"],
+) =>
   Effect.gen(function* () {
     const pidfiles = yield* makeOmpPidfiles({
       dir: `${state.dir}/pids`,
@@ -30,7 +38,7 @@ const start = (state: FakeOmpState, vars: Record<string, string> = {}) =>
     });
     return yield* startOmpRpcProcess({
       command: process.execPath,
-      args: [FAKE_OMP_FIXTURE, "--mode", "rpc-ui"],
+      args: [FAKE_OMP_FIXTURE, ...args],
       cwd: state.dir,
       env: state.env(vars),
       platform: platform,
@@ -45,6 +53,25 @@ const live = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 
 posixOnly("startOmpRpcProcess", () => {
+  it.live("never spawns a command line without an explicit, known --approval-mode", () =>
+    live(
+      Effect.gen(function* () {
+        const state = yield* makeFakeOmpState;
+        for (const args of [
+          ["--mode", "rpc-ui"],
+          ["--mode", "rpc-ui", "--approval-mode"],
+          ["--mode", "rpc-ui", "--approval-mode", "ask-sometimes"],
+        ]) {
+          const error = yield* start(state, {}, args).pipe(Effect.flip);
+          assert.strictEqual(error._tag, "OmpRpcError");
+          if (error._tag === "OmpRpcError") assert.strictEqual(error.reason, "spawn");
+        }
+        // The fake writes argv.json as soon as it starts: nothing was spawned.
+        assert.isFalse(NodeFS.existsSync(NodePath.join(state.dir, "argv.json")));
+      }),
+    ),
+  );
+
   it.live("reads ready, negotiates protocol v2 and answers commands", () =>
     live(
       Effect.gen(function* () {

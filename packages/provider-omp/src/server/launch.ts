@@ -12,6 +12,28 @@ import * as Path from "effect/Path";
 /** OMP's `ApprovalMode` (`tools/approval.ts`). */
 export type OmpApprovalMode = "always-ask" | "always-ask-cached" | "write" | "yolo";
 
+const OMP_APPROVAL_MODES: Readonly<Record<string, true>> = {
+  "always-ask": true,
+  "always-ask-cached": true,
+  write: true,
+  yolo: true,
+} satisfies Record<OmpApprovalMode, true>;
+
+/**
+ * The approval mode an `omp` command line sets with `--approval-mode <mode>`, or `undefined`
+ * when it sets none or an unknown one. OMP's own default is `yolo` (O-9), so a process without
+ * this flag would run every tool unasked: nothing is spawned unless this returns a mode.
+ * Wrapped command lines (systemd scope, Windows job launcher) keep omp's argv as a suffix.
+ */
+export const ompArgsApprovalMode = (args: ReadonlyArray<string>): OmpApprovalMode | undefined => {
+  const flag = args.lastIndexOf("--approval-mode");
+  if (flag === -1) return undefined;
+  const value = args[flag + 1];
+  return value !== undefined && OMP_APPROVAL_MODES[value] === true
+    ? (value as OmpApprovalMode)
+    : undefined;
+};
+
 /**
  * T3 runtime mode → OMP approval mode. "Auto" is not offered for OMP (D-014) and runs as
  * Supervised, so a stored "auto" never widens what OMP may do unasked.
