@@ -22,7 +22,8 @@ let sessionId = "fake-session";
 function write(frame) {
   if (frame.type === "session_info_update") {
     sessionId = frame.sessionId;
-    if (store !== null) store.current.id = frame.sessionId;
+    // Like `/fresh`: the reported id changes, the file and its header keep theirs.
+    if (store !== null) store.current.reportedId = frame.sessionId;
   }
   if (frame.type === "agent_end" && store !== null) store.appendMessages(frame.messages ?? []);
   process.stdout.write(`${JSON.stringify(frame)}\n`);
@@ -31,7 +32,8 @@ function write(frame) {
 /**
  * FAKE_OMP_SESSIONS_DIR keeps sessions on disk like OMP (one bucket per cwd); unscripted session
  * commands use it, and an accepted `host_cwd_change_result` moves the file (docs/omp/testing.md).
- * FAKE_OMP_AUTO_RESUME=1 starts on the bucket's newest session, like OMP's `autoResume`.
+ * FAKE_OMP_AUTO_RESUME=1 starts on the bucket's newest session, like OMP's `autoResume`. As in
+ * the pinned fork, `/fresh` changes only the id `get_state` reports, not the file or its header.
  */
 function makeStore(root) {
   const argv = process.argv.slice(2);
@@ -43,6 +45,7 @@ function makeStore(root) {
     const timestamp = new Date().toISOString();
     return {
       id,
+      reportedId: null,
       cwd,
       title: null,
       timestamp,
@@ -61,7 +64,15 @@ function makeStore(root) {
       else if (entry.type === "session") header = entry;
       else if (entry.type === "message") messages.push(entry.message);
     }
-    return { id: header.id, cwd: header.cwd, title, timestamp: header.timestamp, file, messages };
+    return {
+      id: header.id,
+      reportedId: null,
+      cwd: header.cwd,
+      title,
+      timestamp: header.timestamp,
+      file,
+      messages,
+    };
   };
   const store = {
     current: fresh(startCwd),
@@ -157,7 +168,7 @@ function storeResponse(command) {
   switch (command.type) {
     case "get_state":
       return ok({
-        sessionId: store.current.id,
+        sessionId: store.current.reportedId ?? store.current.id,
         sessionFile: store.current.file,
         messageCount: store.current.messages.length,
         ...(store.current.title === null ? {} : { sessionName: store.current.title }),
@@ -323,6 +334,19 @@ process.stdin.on("data", (text) => {
     record(`command:${command.type}`);
     if (stateDir) {
       NodeFS.appendFileSync(NodePath.join(stateDir, "commands.jsonl"), `${line}\n`);
+    }
+    if (store !== null && command.type === "prompt" && command.message === "/fresh") {
+      // As recorded (omp_fresh): an ack without data, then an aborted prompt_result, no turn.
+      store.current.reportedId = `fresh-${NodeCrypto.randomUUID()}`;
+      write({ id: command.id, type: "response", command: "prompt", success: true });
+      write({
+        type: "prompt_result",
+        id: command.id,
+        agentInvoked: true,
+        status: "aborted",
+        sessionSettled: true,
+      });
+      continue;
     }
     if (store !== null && command.type === "prompt" && typeof command.message === "string") {
       store.appendMessages([

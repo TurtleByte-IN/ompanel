@@ -26,7 +26,12 @@ import * as Stream from "effect/Stream";
 import { makeOmpAdapter } from "./adapter.ts";
 import { OMP_HOST_CWD_CHANGE_CONTRACT } from "./hostTools.ts";
 import { OMP_PROVIDER } from "./mapper.ts";
-import { listOmpSessions, readOmpSessionHead, readOmpThreadSessionRecord } from "./ompSessions.ts";
+import {
+  listOmpSessions,
+  readOmpSessionHead,
+  readOmpThreadSessionRecord,
+  readOmpThreadSessionRecords,
+} from "./ompSessions.ts";
 import { makeOmpPidfiles } from "./pidfiles.ts";
 import { ompStateDirs } from "./session.ts";
 import { makeOmpThreadSessions } from "./threadSessions.ts";
@@ -337,6 +342,69 @@ posixOnly("OMP thread sessions", () => {
         "user:what was it?",
         "assistant:pong",
       ]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("after /fresh a reopened thread resumes the same session file", () =>
+    Effect.gen(function* () {
+      const state = yield* makeFakeOmpState;
+      const threadsDir = ompStateDirs(yield* Path.Path, NodePath.join(state.dir, "state")).threads;
+      const before = yield* Effect.gen(function* () {
+        const { adapter } = yield* makeServer(state);
+        const session = yield* adapter.openSession({
+          threadId: THREAD_ID,
+          providerSessionId: ProviderSessionId.make("session-1"),
+          modelSelection: MODEL,
+          runtimePolicy: policy(),
+        });
+        const bound = yield* session.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: MODEL,
+          runtimePolicy: policy(),
+        });
+        const first = yield* runTurn(session, bound, 1, "remember 42");
+        return (yield* runTurn(session, first.providerThread, 2, "/fresh")).providerThread;
+      }).pipe(Effect.scoped);
+
+      // OMP now reports a new id, and the thread adopted it; the file keeps its own.
+      const record = yield* readOmpThreadSessionRecord(threadsDir, THREAD_ID);
+      const freshId = before.nativeThreadRef?.nativeId ?? "";
+      assert.match(freshId, /^fresh-/);
+      assert.strictEqual(record?.reportedSessionId, freshId);
+      const sessionFile = record?.sessionFile ?? "";
+      assert.notStrictEqual(record?.sessionId, freshId);
+      assert.strictEqual((yield* readOmpSessionHead(sessionFile))?.sessionId, record?.sessionId);
+      // The import list shows the session as this thread's.
+      assert.strictEqual(
+        (yield* readOmpThreadSessionRecords(threadsDir)).get(record?.sessionId ?? ""),
+        THREAD_ID,
+      );
+
+      const after = yield* Effect.gen(function* () {
+        const { adapter } = yield* makeServer(state);
+        const session = yield* adapter.openSession({
+          threadId: THREAD_ID,
+          providerSessionId: ProviderSessionId.make("session-2"),
+          modelSelection: MODEL,
+          runtimePolicy: policy(),
+          initialNativeThreadId: freshId,
+        });
+        const resumed = yield* session.resumeThread({
+          providerThread: before,
+          threadId: THREAD_ID,
+        });
+        return {
+          resumed,
+          snapshot: yield* session.readThreadSnapshot({ providerThread: resumed }),
+        };
+      }).pipe(Effect.scoped);
+
+      assert.deepStrictEqual(
+        commandsOfType(state, "switch_session").map((command) => command["sessionPath"]),
+        [sessionFile],
+      );
+      assert.strictEqual(after.resumed.id, before.id);
+      assert.deepStrictEqual(snapshotText(after.snapshot), ["user:remember 42", "assistant:pong"]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

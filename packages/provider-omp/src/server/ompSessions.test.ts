@@ -299,11 +299,13 @@ describe("OMP session files", () => {
         yield* writeOmpThreadSessionRecord(threads, {
           threadId: "thread/a",
           sessionId: "s-1",
+          reportedSessionId: "fresh-1",
           sessionFile: "/s/1.jsonl",
         });
         yield* writeOmpThreadSessionRecord(threads, {
           threadId: "thread/b",
           sessionId: "s-2",
+          reportedSessionId: "s-2",
           sessionFile: null,
         });
         const file = NodePath.join(threads, encodeURIComponent("thread/a"), "session.json");
@@ -312,6 +314,7 @@ describe("OMP session files", () => {
           version: 1,
           threadId: "thread/a",
           sessionId: "s-1",
+          reportedSessionId: "fresh-1",
           sessionFile: "/s/1.jsonl",
         });
         NodeFS.writeFileSync(

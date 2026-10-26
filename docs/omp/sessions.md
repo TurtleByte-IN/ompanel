@@ -43,23 +43,32 @@ that conversation over.
 
 When the thread binds, the adapter records the session in the thread's state
 directory, `<stateDir>/omp/threads/<thread id>/session.json`
-(`{version, threadId, sessionId, sessionFile}`, owner-only). The record is
-rewritten whenever the session changes (`/fresh` starts a new session id; the
-adapter reads it with `get_state` after each turn). The thread's native id
-(`nativeThreadRef.nativeId`) is the OMP session id.
+(`{version, threadId, sessionId, reportedSessionId, sessionFile}`,
+owner-only), and again whenever `get_state` (read after each turn) reports a
+change.
+
+Two ids matter. `sessionId` is the file's own id: the one in its name and
+header, which `/wt` keeps. `reportedSessionId` is what `get_state` reports. In
+the pinned fork `/fresh` rotates only the reported id (provider-side stream
+state; `AgentSession.freshSession`). The file, its name and its header keep
+theirs, and reloading the file reports the file id again. The thread's native
+id (`nativeThreadRef.nativeId`) follows the reported id, so after `/fresh`
+only the record links the thread to its file.
 
 ## Reopening a thread
 
 When T3 reopens a thread (after a server restart, a settings restart, or `/wt`)
-it passes the session id as `initialNativeThreadId`. The adapter:
+it passes the thread's native id as `initialNativeThreadId`. The adapter:
 
-1. looks for the file: the recorded `sessionFile` if its header still has the
-   session id, else the newest file named `*_<id>.jsonl` in any bucket (this is
-   how a thread follows `/wt`);
-2. sends `switch_session {sessionPath}`; if OMP cannot restore the session's
+1. maps it to the file id through the thread's record (it matches either id);
+   without a record the native id is taken as the file id;
+2. looks for the file: the recorded `sessionFile` if its header still has the
+   file id, else the newest file named `*_<file id>.jsonl` in any bucket (this
+   is how a thread follows `/wt`);
+3. sends `switch_session {sessionPath}`; if OMP cannot restore the session's
    saved model, it retries with the model the process runs
    (`switch_session {sessionPath, provider, modelId}`);
-3. checks with `get_state` that OMP now runs that session.
+4. checks with `get_state` that OMP now runs that file.
 
 If the session cannot be found or opened, the process keeps a fresh session and
 `resumeThread` fails with the reason. T3 then binds the thread to a fresh native

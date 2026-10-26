@@ -322,11 +322,27 @@ export const findOmpSessionFile = Effect.fn("findOmpSessionFile")(function* (
   return null;
 });
 
+/**
+ * The id a session file is named for (`<timestamp>_<id>.jsonl`), which is its header id. It
+ * survives `/wt` moves; `/fresh` changes only the id OMP reports, never this one.
+ */
+export const ompSessionFileId = (sessionFile: string): string => {
+  const name = sessionFile.slice(
+    Math.max(sessionFile.lastIndexOf("/"), sessionFile.lastIndexOf("\\")) + 1,
+  );
+  const stem = name.endsWith(".jsonl") ? name.slice(0, -".jsonl".length) : name;
+  const separator = stem.indexOf("_");
+  return separator < 0 ? stem : stem.slice(separator + 1);
+};
+
 /** The session a thread last ran, kept next to its overlay so a restart can reopen it. */
 export const OmpThreadSessionRecord = Schema.Struct({
   version: Schema.Literal(1),
   threadId: Schema.String,
+  /** The session file's own id (`ompSessionFileId`); what finds the file again. */
   sessionId: Schema.String,
+  /** The id OMP reported (`get_state`), which `/fresh` rotates; the thread's native id. */
+  reportedSessionId: Schema.String,
   /** Where the file was then; `/wt` may have moved it since. */
   sessionFile: Schema.NullOr(Schema.String),
 });

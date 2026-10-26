@@ -12,6 +12,7 @@ import type { SessionState } from "../../contract/src/wire.generated.ts";
 import {
   findOmpSessionFile,
   type OmpSessionsLocation,
+  ompSessionFileId,
   readOmpThreadSessionRecord,
   writeOmpThreadSessionRecord,
 } from "./ompSessions.ts";
@@ -44,6 +45,10 @@ const bindingError = (detail: string) => Effect.fail(new OmpSessionBindingError(
 const readState = (process: OmpSessionBindingInput["process"]) =>
   process.request("get_state", undefined, { timeoutMs: STATE_TIMEOUT_MS });
 
+/** The id of the file the process runs; what `get_state` reports when it has no file. */
+const fileIdOf = (state: Pick<SessionState, "sessionId" | "sessionFile">) =>
+  state.sessionFile === undefined ? state.sessionId : ompSessionFileId(state.sessionFile);
+
 /** Remembers the session the thread now runs; a failed write only costs the next lookup a scan. */
 export const recordOmpThreadSession = (
   input: Pick<OmpSessionBindingInput, "threadsDir" | "threadId">,
@@ -51,7 +56,8 @@ export const recordOmpThreadSession = (
 ) =>
   writeOmpThreadSessionRecord(input.threadsDir, {
     threadId: input.threadId,
-    sessionId: state.sessionId,
+    sessionId: fileIdOf(state),
+    reportedSessionId: state.sessionId,
     sessionFile: state.sessionFile ?? null,
   }).pipe(
     Effect.catch((error) =>
@@ -60,9 +66,10 @@ export const recordOmpThreadSession = (
   );
 
 /**
- * Switches the process to session `sessionId`: the thread's recorded file when it still holds
- * the session, else wherever it moved within the sessions directory. A saved model OMP can no
- * longer restore fails a plain switch, so the switch is retried with the model the process runs.
+ * Switches the process to the thread's session, given the thread's native id: the id OMP
+ * reported, which after `/fresh` is not the id the file carries. The thread's record maps it to
+ * the file; the recorded path is tried first, else wherever `/wt` moved the file. A saved model
+ * OMP can no longer restore fails a plain switch, so it is retried with the model the process runs.
  */
 export const switchOmpSession = Effect.fn("switchOmpSession")(function* (
   input: OmpSessionBindingInput & { readonly sessionId: string },
@@ -72,14 +79,17 @@ export const switchOmpSession = Effect.fn("switchOmpSession")(function* (
   FileSystem.FileSystem | Path.Path
 > {
   const current = yield* readState(input.process);
-  if (current.sessionId === input.sessionId) return current;
   const record = yield* readOmpThreadSessionRecord(input.threadsDir, input.threadId);
-  const hint =
-    record?.sessionId === input.sessionId ? (record.sessionFile ?? undefined) : undefined;
-  const sessionPath = yield* findOmpSessionFile(input.location, input.sessionId, hint);
+  const recorded =
+    record !== null &&
+    (record.sessionId === input.sessionId || record.reportedSessionId === input.sessionId);
+  const fileId = recorded ? record.sessionId : input.sessionId;
+  if (fileIdOf(current) === fileId) return current;
+  const hint = recorded ? (record.sessionFile ?? undefined) : undefined;
+  const sessionPath = yield* findOmpSessionFile(input.location, fileId, hint);
   if (sessionPath === null) {
     return yield* bindingError(
-      `OMP session ${input.sessionId} was not found in ${input.location.root}; it may have been deleted`,
+      `OMP session ${fileId} was not found in ${input.location.root}; it may have been deleted`,
     );
   }
   const plain = input.process.request(
@@ -100,11 +110,11 @@ export const switchOmpSession = Effect.fn("switchOmpSession")(function* (
             ),
         }),
       );
-  if (cancelled) return yield* bindingError(`OMP declined to open session ${input.sessionId}`);
+  if (cancelled) return yield* bindingError(`OMP declined to open session ${fileId}`);
   const state = yield* readState(input.process);
-  if (state.sessionId !== input.sessionId) {
+  if (fileIdOf(state) !== fileId) {
     return yield* bindingError(
-      `OMP opened session ${state.sessionId} from ${sessionPath}, not ${input.sessionId}`,
+      `OMP opened ${state.sessionFile ?? state.sessionId} from ${sessionPath}, not session ${fileId}`,
     );
   }
   return state;
