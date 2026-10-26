@@ -13,7 +13,7 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import * as Redacted from "effect/Redacted";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { useEnvironmentScope } from "~/state/session";
 import { ensureLocalApi } from "../../localApi";
@@ -288,8 +288,14 @@ export function OmpAccountsSection(props: {
   readonly environmentId: EnvironmentId;
   readonly instanceId: ProviderInstanceId;
   readonly readOnly: boolean;
+  /**
+   * Onboarding's hand-over (the card remounts the section with a new `key`): scroll into view and
+   * list the providers once mounted.
+   */
+  readonly openOnMount?: boolean;
 }) {
   const { environmentId, instanceId } = props;
+  const opened = useRef(false);
   const canManage = useEnvironmentScope(environmentId, AuthProvidersManageScope);
   const commands = { reportFailure: false, reportDefect: false };
   const listAccounts = useAtomCommand(serverEnvironment.listOmpAccounts, commands);
@@ -329,70 +335,80 @@ export function OmpAccountsSection(props: {
       if (next !== undefined) setList(next);
     });
 
+  // Element-owned: runs once the section is in the page, at most once per mount.
+  const openOnMount = (element: HTMLDivElement | null) => {
+    if (element === null || props.openOnMount !== true || opened.current) return;
+    opened.current = true;
+    element.scrollIntoView({ block: "start", behavior: "smooth" });
+    void refresh();
+  };
+
   return (
-    <SettingsSection title="Accounts">
-      <OmpAccountsPanel
-        onRefresh={() => void refresh()}
-        list={list}
-        signIn={signInQuery.data ?? null}
-        signOut={signOut}
-        error={error}
-        disabled={props.readOnly || !canManage || pending}
-        onSignIn={(providerId, apiKey) =>
-          void run(() =>
-            start({
-              environmentId,
-              input: {
-                instanceId,
-                providerId,
-                ...(apiKey === undefined ? {} : { apiKey: Redacted.make(apiKey) }),
-              },
-            }),
-          )
-        }
-        onAnswer={(flowId, promptId, value) =>
-          void run(() =>
-            answer({
-              environmentId,
-              input: {
-                instanceId,
-                flowId,
-                promptId,
-                ...(value === undefined ? {} : { value: Redacted.make(value) }),
-              },
-            }),
-          )
-        }
-        onCancel={() => void run(() => cancel({ environmentId, input: { instanceId } }))}
-        onOpenUrl={(url) => {
-          void ensureLocalApi()
-            .shell.openExternal(url)
-            .catch(() =>
-              setError("Could not open the sign-in page. Copy the link into your browser."),
-            );
-        }}
-        onListSignOut={(providerId) =>
-          void run(() => listSignOut({ environmentId, input: { instanceId, providerId } })).then(
-            (result) => {
-              if (result !== undefined) setSignOut({ providerId, accounts: result.accounts });
-            },
-          )
-        }
-        onSignOut={(providerId, credentialId) =>
-          void run(() =>
-            signOutCommand({ environmentId, input: { instanceId, providerId, credentialId } }),
-          ).then((result) => {
-            if (result === undefined) return;
-            setSignOut(null);
-            if (result.remainingSource !== undefined) {
-              setError(
-                `Signed out. ${providerId} still authenticates through ${result.remainingSource}.`,
+    <div ref={openOnMount}>
+      <SettingsSection title="Accounts">
+        <OmpAccountsPanel
+          onRefresh={() => void refresh()}
+          list={list}
+          signIn={signInQuery.data ?? null}
+          signOut={signOut}
+          error={error}
+          disabled={props.readOnly || !canManage || pending}
+          onSignIn={(providerId, apiKey) =>
+            void run(() =>
+              start({
+                environmentId,
+                input: {
+                  instanceId,
+                  providerId,
+                  ...(apiKey === undefined ? {} : { apiKey: Redacted.make(apiKey) }),
+                },
+              }),
+            )
+          }
+          onAnswer={(flowId, promptId, value) =>
+            void run(() =>
+              answer({
+                environmentId,
+                input: {
+                  instanceId,
+                  flowId,
+                  promptId,
+                  ...(value === undefined ? {} : { value: Redacted.make(value) }),
+                },
+              }),
+            )
+          }
+          onCancel={() => void run(() => cancel({ environmentId, input: { instanceId } }))}
+          onOpenUrl={(url) => {
+            void ensureLocalApi()
+              .shell.openExternal(url)
+              .catch(() =>
+                setError("Could not open the sign-in page. Copy the link into your browser."),
               );
-            }
-            void refresh();
-          })
-        }
-      />
-    </SettingsSection>
+          }}
+          onListSignOut={(providerId) =>
+            void run(() => listSignOut({ environmentId, input: { instanceId, providerId } })).then(
+              (result) => {
+                if (result !== undefined) setSignOut({ providerId, accounts: result.accounts });
+              },
+            )
+          }
+          onSignOut={(providerId, credentialId) =>
+            void run(() =>
+              signOutCommand({ environmentId, input: { instanceId, providerId, credentialId } }),
+            ).then((result) => {
+              if (result === undefined) return;
+              setSignOut(null);
+              if (result.remainingSource !== undefined) {
+                setError(
+                  `Signed out. ${providerId} still authenticates through ${result.remainingSource}.`,
+                );
+              }
+              void refresh();
+            })
+          }
+        />
+      </SettingsSection>
+    </div>
   );
 }

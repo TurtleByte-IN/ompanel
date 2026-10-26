@@ -52,6 +52,8 @@ export function shouldShowProviderStatusBanner(
 export function hasProviderSetup(status: ServerProvider): boolean {
   return (
     status.driver === "antigravity" ||
+    // OMP's setup (detect, `omp setup`, Accounts) lives on its provider card.
+    status.driver === "omp" ||
     status.setup?.canAuthenticate === true ||
     status.setup?.canInstall === true
   );

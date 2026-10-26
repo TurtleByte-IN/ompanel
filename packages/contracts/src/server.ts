@@ -240,6 +240,14 @@ export const ServerProvider = Schema.Struct({
       shadowHomePath: Schema.NullOr(TrimmedNonEmptyString),
     }),
   ),
+  // The executable a driver resolved itself (OMP's sidecar) and where it came from: shipped with
+  // Ompanel, downloaded into its tool cache, or a path the user set.
+  executable: Schema.optionalKey(
+    Schema.Struct({
+      source: Schema.Literals(["bundled", "downloaded", "custom"]),
+      path: TrimmedNonEmptyString,
+    }),
+  ),
   enabled: Schema.Boolean,
   installed: Schema.Boolean,
   version: Schema.NullOr(TrimmedNonEmptyString),
