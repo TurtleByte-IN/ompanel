@@ -94,17 +94,19 @@ jobs:
           pr_title="chore: merge upstream $UPSTREAM_REPO@$short"
           issue_title="Upstream merge conflicts: $UPSTREAM_REPO@$short"
           push_title="Upstream merge push failed: $UPSTREAM_REPO@$short"
+          ready_title="Upstream merge ready for a PR: $UPSTREAM_REPO@$short"
 
           # One PR or issue per upstream commit: a re-run, or a Monday on which
           # upstream did not move, adds nothing.
           if [[ "$DRY_RUN" != true ]]; then
             gh label create "$LABEL" --color 0e8a16 \
               --description "Automated upstream merge (docs/omp/ci.md)" --force
+            # Every PR or issue this workflow opens ends its title with the
+            # upstream commit.
             handled="$( {
               gh pr list --state open --label "$LABEL" --limit 100 --json title,url
               gh issue list --state open --label "$LABEL" --limit 100 --json title,url
-            } | jq -rs --arg p "$pr_title" --arg i "$issue_title" --arg f "$push_title" \
-              'add | .[] | select(.title == $p or .title == $i or .title == $f) | .url')"
+            } | jq -rs --arg s "$UPSTREAM_REPO@$short" 'add | .[] | select(.title | endswith($s)) | .url')"
             if [[ -n "$handled" ]]; then
               summary "\`$UPSTREAM_REPO@$short\` is already handled: $handled"
               exit 0
@@ -173,7 +175,7 @@ jobs:
           } > "$body"
 
           if [[ "$DRY_RUN" == true ]]; then
-            summary "Dry run: merged cleanly. Would push \`$branch\`, open PR **$pr_title**, close older open \`$LABEL\` PRs and dispatch \`ci.yml\` on \`$branch\`." "" "$(cat "$body")"
+            summary "Dry run: merged cleanly. Would push \`$branch\`, dispatch \`ci.yml\` on it, open PR **$pr_title** (or issue **$ready_title** if Actions may not open PRs) and close older open \`$LABEL\` PRs and issues." "" "$(cat "$body")"
             exit 0
           fi
 
@@ -194,10 +196,24 @@ jobs:
             exit 1
           fi
 
-          url="$(gh pr create --base main --head "$branch" --title "$pr_title" \
-            --label "$LABEL" --body-file "$body")"
           if [[ "$USE_PAT" != true ]]; then
             gh workflow run ci.yml --ref "$branch"
+          fi
+          if ! url="$(gh pr create --base main --head "$branch" --title "$pr_title" \
+            --label "$LABEL" --body-file "$body")"; then
+            # GITHUB_TOKEN may not open PRs while "Allow GitHub Actions to create
+            # and approve pull requests" is off. A person opens it from the issue.
+            open_pr="https://github.com/$GITHUB_REPOSITORY/compare/main...$branch?expand=1&labels=$LABEL&title=$(jq -rn --arg t "$pr_title" '$t | @uri')"
+            {
+              echo "\`$branch\` holds a clean merge of \`$UPSTREAM_REPO@$short\`, but this workflow could not open the pull request (docs/omp/ci.md, \"Upstream merge\")."
+              echo
+              echo "**[Open the pull request]($open_pr)** and paste the description below. CI was dispatched on the branch already."
+              echo
+              echo "---"
+              echo
+              cat "$body"
+            } > "$RUNNER_TEMP/ready-issue.md"
+            url="$(gh issue create --title "$ready_title" --label "$LABEL" --body-file "$RUNNER_TEMP/ready-issue.md")"
           fi
           # This merge contains every older one, so older merge PRs and
           # conflict or push-failure issues are closed.

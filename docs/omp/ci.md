@@ -115,8 +115,15 @@ pushes and opens the PR as the token's owner. That PR runs CI like any other,
 so nothing is dispatched. Only an admin can create the token; until then, the
 `GITHUB_TOKEN` path above applies.
 
-The repository setting "Allow GitHub Actions to create and approve pull
-requests" (Settings → Actions → General) must stay on, or `gh pr create` fails.
+`GITHUB_TOKEN` can open a pull request only when "Allow GitHub Actions to
+create and approve pull requests" is on, both for the TurtleByte-IN
+organization and for this repository (Settings → Actions → General). The
+organization has it off, so the repository cannot turn it on. While it is off,
+`gh pr create` fails after the push and the CI dispatch. The workflow then
+opens an `Upstream merge ready for a PR: …` issue instead. It holds a link that
+opens the PR from the pushed branch, and the PR description to paste. A PR a
+person opens runs CI as usual. The `UPSTREAM_MERGE_TOKEN` secret avoids this
+too.
 
 ### Running it by hand
 
