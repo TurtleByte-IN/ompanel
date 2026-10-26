@@ -75,7 +75,6 @@ const VARIANT_CONFIG = {
     scheme: "ompanel-dev",
     iosBundleIdentifier: "in.turtlebyte.ompanel.dev",
     androidPackage: "in.turtlebyte.ompanel.dev",
-    relyingParty: "clerk.t3.codes",
     assets: DEVELOPMENT_ASSETS,
   },
   preview: {
@@ -83,7 +82,6 @@ const VARIANT_CONFIG = {
     scheme: "ompanel-preview",
     iosBundleIdentifier: "in.turtlebyte.ompanel.preview",
     androidPackage: "in.turtlebyte.ompanel.preview",
-    relyingParty: "clerk.t3.codes",
     assets: PREVIEW_ASSETS,
   },
   production: {
@@ -91,7 +89,6 @@ const VARIANT_CONFIG = {
     scheme: "ompanel",
     iosBundleIdentifier: "in.turtlebyte.ompanel",
     androidPackage: "in.turtlebyte.ompanel",
-    relyingParty: "clerk.t3.codes",
     assets: RELEASE_ASSETS,
   },
 } as const;
@@ -108,6 +105,8 @@ function resolveAppVariant(value: string | undefined): AppVariant {
 }
 
 const variant = VARIANT_CONFIG[APP_VARIANT];
+// Passkeys need a Clerk domain this app is entitled to; Ompanel has none yet, so they stay off.
+const passkeyRelyingParty = repoEnv.OMPANEL_MOBILE_PASSKEY_RP_DOMAIN?.trim() || undefined;
 const iosBundleIdentifier = isIosPersonalTeamBuild
   ? personalTeamBundleIdentifier!
   : variant.iosBundleIdentifier;
@@ -241,10 +240,9 @@ const config: ExpoConfig = {
     bundleIdentifier: iosBundleIdentifier,
     // Avoid Personal Team fallback: it cannot sign App Groups, Apple sign-in or push entitlements.
     appleTeamId: "ARK85ZXQ4Z",
-    associatedDomains: [
-      `applinks:${variant.relyingParty}`,
-      `webcredentials:${variant.relyingParty}`,
-    ],
+    associatedDomains: passkeyRelyingParty
+      ? [`applinks:${passkeyRelyingParty}`, `webcredentials:${passkeyRelyingParty}`]
+      : [],
     entitlements: {
       "keychain-access-groups": [`$(AppIdentifierPrefix)${variant.iosBundleIdentifier}`],
     },

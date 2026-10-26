@@ -175,14 +175,17 @@ default home, it copies your T3 Code projects, threads, settings and attachments
 Existing threads keep using their worktrees under `~/.t3/worktrees`; new ones go under
 `~/.ompanel/worktrees`.
 
-- Quit T3 Code first. While its server is running, Ompanel starts without your T3 Code data and
-  copies it on the next start after T3 Code quits. Anything you do in Ompanel in between is kept
-  only if you add projects or threads; otherwise the copy replaces that empty start.
+- Quit T3 Code first. While its server is running, Ompanel starts without your T3 Code data, does
+  not open the current folder as a project, and copies your data on the next start after T3 Code
+  quits. If you add projects or threads yourself in between, Ompanel keeps them and does not
+  copy; otherwise the copy replaces that empty start.
 - Nothing is copied when `~/.ompanel/userdata` already has projects or threads, when you start
   with `--base-dir` or `OMPANEL_HOME` pointing elsewhere, or in development mode.
-- Paired devices, pairing links, T3 Connect sign-in and stored secrets stay behind. Pair your
+- Paired devices, pairing links, T3 Connect sign-in, device hosts, scheduled-task webhook URLs
+  and stored secrets stay behind. Pair your
   phone or other clients with Ompanel again, sign in again to providers whose sign-in T3 Code
-  stored, and re-enter secret environment values in provider settings.
+  stored, re-enter secret environment values in provider settings, and rotate the webhook URL of
+  any webhook-triggered task.
 - Logs and per-install identifiers stay behind too, so Ompanel shows up as a new environment.
 - Environment variables use the `OMPANEL_` prefix. Ompanel does not read `T3CODE_*` variables,
   so rename any you set, for example `T3CODE_HOME` to `OMPANEL_HOME`.

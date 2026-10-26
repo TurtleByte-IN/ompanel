@@ -70,7 +70,7 @@ jobs:
 
           base_version="$(node -p "require('./apps/desktop/package.json').version")"
           node scripts/update-release-package-versions.ts "${base_version}-pr.${PR_NUMBER}.${GITHUB_RUN_NUMBER}"
-          # Public Ompanel Connect identifiers (Clerk publishable key, relay URL).
+          # Public Ompanel Connect identifiers (Clerk publishable key, relay URL); empty, so cloud is off.
           cp .env.example .env
 
       - uses: ./.github/actions/setup-apt-mirrors

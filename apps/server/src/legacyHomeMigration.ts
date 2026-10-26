@@ -25,17 +25,23 @@ const STAGING_COMPLETE = ".complete";
 const REPLACED_DIRECTORY = ".legacy-home-migration-replaced";
 /**
  * Top-level entries that stay behind: logs; one install's identity and keys (`secrets/` holds the
- * session, MCP, guest-share and asset signing keys and the T3 Connect link credentials); and
- * live-process state. Databases are copied separately through SQLite.
+ * signing keys, T3 Connect link and provider sign-ins; `device/hosts` holds device daemon auth
+ * tokens); and live-process state. Databases are copied separately through SQLite.
  */
 const SKIPPED_ENTRIES: Record<string, true> = {
   logs: true,
   secrets: true,
+  device: true,
   "server-runtime.json": true,
   "server-owner.sqlite": true,
   "environment-id": true,
   "anonymous-id": true,
 };
+/**
+ * Written with defaults by every server start. After a deferred start Ompanel's defaults would
+ * otherwise shadow upstream's customised copies, so they are set aside with the empty database.
+ */
+const STARTUP_DEFAULT_FILES = ["keybindings.json", "keybindings-migrations"] as const;
 const DATABASES = ["state.sqlite", "statev2.sqlite"] as const;
 const DATABASE_FILE = /\.sqlite(?:-wal|-shm|-journal)?$/u;
 /** Credentials issued by upstream: sessions are paired devices and clients, links are unredeemed pairings. */
@@ -64,6 +70,7 @@ export type LegacyHomeMigrationResult =
   | { readonly status: "migrated"; readonly from: string; readonly to: string }
   | { readonly status: "already-migrated" }
   | { readonly status: "no-legacy-home" }
+  | { readonly status: "legacy-home-symlinked"; readonly path: string }
   | { readonly status: "target-has-state" }
   | { readonly status: "legacy-server-running"; readonly pid: number | null }
   | { readonly status: "target-server-running" }
@@ -145,8 +152,24 @@ async function snapshotDatabase(sourcePath: string, destinationPath: string): Pr
     for (const table of existingTables(copy, UPSTREAM_CREDENTIAL_TABLES)) {
       copy.exec(`DELETE FROM "${table}"`);
     }
-    // One self-contained file, so publishing it is a single rename.
+    // Webhook URLs and signing secrets issued by upstream; a task's owner rotates a new one.
+    const webhookColumns =
+      existingTables(copy, ["scheduled_tasks"]).length > 0
+        ? copy
+            .prepare("SELECT name FROM pragma_table_info('scheduled_tasks')")
+            .all()
+            .map((row) => String(row.name))
+            .filter((name) => name === "webhook_token" || name === "webhook_secret")
+        : [];
+    if (webhookColumns.length > 0) {
+      copy.exec(
+        `UPDATE scheduled_tasks SET ${webhookColumns.map((name) => `${name} = NULL`).join(", ")}`,
+      );
+    }
+    // One self-contained file, so publishing it is a single rename; VACUUM rewrites it so the
+    // deleted credentials do not survive in free pages.
     copy.exec("PRAGMA journal_mode = DELETE");
+    copy.exec("VACUUM");
   } finally {
     copy.close();
   }
@@ -265,13 +288,20 @@ export const migrateLegacyHome = Effect.fn("legacyHomeMigration.migrate")(functi
         baseDir,
         `${REPLACED_DIRECTORY}-${DateTime.formatIso(yield* DateTime.now).replaceAll(":", "-")}`,
       );
+      const setAside = Effect.fn("legacyHomeMigration.setAside")(function* (file: string) {
+        const existing = path.join(userdata, file);
+        if (!(yield* fs.exists(existing))) return;
+        yield* fs.makeDirectory(replaced, { recursive: true });
+        yield* fs.rename(existing, path.join(replaced, file));
+      });
       for (const name of replaceable) {
         for (const file of [name, `${name}-wal`, `${name}-shm`, `${name}-journal`]) {
-          const existing = path.join(userdata, file);
-          if (!(yield* fs.exists(existing))) continue;
-          yield* fs.makeDirectory(replaced, { recursive: true });
-          yield* fs.rename(existing, path.join(replaced, file));
+          yield* setAside(file);
         }
+      }
+      // Still staged means not yet moved in, so the target's copy is the start's defaults.
+      if (yield* fs.exists(path.join(staging, STARTUP_DEFAULT_FILES[0]))) {
+        for (const file of STARTUP_DEFAULT_FILES) yield* setAside(file);
       }
     }
     for (const name of yield* fs.readDirectory(staging)) {
@@ -355,6 +385,19 @@ export const migrateLegacyHome = Effect.fn("legacyHomeMigration.migrate")(functi
   return yield* Effect.gen(function* () {
     if (yield* fs.exists(marker)) return { status: "already-migrated" } as const;
     if (!(yield* fs.exists(legacyUserdata))) return { status: "no-legacy-home" } as const;
+    // A relocated upstream home or database is not followed: the copy reads only what it can see.
+    const isSymlink = (file: string) =>
+      fs.readLink(file).pipe(Effect.option, Effect.map(Option.isSome));
+    const legacyDatabases = (yield* fs.readDirectory(legacyUserdata)).filter((name) =>
+      DATABASE_FILE.test(name),
+    );
+    for (const file of [
+      path.join(homeDirectory, LEGACY_HOME_DIR_NAME),
+      legacyUserdata,
+      ...legacyDatabases.map((name) => path.join(legacyUserdata, name)),
+    ]) {
+      if (yield* isSymlink(file)) return { status: "legacy-home-symlinked", path: file } as const;
+    }
     yield* fs.makeDirectory(baseDir, { recursive: true });
     return yield* Effect.acquireUseRelease(
       acquireLock,
@@ -369,13 +412,17 @@ export const migrateLegacyHome = Effect.fn("legacyHomeMigration.migrate")(functi
   );
 });
 
-/** Migrates only for the default production home, and never blocks server startup. */
+/**
+ * Migrates only for the default production home, and never blocks server startup. Returns true
+ * when the copy is still to come (deferred or failed), so this start must not create user data
+ * that would make the next start skip it.
+ */
 export const migrateLegacyHomeOnStartup = Effect.fn("legacyHomeMigration.onStartup")(function* (
   stateDir: string,
 ) {
   const path = yield* Path.Path;
   const homeDirectory = yield* HostProcess.HomeDirectory;
-  if (stateDir !== path.join(homeDirectory, HOME_DIR_NAME, "userdata")) return;
+  if (stateDir !== path.join(homeDirectory, HOME_DIR_NAME, "userdata")) return false;
   const result = yield* migrateLegacyHome(homeDirectory).pipe(
     Effect.catchTags({
       LegacyHomeMigrationError: (error) =>
@@ -383,18 +430,30 @@ export const migrateLegacyHomeOnStartup = Effect.fn("legacyHomeMigration.onStart
     }),
   );
   switch (result?.status) {
+    case undefined:
+      return true;
     case "migrated":
-      return yield* Effect.logInfo(
+      yield* Effect.logInfo(
         `Copied ${UPSTREAM_PRODUCT_NAME} data from ${result.from} to ${result.to}.`,
       );
+      return false;
+    case "legacy-home-symlinked":
+      yield* Effect.logWarning(
+        `${result.path} is a symlink; ${UPSTREAM_PRODUCT_NAME} data is not copied from a relocated home.`,
+      );
+      return false;
     case "legacy-server-running":
-      return yield* Effect.logWarning(
+      yield* Effect.logWarning(
         `${UPSTREAM_PRODUCT_NAME} is running${result.pid === null ? "" : ` (pid ${result.pid})`}; its data will be copied on the next start after it quits.`,
       );
+      return true;
     case "target-server-running":
     case "migration-locked":
-      return yield* Effect.logWarning(
+      yield* Effect.logWarning(
         `Another Ompanel server is using ${path.join(homeDirectory, HOME_DIR_NAME)}; ${UPSTREAM_PRODUCT_NAME} data will be copied on a later start.`,
       );
+      return true;
+    default:
+      return false;
   }
 });
