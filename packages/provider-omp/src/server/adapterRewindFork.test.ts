@@ -432,8 +432,10 @@ posixOnly("OMP rewind and fork", () => {
         ["user:one", "assistant:pong"],
       );
 
-      // Both threads go on, each in its own file.
-      const forkTurn = yield* runTurn(target, FORK, forked, 1, "fork turn");
+      // Both threads go on, each in its own file. T3 runs the fork under its own row's id.
+      const row = { ...forked, id: "provider-thread:pending-fork-row" as typeof forked.id };
+      const forkTurn = yield* runTurn(target, FORK, row, 1, "fork turn");
+      assert.strictEqual(forkTurn.providerThread.id, row.id);
       const sourceTurn = yield* runTurn(source, SOURCE, ran.providerThread, 3, "source turn");
       assert.deepStrictEqual(
         snapshotText(yield* target.readThreadSnapshot({ providerThread: forkTurn.providerThread })),

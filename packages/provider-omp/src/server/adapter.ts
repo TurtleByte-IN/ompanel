@@ -713,7 +713,12 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
     ) {
       const bound = mapper.providerThread;
       if (bound === null) return yield* protocolError("OMP session has no bound thread");
-      if (bound.id !== turnInput.providerThread.id) {
+      // A fork binds before T3 has a row for it; T3 then runs it under its own row's id, with the
+      // native session the fork returned. The row is the thread from then on (`mapper.startTurn`).
+      if (
+        bound.id !== turnInput.providerThread.id &&
+        turnInput.providerThread.nativeThreadRef?.nativeId !== bound.nativeThreadRef?.nativeId
+      ) {
         return yield* protocolError("OMP turn requested for a different provider thread");
       }
       if (mapper.hasActiveTurn) {
