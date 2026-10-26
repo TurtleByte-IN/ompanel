@@ -542,6 +542,9 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       }
     });
 
+    /** A Stop is waiting for `abort_and_restore_queue`; the turn's end waits with it. */
+    let stopInFlight = false;
+    let deferredSettle: OmpTurnOutcome | null = null;
     const handleFrame = Effect.fnUntraced(function* (frame: RpcServerFrame) {
       if (isOmpDialogRequest(frame) || isOmpCancelRequest(frame)) {
         return yield* handleDialogFrame(frame);
@@ -563,7 +566,30 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
         flushScheduled = true;
         yield* scheduleFlush;
       }
-      if (result.settled !== null) yield* finalize(result.settled, true);
+      // The idle check's reply is echoed too, so it lands after every frame before it.
+      if (result.confirmIdle) {
+        yield* process
+          .request("get_state", undefined, {
+            timeoutMs: SIDE_REQUEST_TIMEOUT_MS,
+            echoResponse: true,
+          })
+          .pipe(
+            Effect.catch(() =>
+              exclusive(
+                Effect.gen(function* () {
+                  const outcome = mapper.steerLost();
+                  if (outcome !== null) yield* finalize(outcome, true);
+                }),
+              ),
+            ),
+            Effect.ignore,
+            Effect.forkIn(scope),
+          );
+      }
+      if (result.settled === null) return;
+      // A Stop waiting for OMP's answer ends the turn once it has it (`interruptTurn`).
+      if (stopInFlight) deferredSettle = result.settled;
+      else yield* finalize(result.settled, true);
     });
 
     let settled = false;
@@ -1065,27 +1091,48 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
         : Effect.fail(protocolError(`OMP turn ${providerTurnId} is not active`));
 
     /**
-     * A message for the running turn. OMP injects a `steer` into the live agent loop (after
-     * the current tool call, or at the turn's end under `interruptMode: wait`); once the loop
-     * has ended it can only take a `follow_up`, which it runs when the session resumes.
+     * `steer` while the agent loop runs, `follow_up` after it. A late one still runs in OMP, so
+     * the turn stays open until that run ends; replies are echoed to stay ordered with frames.
      */
     const steerTurn = Effect.fnUntraced(function* (
       steerInput: ProviderAdapter.ProviderAdapterV2SteerInput,
     ) {
-      yield* assertActiveTurn(steerInput.providerTurnId);
+      const providerTurnId = steerInput.providerTurnId;
       const payload = yield* promptPayload(steerInput.message.text, steerInput.message.attachments);
-      const requestOptions = { timeoutMs: STEER_REQUEST_TIMEOUT_MS };
+      const followUp = yield* exclusive(
+        Effect.gen(function* () {
+          yield* assertActiveTurn(providerTurnId);
+          mapper.steerSent();
+          return mapper.agentEnded;
+        }),
+      );
+      const requestOptions = { timeoutMs: STEER_REQUEST_TIMEOUT_MS, echoResponse: true } as const;
       yield* (
-        mapper.agentEnded
+        followUp
           ? process.request("follow_up", payload, requestOptions)
           : process.request("steer", payload, requestOptions)
-      ).pipe(Effect.mapError(subagentRequestError));
+      ).pipe(
+        // No reply reached the frame stream: the message counts as never sent.
+        Effect.tapError((error) =>
+          error._tag === "OmpRpcCommandError"
+            ? Effect.void
+            : exclusive(
+                Effect.gen(function* () {
+                  if (mapper.activeProviderTurnId !== providerTurnId) return;
+                  const outcome = mapper.steerLost();
+                  if (outcome !== null) yield* finalize(outcome, true);
+                }),
+              ),
+        ),
+        Effect.mapError(subagentRequestError),
+      );
     });
 
     /**
-     * Stop. OMP aborts the turn and settles it with `prompt_result: aborted`. Messages OMP still
-     * holds would run after an `abort` (its queue drains), so with any queued the turn stops
-     * with `abort_and_restore_queue` instead and the withdrawn messages are listed on it.
+     * Stop, always as `abort_and_restore_queue`: a plain `abort` lets OMP drain its queue into
+     * a new run after the Stop. The turn's settlement waits for OMP's answer, whatever order
+     * the answer and `prompt_result` arrive in, so the withdrawn messages are listed on the
+     * stopped turn before it ends.
      */
     const interruptTurn = Effect.fnUntraced(function* (
       interruptInput: ProviderAdapter.ProviderAdapterV2InterruptInput,
@@ -1093,30 +1140,40 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       if (mapper.activeProviderTurnId === null && interruptInput.requestRuntimeRestart === true) {
         return;
       }
-      yield* assertActiveTurn(interruptInput.providerTurnId);
-      const queue = mapper.queue;
-      const withdrawable = queue.steering.length - queue.liveSteered + queue.followUp.length;
-      if (withdrawable <= 0) {
-        return yield* process
-          .request("abort", undefined, { timeoutMs: ABORT_REQUEST_TIMEOUT_MS })
-          .pipe(Effect.mapError(subagentRequestError));
-      }
-      const restored = yield* process
-        .request("abort_and_restore_queue", undefined, { timeoutMs: ABORT_REQUEST_TIMEOUT_MS })
-        .pipe(Effect.mapError(subagentRequestError));
       yield* exclusive(
         Effect.gen(function* () {
-          yield* emit(
-            mapper.withdrawnQueue(
-              {
-                steering: restored.steering.map((message) => message.text),
-                followUp: restored.followUp.map((message) => message.text),
-              },
-              yield* DateTime.now,
-            ),
-          );
+          yield* assertActiveTurn(interruptInput.providerTurnId);
+          mapper.beginStop();
+          stopInFlight = true;
         }),
       );
+      const answer = yield* process
+        .request("abort_and_restore_queue", undefined, { timeoutMs: ABORT_REQUEST_TIMEOUT_MS })
+        .pipe(Effect.exit);
+      yield* exclusive(
+        Effect.gen(function* () {
+          stopInFlight = false;
+          const restored =
+            answer._tag === "Success"
+              ? {
+                  steering: answer.value.steering.map((message) => message.text),
+                  followUp: answer.value.followUp.map((message) => message.text),
+                }
+              : null;
+          yield* emit(mapper.endStop(restored, yield* DateTime.now));
+          const outcome =
+            deferredSettle ??
+            // A prompt that had finished, held for a message the Stop withdrew: nothing runs.
+            (answer._tag === "Success" && mapper.holdingOutcome && mapper.agentEnded
+              ? ({ status: "interrupted" } as const)
+              : null);
+          deferredSettle = null;
+          if (outcome !== null) yield* finalize(outcome, true);
+        }),
+      );
+      if (answer._tag === "Failure") {
+        return yield* Effect.failCause(answer.cause).pipe(Effect.mapError(subagentRequestError));
+      }
     });
 
     const controlSubagent = Effect.fnUntraced(function* (

@@ -16,15 +16,21 @@ T3 steers a running OMP turn (capability `supportsActiveSteering`):
 | -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
 | Message while the agent loop runs                                    | `steer` (lands after the current tool call, or at the turn's end under OMP's `interruptMode: wait`) |
 | Message after `agent_end`, before the turn settled                   | `follow_up` (runs when the session resumes)                                                         |
-| Stop                                                                 | `abort`; `abort_and_restore_queue` when OMP still holds queued messages                             |
+| Stop                                                                 | `abort_and_restore_queue` (a plain `abort` lets OMP drain its queue into a new run)                 |
 | Restart of a run ("interrupt and send", a selection change mid-turn) | `abort_and_prompt` for the new attempt (`supportsSteeringByInterruptRestart`)                       |
 
 Messages queued while the turn runs stay in T3's own queue and start the next turn.
 
 OMP's `queue_update` snapshots render as one "OMP queue" card per turn: running while OMP holds
 messages (steering entries already sent into the stream are marked "sent"), completed once the
-queue drains. A Stop that withdraws queued messages lists them on the stopped turn, since they
-never ran. An `abort` alone would let OMP drain its queue into a new run after the Stop.
+queue drains. During a Stop the snapshots no longer mean delivery: the turn's end waits for
+OMP's answer, in whichever order it and `prompt_result` arrive, and the card closes listing the
+messages the Stop withdrew.
+
+A steer or follow-up can reach OMP after the turn's prompt finished; OMP then runs it as a new
+run. The turn stays open for it: replies to steers are echoed onto the frame stream, and a
+finished prompt with a message still unanswered or queued is held until that run's `agent_end`,
+or until an echoed `get_state` shows OMP idle with nothing queued.
 
 Queue behaviour itself (`steeringMode`, `followUpMode`, `interruptMode`) is an OMP setting, applied
 to a running thread over RPC by the settings engine (`docs/omp/settings.md`).

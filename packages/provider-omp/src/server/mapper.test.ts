@@ -622,7 +622,7 @@ describe("OmpThreadMapper", () => {
     const { mapper } = startedTurn();
     assert.deepStrictEqual(
       mapper.handleFrame({ type: "frame_from_the_future", payload: 1 } as never, at(1)),
-      { events: [], streaming: false, settled: null },
+      { events: [], streaming: false, settled: null, confirmIdle: false },
     );
     mapper.finalizeTurn({ status: "completed" }, {}, at(2));
     assert.deepStrictEqual(

@@ -25,6 +25,7 @@ import * as Stream from "effect/Stream";
 import { makeOmpAdapter } from "./adapter.ts";
 import { makeOmpPidfiles } from "./pidfiles.ts";
 import { ompStateDirs } from "./session.ts";
+import type { OmpCommandHooks } from "./commands.ts";
 import { makeOmpThreadSessions } from "./threadSessions.ts";
 import {
   type FakeOmpScript,
@@ -66,10 +67,16 @@ const settle = (status: "completed" | "aborted"): FakeOmpStep => ({
 
 type Event = ProviderAdapter.ProviderAdapterV2Event;
 
+/** `abort_and_restore_queue`'s answer when OMP held nothing. */
+const NO_QUEUE = { steering: [], followUp: [] };
+
 const openThread = Effect.fnUntraced(function* (
   state: FakeOmpState,
   script: FakeOmpScript,
-  extra: { readonly resolveAttachmentPath?: (attachment: ChatAttachment) => string | null } = {},
+  extra: {
+    readonly resolveAttachmentPath?: (attachment: ChatAttachment) => string | null;
+    readonly commands?: OmpCommandHooks;
+  } = {},
 ) {
   const path = yield* Path.Path;
   const dirs = ompStateDirs(path, NodePath.join(state.dir, "state"));
@@ -339,21 +346,26 @@ posixOnly("OmpAdapter composer runtime", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.live("stops a turn with abort", () =>
+  it.live("stops a turn with abort_and_restore_queue", () =>
     Effect.gen(function* () {
       const state = yield* makeFakeOmpState;
       const thread = yield* openThread(state, {
         commands: {
           ...TURN_READS,
           prompt: OPEN_PROMPT,
-          abort: [{ respond: null }, settle("aborted")],
+          abort_and_restore_queue: [{ respond: NO_QUEUE }, settle("aborted")],
         },
       });
       const turn = yield* thread.startTurn("Long task");
       yield* thread.interrupt(turn.providerTurnId);
       assert.strictEqual(yield* turn.terminal, "interrupted");
-      assert.lengthOf(commandsOf(state, "abort"), 1);
-      assert.lengthOf(commandsOf(state, "abort_and_restore_queue"), 0);
+      assert.lengthOf(commandsOf(state, "abort_and_restore_queue"), 1);
+      assert.lengthOf(commandsOf(state, "abort"), 0);
+      // Nothing was queued, so no queue card.
+      assert.lengthOf(
+        notifications(thread.events).filter((item) => item.title === "OMP queue"),
+        0,
+      );
 
       // A Stop for a turn that is no longer running is refused.
       const late = yield* Effect.flip(thread.interrupt(turn.providerTurnId));
@@ -361,7 +373,25 @@ posixOnly("OmpAdapter composer runtime", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.live("withdraws queued messages when stopping a turn with a queue", () =>
+  it.live.each([
+    [
+      "the answer before prompt_result",
+      [
+        { respond: { steering: [], followUp: [{ text: "afterwards" }] } },
+        { emit: { type: "queue_update", steering: [], followUp: [] } },
+        settle("aborted"),
+      ],
+    ],
+    [
+      "prompt_result before the answer",
+      [
+        { emit: { type: "queue_update", steering: [], followUp: [] } },
+        settle("aborted"),
+        { sleepMs: 200 },
+        { respond: { steering: [], followUp: [{ text: "afterwards" }] } },
+      ],
+    ],
+  ] as const)("lists messages a Stop withdrew on the stopped turn (%s)", ([, steps]) =>
     Effect.gen(function* () {
       const state = yield* makeFakeOmpState;
       const thread = yield* openThread(state, {
@@ -371,11 +401,7 @@ posixOnly("OmpAdapter composer runtime", () => {
             ...OPEN_PROMPT,
             { emit: { type: "queue_update", steering: [], followUp: ["afterwards"] } },
           ],
-          abort_and_restore_queue: [
-            { respond: { steering: [], followUp: [{ text: "afterwards" }] } },
-            { emit: { type: "queue_update", steering: [], followUp: [] } },
-            settle("aborted"),
-          ],
+          abort_and_restore_queue: steps,
         },
       });
       const turn = yield* thread.startTurn("Long task");
@@ -385,14 +411,86 @@ posixOnly("OmpAdapter composer runtime", () => {
       assert.isTrue(queued);
       yield* thread.interrupt(turn.providerTurnId);
       assert.strictEqual(yield* turn.terminal, "interrupted");
-      assert.lengthOf(commandsOf(state, "abort"), 0);
-      const withdrawn = notifications(thread.events).find((item) =>
-        item.summary.startsWith("Stopped before"),
-      );
+
+      const cards = notifications(thread.events).filter((item) => item.title === "OMP queue");
+      // The emptied queue never reads as delivered: the card closes as withdrawn.
       assert.deepStrictEqual(
-        [withdrawn?.summary, withdrawn?.detail],
-        ["Stopped before 1 queued message ran", "afterwards"],
+        cards.map((card) => [card.status, card.summary, card.detail]),
+        [
+          ["running", "1 message queued in OMP", "Follow-up: afterwards"],
+          ["completed", "Stopped before 1 queued message ran", "afterwards"],
+        ],
       );
+      // ...and it is on the turn before the turn ends.
+      const closedAt = thread.events.findIndex(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "notification" &&
+          event.turnItem.summary.startsWith("Stopped before"),
+      );
+      const endedAt = thread.events.findIndex((event) => event.type === "turn.terminal");
+      assert.isTrue(closedAt !== -1 && closedAt < endedAt);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("ends a held turn with the run OMP starts for the late steer", () =>
+    Effect.gen(function* () {
+      const state = yield* makeFakeOmpState;
+      const thread = yield* openThread(state, {
+        commands: {
+          ...TURN_READS,
+          prompt: OPEN_PROMPT,
+          steer: [
+            { emit: { type: "agent_end", messages: [] } },
+            settle("completed"),
+            { emit: { type: "queue_update", steering: ["one more thing"], followUp: [] } },
+            { respond: null },
+            { sleepMs: 100 },
+            { emit: { type: "agent_start" } },
+            { emit: { type: "queue_update", steering: [], followUp: [] } },
+            { emit: fakeOmpFrames.notice("drain ran") },
+            { emit: { type: "agent_end", messages: [] } },
+          ],
+          // `get_state` keeps the fake's default answer; the queue snapshot says it is queued.
+        },
+      });
+      const turn = yield* thread.startTurn("Long task");
+      yield* thread.steer(turn.providerTurnId, "one more thing");
+      assert.strictEqual(yield* turn.terminal, "completed");
+      const ranAt = thread.events.findIndex(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "system_notice" &&
+          event.turnItem.message === "drain ran",
+      );
+      const endedAt = thread.events.findIndex((event) => event.type === "turn.terminal");
+      // The drain run's frames landed in the turn, which ended only after it.
+      assert.isTrue(ranAt !== -1 && ranAt < endedAt);
+      assert.lengthOf(
+        thread.events.filter((event) => event.type === "turn.terminal"),
+        1,
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("ends a held turn when OMP is idle after the late steer", () =>
+    Effect.gen(function* () {
+      const state = yield* makeFakeOmpState;
+      const thread = yield* openThread(state, {
+        commands: {
+          ...TURN_READS,
+          prompt: OPEN_PROMPT,
+          steer: [
+            { emit: { type: "agent_end", messages: [] } },
+            settle("completed"),
+            { respond: null },
+          ],
+          // `get_state` keeps the fake's default answer: nothing queued, not streaming.
+        },
+      });
+      const turn = yield* thread.startTurn("Long task");
+      yield* thread.steer(turn.providerTurnId, "one more thing");
+      assert.strictEqual(yield* turn.terminal, "completed");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
@@ -403,7 +501,7 @@ posixOnly("OmpAdapter composer runtime", () => {
         commands: {
           ...TURN_READS,
           prompt: OPEN_PROMPT,
-          abort: [{ respond: null }, settle("aborted")],
+          abort_and_restore_queue: [{ respond: NO_QUEUE }, settle("aborted")],
           abort_and_prompt: fakeOmpFrames.promptTurn({ text: ["Restarted"] }),
         },
       });
@@ -447,6 +545,32 @@ posixOnly("OmpAdapter composer runtime", () => {
       assert.include(messages[3], "## Ompanel interaction mode: Default");
       assert.include(messages[3], "<user_request>\nImplement it\n</user_request>");
       assert.strictEqual(messages[4], "Keep going");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("rewrites a `$skill` before stating Plan and never counts it as stating the mode", () =>
+    Effect.gen(function* () {
+      const state = yield* makeFakeOmpState;
+      const thread = yield* openThread(
+        state,
+        { commands: { ...TURN_READS, prompt: fakeOmpFrames.promptTurn({ text: ["Ok"] }) } },
+        {
+          commands: {
+            onAvailableCommands: () => Effect.void,
+            resolvePrompt: (_cwd, text) => Effect.succeed(text.replace(/^\$(\S+)/, "/skill:$1")),
+          },
+        },
+      );
+      for (const text of ["$review the diff", "Plan the change"]) {
+        const turn = yield* thread.startTurn(text, { interactionMode: "plan" });
+        assert.strictEqual(yield* turn.terminal, "completed");
+      }
+      const messages = commandsOf(state, "prompt").map((command) => String(command["message"]));
+      // OMP expands a skill only at the start of a prompt: the rewrite goes out unwrapped...
+      assert.strictEqual(messages[0], "/skill:review the diff");
+      // ...so Plan is stated on the next prompt.
+      assert.include(messages[1], "## Ompanel interaction mode: Plan");
+      assert.include(messages[1], "<user_request>\nPlan the change\n</user_request>");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
