@@ -176,6 +176,27 @@ describe("OMP settings pages", () => {
     await expect.element(retries).toHaveValue("7");
   });
 
+  it("Routing shows path-scoped model lists without a way to overwrite them", async () => {
+    resetEngine();
+    // `config list` resolves path-scoped entries for its folder; writing this back would drop them.
+    engine.global.set("enabledModels", ["anthropic/claude-sonnet-4-5"]);
+    await using screen = await render(
+      <OmpSettingsPageBody
+        environmentId={environmentId}
+        instanceId={instanceId}
+        pageId="routing"
+      />,
+    );
+    for (const key of ["enabledModels", "enabledProviders", "disabledProviders"]) {
+      await expect.element(screen.getByRole("textbox", { name: key })).toBeDisabled();
+      expect(row(key)?.textContent).toContain("scoped to other folders");
+    }
+    expect(row("enabledModels")?.textContent).toContain("Global");
+    expect(row("enabledModels")?.querySelector("button")).toBeNull();
+    expect(commands.write).not.toHaveBeenCalled();
+    expect(commands.reset).not.toHaveBeenCalled();
+  });
+
   it("Thinking writes a budget and shows the re-read value", async () => {
     resetEngine();
     await using screen = await render(

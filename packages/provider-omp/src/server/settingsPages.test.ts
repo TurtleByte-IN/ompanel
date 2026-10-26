@@ -8,7 +8,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type { OmpConfigType } from "@t3tools/contracts";
 
 import { OMP_SETTING_KEYS } from "../ompSettingKeys.generated.ts";
-import { OMP_SETTINGS_PAGES, ompSettingsPageForm } from "../settingsPages.ts";
+import { OMP_PATH_SCOPED_KEYS, OMP_SETTINGS_PAGES, ompSettingsPageForm } from "../settingsPages.ts";
 import { makeOmpControlService, type OmpControlTarget } from "./control.ts";
 import { makeOmpSettingsEngine } from "./settingsEngine.ts";
 
@@ -166,5 +166,31 @@ describe("OMP settings pages", () => {
       ompSettingsPageForm(form, OMP_SETTINGS_PAGES.thinking).fields.map((f) => f.key),
       ["defaultThinkingLevel", "thinkingBudgets.low"],
     );
+  });
+
+  it("show path-scoped arrays read-only so their scoped entries are never overwritten", () => {
+    // OMP flags these `pathScoped` in its registry; the pages must not lose a scoped entry.
+    for (const key of OMP_PATH_SCOPED_KEYS) assert.include(OMP_SETTING_KEYS, key);
+    const form = {
+      fields: [...OMP_PATH_SCOPED_KEYS, "retry.maxRetries"].map((key) => ({
+        key,
+        group: key.split(".")[0]!,
+        type: "array" as const,
+        description: "",
+        source: "global" as const,
+        value: ["anthropic/claude-sonnet-4-5"],
+        redacted: false,
+        credential: false,
+        readOnly: false,
+        launchScoped: false,
+        threadOverride: "overlay" as const,
+      })),
+    };
+    for (const page of [OMP_SETTINGS_PAGES.models, OMP_SETTINGS_PAGES.routing]) {
+      const fields = ompSettingsPageForm(form, page).fields;
+      for (const field of fields) {
+        assert.strictEqual(field.readOnly, OMP_PATH_SCOPED_KEYS.includes(field.key), field.key);
+      }
+    }
   });
 });

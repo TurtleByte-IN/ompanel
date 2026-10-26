@@ -118,10 +118,17 @@ against the pinned registry.
 | Page           | Keys                                                                                                                                                                                                         |
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Models & Roles | `modelRoles` (one field per role), `modelRoleStorage`, `modelTags`, `modelProviderOrder`, `cycleOrder`, `enabledModels`, `disabledProviders`, `includeModelInPrompt`                                         |
-| Routing        | `retry.*` (incl. `retry.fallbackChains`), `auth.accountPolicies`, `task.agentAccountPools`, path-scoped `enabledModels` / `enabledProviders` / `disabledProviders`, `providers.anthropic.serverSideFallback` |
+| Routing        | `retry.*` (incl. `retry.fallbackChains`), `auth.accountPolicies`, `task.agentAccountPools`, `enabledModels` / `enabledProviders` / `disabledProviders` (read-only), `providers.anthropic.serverSideFallback` |
 | Thinking       | `defaultThinkingLevel`, `hideThinkingBlock`, `thinkingBudgets.*`, `providers.autoThinkingMaxEffort`                                                                                                          |
 
 `modelRoles` covers OMP's 16 roles: `default smol slow vision plan commit tiny
 memory task advisor widget image web speech dictation judge` (OMP has no
 `designer` role). Clearing a role's model removes it from the record. The PRD's
 top-level `fallbackChains` is `retry.fallbackChains` in OMP.
+
+`enabledModels`, `enabledProviders` and `disabledProviders` accept path-scoped
+entries (`{path, models}` / `{paths, providers}`). `config list` returns them
+already resolved for its working directory, and the engine has no raw read, so
+writing the shown value back would delete every entry scoped to another
+folder. The pages show these three read-only (`OMP_PATH_SCOPED_KEYS`), with no
+Reset; edit them in OMP's config file.

@@ -176,7 +176,9 @@ export function OmpSettingsForm({ form, scope, onWrite, onReset, controls }: Omp
               </div>
               {field.readOnly ? (
                 <p className="text-muted-foreground text-xs">
-                  Set by an environment variable; change it where OMP is launched.
+                  {field.source === "env"
+                    ? "Set by an environment variable; change it where OMP is launched."
+                    : "Can hold entries scoped to other folders, which this view cannot show; edit it in OMP's config file."}
                 </p>
               ) : field.credential ? (
                 <p className="text-muted-foreground text-xs">

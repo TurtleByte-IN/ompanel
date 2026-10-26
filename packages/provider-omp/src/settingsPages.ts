@@ -35,7 +35,7 @@ export const OMP_SETTINGS_PAGES: Readonly<Record<OmpSettingsPageId, OmpSettingsP
     id: "models",
     title: "Models & Roles",
     description:
-      "Which model OMP uses for each role, and which models and providers it may pick from. enabledModels and disabledProviders also take path-scoped entries.",
+      "Which model OMP uses for each role, and which models and providers it may pick from.",
     keys: [
       "modelRoles",
       "modelRoleStorage",
@@ -51,7 +51,7 @@ export const OMP_SETTINGS_PAGES: Readonly<Record<OmpSettingsPageId, OmpSettingsP
     id: "routing",
     title: "Routing",
     description:
-      'Retries, fallback chains, round-robin credentials and path-scoped model lists. A path-scoped entry looks like {"path": "~/work", "models": ["anthropic/claude-opus-4-5"]}.',
+      "Retries, fallback chains, round-robin credentials and path-scoped model lists. The model and provider lists are shown, not edited, here.",
     keys: [
       "retry.",
       "auth.accountPolicies",
@@ -75,13 +75,29 @@ export const OMP_SETTINGS_PAGES: Readonly<Record<OmpSettingsPageId, OmpSettingsP
   },
 };
 
-/** The page's fields, in the page's key order; keys the running OMP lacks are skipped. */
+/**
+ * Arrays OMP lets hold path-scoped entries (`pathScoped` in `config/model-settings.ts`).
+ * `config list` reports them already resolved for its working directory, so a write of the shown
+ * value would drop every entry scoped to another path. The pages show them read-only; edit them in
+ * OMP's config file.
+ */
+export const OMP_PATH_SCOPED_KEYS: ReadonlyArray<string> = [
+  "enabledModels",
+  "enabledProviders",
+  "disabledProviders",
+];
+
+/**
+ * The page's fields, in the page's key order; keys the running OMP lacks are skipped. Path-scoped
+ * arrays come back read-only.
+ */
 export function ompSettingsPageForm(form: OmpSettingsForm, page: OmpSettingsPage): OmpSettingsForm {
   const fields: OmpSettingsField[] = [];
   for (const pattern of page.keys) {
     for (const field of form.fields) {
       const inPage = pattern.endsWith(".") ? field.key.startsWith(pattern) : field.key === pattern;
-      if (inPage) fields.push(field);
+      if (!inPage) continue;
+      fields.push(OMP_PATH_SCOPED_KEYS.includes(field.key) ? { ...field, readOnly: true } : field);
     }
   }
   return { fields };
