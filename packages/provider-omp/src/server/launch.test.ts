@@ -36,13 +36,21 @@ describe("omp launch on every platform", () => {
     // OMP splits PI_CONFIG_FILES on `:` (Unix) or `;` (Windows); Ompanel avoids that by passing
     // `--config`. `init-xdg` exits non-zero on Windows and moves nothing, so Ompanel follows
     // whatever directories OMP already resolves instead (docs/omp/processes.md).
+    // Exception: `omp share` takes no `--config`, so "Share as gist" sets PI_CONFIG_FILES to one
+    // overlay path and refuses a path holding the delimiter (docs/omp/thread-menu.md).
+    const piConfigFilesExceptions = new Set([
+      NodePath.join(REPO_ROOT, "packages/provider-omp/src/server/threadMenuController.ts"),
+    ]);
     const offenders = [
       ...sources("packages/provider-omp/src"),
       ...sources("apps/server/src"),
       ...sources("apps/desktop/src"),
     ].filter((file) => {
       const text = NodeFS.readFileSync(file, "utf8");
-      return text.includes("init-xdg") || /PI_CONFIG_FILES["'\]]{0,2}\s*[:=](?!=)/.test(text);
+      return (
+        text.includes("init-xdg") ||
+        (!piConfigFilesExceptions.has(file) && /PI_CONFIG_FILES["'\]]{0,2}\s*[:=](?!=)/.test(text))
+      );
     });
     assert.deepStrictEqual(offenders, []);
   });
