@@ -249,9 +249,13 @@ export const OMP_REPLAY_SCENARIOS: ReadonlyArray<OmpReplayScenario> = [
         yield* session.waitFor("streaming", (frame) => frame.type === "message_update", from);
         const state = yield* session.request("get_state", undefined);
         NodeAssert.equal(state.isStreaming, true);
-        const refused = yield* session.request("fork", {}).pipe(Effect.flip);
-        NodeAssert.equal(refused._tag, "OmpRpcCommandError");
-        NodeAssert.equal(refused._tag === "OmpRpcCommandError" && refused.code, "session_busy");
+        const refused = yield* Effect.result(session.request("fork", {}));
+        NodeAssert.ok(
+          refused._tag === "Failure" &&
+            refused.failure._tag === "OmpRpcCommandError" &&
+            refused.failure.code === "session_busy",
+          "fork while streaming was not refused with session_busy",
+        );
         yield* session.request("abort", undefined);
         yield* session.waitFor("prompt_result", (frame) => frame.type === "prompt_result", from);
       }),
