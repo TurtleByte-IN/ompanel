@@ -55,6 +55,33 @@ export function selectCliRuntimeExternalDependencies(
   );
 }
 
+// ws requires these inside try/catch and falls back to JavaScript without them.
+const OPTIONAL_RUNTIME_EXTERNALS: Readonly<Record<string, true>> = {
+  bufferutil: true,
+  "utf-8-validate": true,
+};
+
+/**
+ * Packages a bundle loads by name that its shipping package would not provide at runtime.
+ * dev resolves them from `dependencies`; the CLI archive and desktop app stage only the
+ * dependencies selectCliRuntimeExternalDependencies keeps. Anything else crashes on load.
+ */
+export function findUnshippedRuntimePackages(
+  specifiers: Iterable<string>,
+  dependencies: Readonly<Record<string, string>>,
+): ReadonlyArray<string> {
+  const unshipped = new Set<string>();
+  for (const specifier of specifiers) {
+    const [scopeOrName = "", scopedName] = specifier.split("/");
+    const name = scopeOrName.startsWith("@") ? `${scopeOrName}/${scopedName}` : scopeOrName;
+    if (Object.hasOwn(OPTIONAL_RUNTIME_EXTERNALS, name)) continue;
+    if (!Object.hasOwn(dependencies, name) || !isRuntimeExternalCliDependency(name)) {
+      unshipped.add(name);
+    }
+  }
+  return [...unshipped].sort();
+}
+
 /** regionCount distinguishes a clean bundle from a changed marker format the scan cannot see. */
 export function findInlinedExternalPackages(source: string): {
   readonly regionCount: number;

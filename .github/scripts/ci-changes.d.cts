@@ -16,6 +16,7 @@ export function decide(
   outputs: {
     typecheck: boolean;
     build: boolean;
+    boot_smoke: boolean;
     test: boolean;
     test_packages: string;
     test_web: boolean;

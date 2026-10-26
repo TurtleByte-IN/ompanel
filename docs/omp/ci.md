@@ -32,7 +32,15 @@ cancelled job fails it. Through it, every pull request is gated on:
 - typecheck: `Build and Typecheck`;
 - unit tests: `Test`, `Test Web`, `Test Server 1`–`8` and `Rust`;
 - end-to-end: `OMP E2E` (gate G1, [testing.md](testing.md#end-to-end)), for
-  changes that reach the web app or the server.
+  changes that reach the web app or the server;
+- server boot: `Server Boot Smoke`, for changes that reach the server, web or
+  desktop build. It builds the server as `pnpm dev:desktop` and releases do,
+  then runs `node scripts/smoke-server-boot.ts --target node --target electron`:
+  `apps/server/dist/bin.mjs` must answer `/.well-known/t3/environment` under
+  plain Node (the CLI) and under Electron's Node with a fd 3 bootstrap (the
+  desktop backend), then stay up 15 s. An exit at any point fails the job, so a
+  backend that would crash-loop in the desktop app cannot merge. Run the same
+  command locally after `vp run --filter t3 build`.
 
 A new job joins the gate by being added to `Check`'s `needs`; the branch
 protection setting does not change. Workflows other than `ci.yml` (PR size,

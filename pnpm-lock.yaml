@@ -934,6 +934,9 @@ importers:
       yauzl:
         specifier: ^3.4.0
         version: 3.4.0
+      zod:
+        specifier: 4.6.5
+        version: 4.6.5
     devDependencies:
       '@effect/graphql-generator':
         specifier: 'catalog:'
@@ -2197,6 +2200,9 @@ importers:
       '@electron/osx-sign':
         specifier: 2.7.0
         version: 2.7.0
+      '@t3tools/contracts':
+        specifier: workspace:*
+        version: link:../packages/contracts
       '@t3tools/provider-omp':
         specifier: workspace:*
         version: link:../packages/provider-omp

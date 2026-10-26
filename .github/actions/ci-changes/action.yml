@@ -5,6 +5,8 @@ outputs:
     value: ${{ steps.detect.outputs.typecheck }}
   build:
     value: ${{ steps.detect.outputs.build }}
+  boot_smoke:
+    value: ${{ steps.detect.outputs.boot_smoke }}
   test:
     value: ${{ steps.detect.outputs.test }}
   test_packages:

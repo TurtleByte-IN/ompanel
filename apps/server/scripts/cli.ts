@@ -10,8 +10,13 @@ import { Command, Flag } from "effect/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { DEVELOPMENT_ICON_OVERRIDES } from "../../../scripts/lib/brand-assets.ts";
-import { findEsmImportsOfExternalPackages } from "../../../scripts/lib/cli-executable-imports.ts";
+import {
+  findEsmImportsOfExternalPackages,
+  findRuntimePackageSpecifiers,
+} from "../../../scripts/lib/cli-executable-imports.ts";
+import { findUnshippedRuntimePackages } from "../../../scripts/lib/cli-external-packages.ts";
 import rootPackageJson from "../../../package.json" with { type: "json" };
+import serverPackageJson from "../package.json" with { type: "json" };
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import {
   ServerCliBuildAssetMissingError,
@@ -19,6 +24,7 @@ import {
   ServerCliDevelopmentIconSourceMissingError,
   ServerCliDevelopmentIconTargetMissingError,
   ServerCliExecutableImportError,
+  ServerCliUnshippedRuntimePackageError,
 } from "./cliErrors.ts";
 
 const RepoRoot = Effect.service(Path.Path).pipe(
@@ -85,6 +91,19 @@ const buildCmd = Command.make(
           shell: false,
         }),
       );
+
+      // Packages the bundle left for Node to resolve must ship with the server, or the backend dies on load.
+      const distDir = path.join(serverDir, "dist");
+      const specifiers = new Set<string>();
+      for (const chunk of yield* fs.readDirectory(distDir)) {
+        if (!chunk.endsWith(".mjs")) continue;
+        const source = yield* fs.readFileString(path.join(distDir, chunk));
+        for (const specifier of findRuntimePackageSpecifiers(source)) specifiers.add(specifier);
+      }
+      const unshipped = findUnshippedRuntimePackages(specifiers, serverPackageJson.dependencies);
+      if (unshipped.length > 0) {
+        return yield* new ServerCliUnshippedRuntimePackageError({ distDir, packages: unshipped });
+      }
 
       const webDist = path.join(repoRoot, "apps/web/dist");
       const clientTarget = path.join(serverDir, "dist/client");

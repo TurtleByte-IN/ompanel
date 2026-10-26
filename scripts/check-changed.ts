@@ -294,6 +294,7 @@ const ciOnly = Object.entries({
   rust: outputs.rust,
   "mobile native lint": outputs.mobile_native,
   "release smoke": outputs.release_smoke,
+  "server boot smoke": outputs.boot_smoke,
 }).flatMap(([job, runs]) => (runs ? [job] : []));
 if (ciOnly.length > 0) summary.push(`  CI also runs: ${ciOnly.join(", ")}`);
 if (!runPatchCheck) summary.push("  unused patch check skipped: no dependency files changed");
