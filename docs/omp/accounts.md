@@ -4,6 +4,11 @@ Settings → Providers → an OMP instance → **Accounts** lists OMP's login pr
 auth state and signs in and out of them. Everything goes through short-lived `omp --mode rpc`
 control processes (`OmpControlService`), never through a thread's session.
 
+On mobile, Settings → Provider accounts shows the same panel for each OMP instance: provider
+list, OAuth "Open sign-in page", prompt cards (masked when `secret`), masked API-key entry and
+sign-out. The phone opens OMP's own `url`, not `launchUrl`: that short link redirects through the
+server's loopback address, which only the server's machine can reach.
+
 ## What the page shows
 
 - Every provider `get_login_providers` returns: OAuth, device-code and pasted-key login flows, and

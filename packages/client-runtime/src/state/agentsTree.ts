@@ -1,5 +1,14 @@
-import type { OrchestrationV2Subagent } from "@t3tools/contracts";
+// The agents panel's view model, shared by the web and mobile clients: a thread's
+// provider-native subagents as a tree, their controls, and incremental transcript paging.
+import type {
+  OrchestrationV2Subagent,
+  OrchestrationV2SubagentTranscriptEntry,
+  OrchestrationV2SubagentTranscriptPage,
+} from "@t3tools/contracts";
+import { formatCount, formatTokens } from "@t3tools/shared/usageFormat";
 import * as DateTime from "effect/DateTime";
+
+import { formatSubagentDisplayTitle } from "./subagentDisplay.ts";
 
 type SubagentStatus = OrchestrationV2Subagent["status"];
 
@@ -62,7 +71,8 @@ function compareSubagents(left: AgentsTreeSubagent, right: AgentsTreeSubagent): 
 export function buildAgentsTree<Subagent extends AgentsTreeSubagent>(
   subagents: ReadonlyArray<Subagent>,
 ): ReadonlyArray<AgentsTreeNode<Subagent>> {
-  const sorted = subagents.toSorted(compareSubagents);
+  // Mobile (Hermes) has no Array#toSorted.
+  const sorted = [...subagents].sort(compareSubagents);
   const byId = new Map(sorted.map((subagent) => [subagent.id, subagent]));
   const childrenByParent = new Map<string, Subagent[]>();
   const roots: Subagent[] = [];
@@ -90,7 +100,7 @@ export function buildAgentsTree<Subagent extends AgentsTreeSubagent>(
   for (const subagent of sorted) {
     if (!placed.has(subagent.id)) tree.push(place(subagent, 0));
   }
-  return tree.toSorted((left, right) => compareSubagents(left.subagent, right.subagent));
+  return tree.sort((left, right) => compareSubagents(left.subagent, right.subagent));
 }
 
 /** Depth-first rows in display order, for an indented list. */
@@ -116,4 +126,51 @@ export function canKill(subagent: ControlledSubagent): boolean {
 
 export function canRevive(subagent: ControlledSubagent): boolean {
   return subagent.controls?.revive === true && REVIVABLE_STATUS[subagent.status];
+}
+
+/** The subagent's title, or the first line of its prompt. */
+export function subagentTitle(subagent: Pick<OrchestrationV2Subagent, "title" | "prompt">): string {
+  const title = subagent.title?.trim();
+  if (title) return formatSubagentDisplayTitle(title);
+  return subagent.prompt.trim().split("\n", 1)[0] || "Subagent";
+}
+
+/** Model, cost, tokens and tool calls the provider reports for the subagent, in that order. */
+export function subagentUsageLabels(
+  subagent: Pick<OrchestrationV2Subagent, "model" | "usage">,
+): ReadonlyArray<string> {
+  const usage = subagent.usage;
+  return [
+    subagent.model,
+    usage?.costUsd === undefined ? null : `$${usage.costUsd.toFixed(4)}`,
+    usage?.totalTokens === undefined ? null : `${formatTokens(usage.totalTokens)} tokens`,
+    usage?.toolCalls === undefined
+      ? null
+      : `${formatCount(usage.toolCalls)} ${usage.toolCalls === 1 ? "tool call" : "tool calls"}`,
+  ].filter((label): label is string => label !== null && label !== undefined && label.length > 0);
+}
+
+/** How often a client re-reads a running subagent's transcript. */
+export const SUBAGENT_TRANSCRIPT_POLL_MS = 1500;
+
+export interface SubagentTranscriptState {
+  readonly entries: ReadonlyArray<OrchestrationV2SubagentTranscriptEntry>;
+  /** Where the next read starts: the last applied page's `nextByte`. */
+  readonly nextByte: number;
+}
+
+export const EMPTY_SUBAGENT_TRANSCRIPT: SubagentTranscriptState = { entries: [], nextByte: 0 };
+
+/**
+ * Folds one page into the transcript. `reset` replaces everything (the provider rewrote the
+ * transcript); otherwise a page that does not start where the last one ended is stale and dropped.
+ */
+export function applyTranscriptPage(
+  state: SubagentTranscriptState,
+  page: OrchestrationV2SubagentTranscriptPage,
+): SubagentTranscriptState {
+  if (page.reset) return { entries: page.entries, nextByte: page.nextByte };
+  if (page.fromByte !== state.nextByte) return state;
+  if (page.entries.length === 0 && page.nextByte === state.nextByte) return state;
+  return { entries: [...state.entries, ...page.entries], nextByte: page.nextByte };
 }

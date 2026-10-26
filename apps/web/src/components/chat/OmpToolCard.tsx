@@ -1,7 +1,6 @@
 // Cards for OMP tool calls (packages/provider-omp/src/server/ompCards.ts). Images arrive as the
 // item's own tool-output images and audio as a local media file; nothing is fetched remotely.
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import type { OmpToolCard as OmpToolCardModel } from "@t3tools/shared/ompToolCard";
+import type { EnvironmentId, OmpToolCard as OmpToolCardModel, ThreadId } from "@t3tools/contracts";
 import type { ReactNode } from "react";
 
 import { useAssetUrlState } from "../../assets/assetUrls";

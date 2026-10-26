@@ -2,9 +2,15 @@ import type {
   EnvironmentId,
   OrchestrationV2Subagent,
   OrchestrationV2SubagentTranscriptEntry,
-  OrchestrationV2SubagentTranscriptPage,
   ThreadId,
 } from "@t3tools/contracts";
+import {
+  applyTranscriptPage,
+  EMPTY_SUBAGENT_TRANSCRIPT,
+  isSubagentActive,
+  SUBAGENT_TRANSCRIPT_POLL_MS,
+  type SubagentTranscriptState,
+} from "@t3tools/client-runtime/state/agents-tree";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import { useEffect, useRef, useState } from "react";
 
@@ -12,32 +18,6 @@ import { useStableCallback } from "~/hooks/useStableCallback";
 import { orchestrationEnvironment } from "~/state/orchestration";
 import { formatEnvironmentQueryError } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
-
-import { isSubagentActive } from "./agentsTree";
-
-const SUBAGENT_TRANSCRIPT_POLL_MS = 1500;
-
-export interface SubagentTranscriptState {
-  readonly entries: ReadonlyArray<OrchestrationV2SubagentTranscriptEntry>;
-  /** Where the next read starts: the last applied page's `nextByte`. */
-  readonly nextByte: number;
-}
-
-export const EMPTY_SUBAGENT_TRANSCRIPT: SubagentTranscriptState = { entries: [], nextByte: 0 };
-
-/**
- * Folds one page into the transcript. `reset` replaces everything (the provider rewrote the
- * transcript); otherwise a page that does not start where the last one ended is stale and dropped.
- */
-export function applyTranscriptPage(
-  state: SubagentTranscriptState,
-  page: OrchestrationV2SubagentTranscriptPage,
-): SubagentTranscriptState {
-  if (page.reset) return { entries: page.entries, nextByte: page.nextByte };
-  if (page.fromByte !== state.nextByte) return state;
-  if (page.entries.length === 0 && page.nextByte === state.nextByte) return state;
-  return { entries: [...state.entries, ...page.entries], nextByte: page.nextByte };
-}
 
 export interface SubagentTranscriptView {
   readonly entries: ReadonlyArray<OrchestrationV2SubagentTranscriptEntry>;

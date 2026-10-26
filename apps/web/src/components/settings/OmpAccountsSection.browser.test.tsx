@@ -4,6 +4,11 @@ import { userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 
+import {
+  elementsPastViewport,
+  settingsContentColumn,
+  usePhoneViewport,
+} from "../../../test/phoneViewport";
 import { render } from "../../../test/render";
 import { OmpAccountsPanel, type OmpAccountsPanelProps } from "./OmpAccountsSection";
 
@@ -141,5 +146,52 @@ describe("OmpAccountsPanel", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Remove" }));
     expect(onSignOut).toHaveBeenCalledWith("anthropic", 4);
+  });
+});
+
+describe("OmpAccountsPanel at phone width", () => {
+  it("fits an API key field, stored accounts and a running sign-in in a 390px viewport", async () => {
+    const signOut: OmpAccountsPanelProps["signOut"] = {
+      providerId: "anthropic",
+      accounts: [
+        {
+          credentialId: 4,
+          provider: "anthropic",
+          label: "someone.with.a.long.address@example-company.com",
+          detail: "OAuth · expires in 30 days",
+          type: "oauth",
+          active: true,
+        },
+      ],
+    };
+    await using _viewport = await usePhoneViewport();
+    await using screen = await render(<OmpAccountsPanel {...props({ signOut })} />, {
+      container: settingsContentColumn(),
+    });
+    await userEvent.click(screen.getByRole("button", { name: "Add API key" }));
+    await expect.element(screen.getByLabelText("Groq API key")).toBeVisible();
+    expect(elementsPastViewport(screen.container)).toEqual([]);
+
+    await screen.rerender(
+      <OmpAccountsPanel
+        {...props({
+          signOut,
+          signIn: {
+            phase: "running",
+            flowId: "omp-sign-in-1",
+            providerId: "anthropic",
+            openUrl: {
+              url: `https://auth.example/authorize?${"scope=a-long-oauth-scope&".repeat(12)}`,
+              instructions: "Approve access in the browser, then paste the code shown there.",
+            },
+            prompt: { id: "omp-sign-in-1:ui-1", title: "Paste the code", secret: true },
+            message: "Waiting for the code.",
+          },
+        })}
+      />,
+    );
+    await expect.element(screen.getByLabelText("Paste the code")).toBeVisible();
+    expect(elementsPastViewport(screen.container)).toEqual([]);
+    expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(390);
   });
 });

@@ -68,7 +68,8 @@ frames of one `omp --mode rpc-ui` process into V2 thread events. The adapter
 | anything else                                | Plain tool card with the arguments and result text.                                                                                                                                                                                                                    |
 
 Carded tools keep OMP's content blocks in the item output and add the card under `ompCard`
-(`@t3tools/shared/ompToolCard`); the web item inspector renders it in place of the raw output.
+(`OmpToolCard` in `@t3tools/contracts`); the web item inspector and the mobile work log render it
+in place of the raw output.
 
 ## Todos
 

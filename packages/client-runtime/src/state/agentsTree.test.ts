@@ -11,7 +11,7 @@ import {
   canSteer,
   flattenAgentsTree,
   isSubagentActive,
-} from "./agentsTree";
+} from "./agentsTree.ts";
 
 const agent = (
   id: string,

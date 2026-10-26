@@ -7,13 +7,14 @@ import {
   ProviderSessionId,
   RunAttemptId,
   RunId,
+  readOmpToolCard,
   ThreadId,
+  type OmpToolCard,
   type OrchestrationV2AppThread,
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
-import { readOmpToolCard, type OmpToolCard } from "@t3tools/shared/ompToolCard";
 import { toolOutputImages } from "@t3tools/shared/toolOutput";
 import * as DateTime from "effect/DateTime";
 

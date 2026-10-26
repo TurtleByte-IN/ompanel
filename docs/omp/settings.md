@@ -117,6 +117,12 @@ lists live in `OMP_SETTINGS_PAGES` (`packages/provider-omp/src/settingsPages.ts`
 a key ending in `.` takes the whole group. A test checks every listed key
 against the pinned registry.
 
+The pages fit a 390px phone viewport (browser tests render each page in the settings column
+beside the collapsed nav rail). Mobile has Settings → OMP: every page's fields as read-only
+summaries (value, source layer, restart note; credentials show only whether one is stored).
+Editing stays on web and desktop; OMP sign-in on mobile lives under Provider accounts
+([accounts.md](accounts.md)).
+
 | Page              | Keys                                                                                                                                                                                                         |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Models & Roles    | `modelRoles` (one field per role), `modelRoleStorage`, `modelTags`, `modelProviderOrder`, `cycleOrder`, `enabledModels`, `disabledProviders`, `includeModelInPrompt`                                         |

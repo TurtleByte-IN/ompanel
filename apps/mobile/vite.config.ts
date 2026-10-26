@@ -15,6 +15,11 @@ const reactTests = [
   "src/native/useRetryingImageSource.test.tsx",
   "src/state/queries.debounce.test.tsx",
   "src/state/use-selected-thread-git-actions.test.tsx",
+  "src/features/threads/OmpToolCard.test.tsx",
+  "src/features/threads/OmpRuntimeRequestCards.test.tsx",
+  "src/features/threads/ThreadAgentsTree.test.tsx",
+  "src/features/settings/OmpAccountsSection.test.tsx",
+  "src/features/settings/SettingsOmpRouteScreen.test.tsx",
 ];
 
 export default defineConfig({

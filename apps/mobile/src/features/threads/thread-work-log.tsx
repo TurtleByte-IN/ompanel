@@ -11,6 +11,7 @@ import {
 } from "./work-log-layout";
 import { QuestionAnswerHistory } from "./QuestionAnswerHistory";
 import { ThreadCommandOutput, useCommandOutputStreaming } from "./thread-command-output";
+import { OmpToolCard } from "./OmpToolCard";
 import {
   getQuestionAnswerPreview,
   hasQuestionAnswer,
@@ -47,6 +48,7 @@ import {
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import {
   ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE,
+  readOmpToolCard,
   type EnvironmentId,
   type RunId,
   type ThreadId,
@@ -975,10 +977,13 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
   const fetchedItem = fetchedDetail.data?.item ?? null;
   const isRead = toolGroupAction(row.workEntry) === "read";
   const shownItem = fetchedItem ?? row.projectedItem.item;
+  // OMP's structured card replaces the raw arguments and output, as on web.
+  const ompCard =
+    expanded && shownItem.type === "dynamic_tool" ? readOmpToolCard(shownItem.output) : null;
   const call =
     expanded && !isRead && shownItem.type === "command_execution"
       ? toolCallLines({ command: shownItem.input })
-      : expanded && !isRead && shownItem.type === "dynamic_tool"
+      : expanded && !isRead && shownItem.type === "dynamic_tool" && ompCard === null
         ? toolCallLines({ args: shownItem.input })
         : expanded && shownItem.type === "file_search"
           ? toolCallLines({ args: { pattern: shownItem.pattern } })
@@ -990,7 +995,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
       ? shownItem.exitCode
       : null;
   const fullDetail =
-    expanded && !reasoning && !call
+    expanded && !reasoning && !call && ompCard === null
       ? fetchedItem && !isRead
         ? formatItemFullDetail(row.projectedItem, fetchedItem)
         : row.getFullDetail()
@@ -998,7 +1003,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
   const outputImages = expanded && fetchedItem ? turnItemOutputImages(fetchedItem) : [];
   const viewedImagePath = workEntryViewedImagePath(row.workEntry);
   const fetchedOutput =
-    !expanded || streamsOutput
+    !expanded || streamsOutput || ompCard !== null
       ? null
       : shownItem.type === "file_search" || shownItem.type === "web_search"
         ? turnItemOutputText(shownItem)
@@ -1161,6 +1166,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
 
       {expanded &&
       (reasoning ||
+        ompCard ||
         fullDetail ||
         call ||
         fetchedOutput ||
@@ -1244,6 +1250,11 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
                     line
                   ),
                 )
+            ) : ompCard ? (
+              <OmpToolCard
+                card={ompCard}
+                renderAudio={(path) => props.renderImage({ href: path, alt: null, title: null })}
+              />
             ) : fullDetail ? (
               <Text selectable className="font-mono text-2xs leading-normal text-foreground-muted">
                 {fullDetail}

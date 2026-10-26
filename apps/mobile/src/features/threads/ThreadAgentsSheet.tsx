@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { ThreadTurnSubagents } from "@t3tools/client-runtime/state/thread-subagents";
 import {
   isOrchestrationV2WorkActive,
@@ -22,6 +23,7 @@ import { environmentThreadDetails } from "../../state/threads";
 import { NativeStackScreenOptions, nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
 import { NativeHeader, NativeScreen } from "../../native/ThemedScreenStack";
 import { SubagentRow } from "./SubagentRow";
+import { ThreadAgentsTree } from "./ThreadAgentsTree";
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 
@@ -31,9 +33,13 @@ const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Pl
 
 type AgentsTarget = { readonly environmentId: EnvironmentId; readonly threadId: ThreadId };
 
+/** `subagentId` opens the agents tree with that provider-native subagent's transcript shown. */
+type AgentsSheetParams = AgentsTarget & { readonly subagentId?: string };
+
 const EMPTY_TURN_SUBAGENTS_ATOM = Atom.make<ThreadTurnSubagents | null>(null).pipe(
   Atom.withLabel("mobile-thread-turn-subagents:empty"),
 );
+const EMPTY_SUBAGENTS: ReadonlyArray<OrchestrationV2Subagent> = [];
 
 export function useThreadTurnSubagents(target: AgentsTarget | null): ThreadTurnSubagents | null {
   return useAtomValue(
@@ -43,7 +49,7 @@ export function useThreadTurnSubagents(target: AgentsTarget | null): ThreadTurnS
   );
 }
 
-export function ThreadAgentsSheet({ route }: StaticScreenProps<AgentsTarget>) {
+export function ThreadAgentsSheet({ route }: StaticScreenProps<AgentsSheetParams>) {
   const { layout } = useAdaptiveWorkspaceLayout();
   const target = route.params;
   const navigation = useNavigation();
@@ -52,6 +58,13 @@ export function ThreadAgentsSheet({ route }: StaticScreenProps<AgentsTarget>) {
   const turn = useThreadTurnSubagents(target);
   const subagents = turn?.subagents ?? [];
   const hasLiveAgent = (turn?.liveCount ?? 0) > 0;
+  // Provider-native subagents (OMP) carry controls: show the whole thread's tree with transcripts.
+  const threadSubagents =
+    useAtomValue(
+      environmentThreadDetails.threadAtom(scopeThreadRef(target.environmentId, target.threadId)),
+      (thread) => thread?.projection.subagents,
+    ) ?? EMPTY_SUBAGENTS;
+  const showsTree = threadSubagents.some((subagent) => subagent.controls !== undefined);
 
   const openChildThread = (childThreadId: ThreadId) => {
     void Haptics.selectionAsync();
@@ -81,7 +94,15 @@ export function ThreadAgentsSheet({ route }: StaticScreenProps<AgentsTarget>) {
       contentContainerClassName="px-5 pb-6"
       contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 16) + 8 }}
     >
-      {subagents.length === 0 ? (
+      {showsTree ? (
+        <ThreadAgentsTree
+          environmentId={target.environmentId}
+          threadId={target.threadId}
+          subagents={threadSubagents}
+          initialSelectedId={target.subagentId}
+          onOpenThread={openChildThread}
+        />
+      ) : subagents.length === 0 ? (
         <Text className="pt-6 text-center text-sm text-foreground-muted">
           No agents in this turn.
         </Text>

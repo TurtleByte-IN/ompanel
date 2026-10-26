@@ -2,13 +2,14 @@
 // rendered through the item inspector that expands a tool row.
 import {
   EnvironmentId,
+  OMP_CARD_OUTPUT_KEY,
   ProviderDriverKind,
   ThreadId,
   TurnItemId,
   type AssetResource,
+  type OmpToolCard,
   type OrchestrationV2ProjectedTurnItem,
 } from "@t3tools/contracts";
-import { OMP_CARD_OUTPUT_KEY, type OmpToolCard } from "@t3tools/shared/ompToolCard";
 import * as DateTime from "effect/DateTime";
 import { expect, it, vi } from "vite-plus/test";
 

@@ -12,7 +12,7 @@ import {
   type OmpMemoryOp,
   type OmpProposalState,
   type OmpToolCard,
-} from "@t3tools/shared/ompToolCard";
+} from "@t3tools/contracts";
 
 const record = (value: unknown): Record<string, unknown> | undefined =>
   typeof value === "object" && value !== null && !Array.isArray(value)

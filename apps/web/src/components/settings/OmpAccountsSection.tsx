@@ -132,7 +132,7 @@ export function OmpAccountsPanel(props: OmpAccountsPanelProps) {
                 onChange={(event) =>
                   setAnswerDraft({ promptId: prompt.id, value: event.target.value })
                 }
-                className="w-72"
+                className="w-full max-w-72"
               />
               <Button size="xs" type="submit" disabled={props.disabled}>
                 Submit
@@ -235,7 +235,7 @@ export function OmpAccountsPanel(props: OmpAccountsPanelProps) {
                       spellCheck={false}
                       value={keyDraft}
                       onChange={(event) => setKeyDraft(event.target.value)}
-                      className="w-72"
+                      className="w-full max-w-72"
                     />
                     <Button size="xs" type="submit" disabled={props.disabled}>
                       Save key
@@ -250,8 +250,11 @@ export function OmpAccountsPanel(props: OmpAccountsPanelProps) {
                   ) : (
                     <ul className="flex flex-col gap-1" aria-label={`${provider.name} accounts`}>
                       {accounts.map((account) => (
-                        <li key={account.credentialId} className="flex items-center gap-2 text-xs">
-                          <span>{account.label}</span>
+                        <li
+                          key={account.credentialId}
+                          className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs"
+                        >
+                          <span className="min-w-0 break-all">{account.label}</span>
                           <span className="text-muted-foreground">{account.detail}</span>
                           <Button
                             size="xs"

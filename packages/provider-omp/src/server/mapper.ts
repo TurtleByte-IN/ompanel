@@ -4,8 +4,10 @@
  * timers and tests drive it with frame literals.
  */
 import {
+  OMP_CARD_OUTPUT_KEY,
   PlanId,
   ProviderDriverKind,
+  readOmpToolCard,
   type OrchestrationV2AppThread,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2PlanStep,
@@ -27,7 +29,6 @@ import {
   makeProviderFailure,
   makeProviderFailureTurnItem,
 } from "@t3tools/provider-core/server/failure";
-import { OMP_CARD_OUTPUT_KEY, readOmpToolCard } from "@t3tools/shared/ompToolCard";
 import * as DateTime from "effect/DateTime";
 
 import type {
