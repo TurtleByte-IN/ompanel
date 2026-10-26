@@ -26,6 +26,7 @@ import type {
   OmpAgentFileRef,
   OmpAgentFilesList,
   OmpAgentFilesOperationError,
+  OmpAgentsUnpackResult,
   OmpAccountUsage,
   OmpSessionUsageList,
   OmpStatsSummary,
@@ -104,7 +105,10 @@ export interface ProviderInstance {
   readonly ompAccounts?: ProviderOmpAccountsController;
   /** OMP's on-disk sessions (`<agent dir>/sessions`), listed for import as threads. */
   readonly ompSessions?: ProviderOmpSessionsController;
-  /** Files in OMP's agent directory: the `WATCHDOG.yml` advisor roster and `agents/*.md`. */
+  /**
+   * Files in OMP's agent directory: the `WATCHDOG.yml` advisor roster, `agents/*.md`, custom
+   * providers (`models.yml`), MCP servers, skills, rules, prompt templates, hooks and custom tools.
+   */
   readonly ompAgentFiles?: ProviderOmpAgentFilesController;
   /** The Usage page's OMP tab: account quotas, `omp stats` totals, running threads' stats. */
   readonly ompUsage?: ProviderOmpUsageController;
@@ -129,7 +133,11 @@ export interface ProviderOmpAgentFilesController {
   readonly read: (
     file: OmpAgentFileRef,
   ) => Effect.Effect<OmpAgentFile, OmpAgentFilesOperationError>;
-  /** Fails `conflict` unless the file is still at `baseVersion` (absent: does not exist). */
+  /**
+   * Fails `conflict` unless the file is still at `baseVersion` (absent: does not exist). A
+   * `models.yml` write fails `invalid`, leaving the file as it was, unless OMP loads the new text
+   * in a scratch agent directory first.
+   */
   readonly write: (input: {
     readonly file: OmpAgentFileRef;
     readonly content: string;
@@ -139,6 +147,8 @@ export interface ProviderOmpAgentFilesController {
     readonly file: OmpAgentFileRef;
     readonly baseVersion: string;
   }) => Effect.Effect<OmpAgentFilesList, OmpAgentFilesOperationError>;
+  /** `omp agents unpack --user`: OMP's bundled agents into `agents/`, keeping existing files. */
+  readonly unpackAgents: Effect.Effect<OmpAgentsUnpackResult, OmpAgentFilesOperationError>;
 }
 
 /**

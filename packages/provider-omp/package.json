@@ -23,6 +23,10 @@
       "types": "./src/settingsPages.ts",
       "import": "./src/settingsPages.ts"
     },
+    "./modelsConfig": {
+      "types": "./src/modelsConfig.ts",
+      "import": "./src/modelsConfig.ts"
+    },
     "./server": {
       "types": "./src/server.ts",
       "import": "./src/server.ts"
@@ -46,7 +50,8 @@
     "@t3tools/contracts": "workspace:*",
     "@t3tools/provider-core": "workspace:*",
     "@t3tools/shared": "workspace:*",
-    "effect": "catalog:"
+    "effect": "catalog:",
+    "yaml": "catalog:"
   },
   "devDependencies": {
     "@effect/platform-node": "catalog:",

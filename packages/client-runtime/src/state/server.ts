@@ -1563,6 +1563,10 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:omp-agent-files:delete",
       tag: WS_METHODS.serverDeleteOmpAgentFile,
     }),
+    unpackOmpAgents: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:omp-agent-files:unpack-agents",
+      tag: WS_METHODS.serverUnpackOmpAgents,
+    }),
     getOmpAccountUsage: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:omp-usage:account",
       tag: WS_METHODS.serverGetOmpAccountUsage,

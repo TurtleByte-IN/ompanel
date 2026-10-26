@@ -233,7 +233,49 @@ The server reaches nothing outside that directory
 | `server.readOmpAgentFile`   | `providers:manage` |
 | `server.writeOmpAgentFile`  | `providers:manage` |
 | `server.deleteOmpAgentFile` | `providers:manage` |
+| `server.unpackOmpAgents`    | `providers:manage` |
 
 Errors are `OmpAgentFilesOperationError`. OMP reads the advisor roster when a
 thread starts, so open threads may keep the roster they loaded until they
 restart.
+
+### Custom providers (`models.yml`)
+
+Settings → OMP → Custom providers edits `models.yml` (or `models.yaml` when
+only that exists) as a form and as YAML; both change the same unsaved text,
+and the form changes only the keys it shows (comments and other keys are
+kept). A new file is created owner-only (`0600`): it can hold literal keys.
+When only a legacy `models.json` exists, nothing is created until OMP has
+migrated it.
+
+A save is checked by OMP before the file is replaced
+(`packages/provider-omp/src/server/modelsCheck.ts`): the text, plus one marker
+provider with a static model, goes into an owner-only scratch agent directory,
+and `omp --mode rpc --no-session --no-tools … --approval-mode always-ask` runs
+there (`PI_CODING_AGENT_DIR`, profile variables dropped) and answers
+`get_available_models` (15 s deadline). OMP validates `models.yml` on load and
+drops every custom provider when it rejects it, so the marker's model is
+listed exactly when OMP accepted the file. If it is missing, or OMP quits
+before `ready`, the write fails `invalid` and the real file is untouched. The
+scratch directory is removed afterwards. `apiKey: "!command"` values run as
+they would in any OMP session. `T3_TEST_OMP_BINARY=<omp> vp test` runs the
+check against a real omp under a throwaway HOME.
+
+### MCP and Customization
+
+Settings → OMP → MCP lists the servers in `mcp.json` and `.mcp.json` of the
+agent directory (name, transport, command or URL without query or
+credentials; never arguments, headers or environment) and opens either file;
+new ones are created owner-only. A repository's `.omp/mcp.json` is not shown.
+Ompanel's own MCP server is separate; its URL is under Settings → Connections.
+
+Settings → OMP → Customization lists and opens, at the paths OMP discovers
+them: `skills/<name>/SKILL.md` and `managed-skills/<name>/SKILL.md`,
+`rules/*.{md,mdc}` and `RULES.md`, `prompts/*.md`, `hooks/{pre,post}/*`,
+`tools/*.{json,md,ts,js,sh,bash,py}` and `tools/<name>/index.ts`, plus
+`agents/*.md`. Paths are checked against
+`ompCustomizationPathAllowed`; every folder on the way and the file
+itself must resolve inside the agent directory (a folder linking out is not
+listed). New skills, rules and prompts can be created there; hooks and tools
+are code and are only opened. "Unpack bundled agents" runs
+`omp [--profile p] agents unpack --user --json`, which never overwrites a file.

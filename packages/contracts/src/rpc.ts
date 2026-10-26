@@ -106,6 +106,8 @@ import {
   OmpAgentFilesListInput,
   OmpAgentFilesOperationError,
   OmpAgentFileWriteInput,
+  OmpAgentsUnpackInput,
+  OmpAgentsUnpackResult,
 } from "./ompAgentFiles.ts";
 import {
   OmpAccountUsage,
@@ -567,6 +569,7 @@ export const WS_METHODS = {
   serverReadOmpAgentFile: "server.readOmpAgentFile",
   serverWriteOmpAgentFile: "server.writeOmpAgentFile",
   serverDeleteOmpAgentFile: "server.deleteOmpAgentFile",
+  serverUnpackOmpAgents: "server.unpackOmpAgents",
   serverGetOmpAccountUsage: "server.getOmpAccountUsage",
   serverGetOmpStats: "server.getOmpStats",
   serverGetOmpSessionStats: "server.getOmpSessionStats",
@@ -1057,6 +1060,12 @@ const WsServerWriteOmpAgentFileRpc = Rpc.make(WS_METHODS.serverWriteOmpAgentFile
 const WsServerDeleteOmpAgentFileRpc = Rpc.make(WS_METHODS.serverDeleteOmpAgentFile, {
   payload: OmpAgentFileDeleteInput,
   success: OmpAgentFilesList,
+  error: OmpAgentFilesRpcError,
+});
+
+const WsServerUnpackOmpAgentsRpc = Rpc.make(WS_METHODS.serverUnpackOmpAgents, {
+  payload: OmpAgentsUnpackInput,
+  success: OmpAgentsUnpackResult,
   error: OmpAgentFilesRpcError,
 });
 
@@ -2209,6 +2218,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerReadOmpAgentFileRpc,
   WsServerWriteOmpAgentFileRpc,
   WsServerDeleteOmpAgentFileRpc,
+  WsServerUnpackOmpAgentsRpc,
   WsServerGetOmpAccountUsageRpc,
   WsServerGetOmpStatsRpc,
   WsServerGetOmpSessionStatsRpc,

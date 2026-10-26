@@ -34,10 +34,13 @@ import { Route as ChatSettingsOmpSearchRouteImport } from './routes/_chat.settin
 import { Route as ChatSettingsOmpSamplingRouteImport } from './routes/_chat.settings.omp-sampling'
 import { Route as ChatSettingsOmpRuntimeRouteImport } from './routes/_chat.settings.omp-runtime'
 import { Route as ChatSettingsOmpRoutingRouteImport } from './routes/_chat.settings.omp-routing'
+import { Route as ChatSettingsOmpProvidersRouteImport } from './routes/_chat.settings.omp-providers'
 import { Route as ChatSettingsOmpModesRouteImport } from './routes/_chat.settings.omp-modes'
 import { Route as ChatSettingsOmpModelsRouteImport } from './routes/_chat.settings.omp-models'
 import { Route as ChatSettingsOmpMemoryRouteImport } from './routes/_chat.settings.omp-memory'
+import { Route as ChatSettingsOmpMcpRouteImport } from './routes/_chat.settings.omp-mcp'
 import { Route as ChatSettingsOmpDiscoveryRouteImport } from './routes/_chat.settings.omp-discovery'
+import { Route as ChatSettingsOmpCustomizationRouteImport } from './routes/_chat.settings.omp-customization'
 import { Route as ChatSettingsOmpContextRouteImport } from './routes/_chat.settings.omp-context'
 import { Route as ChatSettingsOmpApprovalsRouteImport } from './routes/_chat.settings.omp-approvals'
 import { Route as ChatSettingsOmpAdvisorRouteImport } from './routes/_chat.settings.omp-advisor'
@@ -179,6 +182,12 @@ const ChatSettingsOmpRoutingRoute = ChatSettingsOmpRoutingRouteImport.update({
   path: '/omp-routing',
   getParentRoute: () => ChatSettingsRoute,
 } as any)
+const ChatSettingsOmpProvidersRoute =
+  ChatSettingsOmpProvidersRouteImport.update({
+    id: '/omp-providers',
+    path: '/omp-providers',
+    getParentRoute: () => ChatSettingsRoute,
+  } as any)
 const ChatSettingsOmpModesRoute = ChatSettingsOmpModesRouteImport.update({
   id: '/omp-modes',
   path: '/omp-modes',
@@ -194,10 +203,21 @@ const ChatSettingsOmpMemoryRoute = ChatSettingsOmpMemoryRouteImport.update({
   path: '/omp-memory',
   getParentRoute: () => ChatSettingsRoute,
 } as any)
+const ChatSettingsOmpMcpRoute = ChatSettingsOmpMcpRouteImport.update({
+  id: '/omp-mcp',
+  path: '/omp-mcp',
+  getParentRoute: () => ChatSettingsRoute,
+} as any)
 const ChatSettingsOmpDiscoveryRoute =
   ChatSettingsOmpDiscoveryRouteImport.update({
     id: '/omp-discovery',
     path: '/omp-discovery',
+    getParentRoute: () => ChatSettingsRoute,
+  } as any)
+const ChatSettingsOmpCustomizationRoute =
+  ChatSettingsOmpCustomizationRouteImport.update({
+    id: '/omp-customization',
+    path: '/omp-customization',
     getParentRoute: () => ChatSettingsRoute,
   } as any)
 const ChatSettingsOmpContextRoute = ChatSettingsOmpContextRouteImport.update({
@@ -294,10 +314,13 @@ export interface FileRoutesByFullPath {
   '/settings/omp-advisor': typeof ChatSettingsOmpAdvisorRoute
   '/settings/omp-approvals': typeof ChatSettingsOmpApprovalsRoute
   '/settings/omp-context': typeof ChatSettingsOmpContextRoute
+  '/settings/omp-customization': typeof ChatSettingsOmpCustomizationRoute
   '/settings/omp-discovery': typeof ChatSettingsOmpDiscoveryRoute
+  '/settings/omp-mcp': typeof ChatSettingsOmpMcpRoute
   '/settings/omp-memory': typeof ChatSettingsOmpMemoryRoute
   '/settings/omp-models': typeof ChatSettingsOmpModelsRoute
   '/settings/omp-modes': typeof ChatSettingsOmpModesRoute
+  '/settings/omp-providers': typeof ChatSettingsOmpProvidersRoute
   '/settings/omp-routing': typeof ChatSettingsOmpRoutingRoute
   '/settings/omp-runtime': typeof ChatSettingsOmpRuntimeRoute
   '/settings/omp-sampling': typeof ChatSettingsOmpSamplingRoute
@@ -337,10 +360,13 @@ export interface FileRoutesByTo {
   '/settings/omp-advisor': typeof ChatSettingsOmpAdvisorRoute
   '/settings/omp-approvals': typeof ChatSettingsOmpApprovalsRoute
   '/settings/omp-context': typeof ChatSettingsOmpContextRoute
+  '/settings/omp-customization': typeof ChatSettingsOmpCustomizationRoute
   '/settings/omp-discovery': typeof ChatSettingsOmpDiscoveryRoute
+  '/settings/omp-mcp': typeof ChatSettingsOmpMcpRoute
   '/settings/omp-memory': typeof ChatSettingsOmpMemoryRoute
   '/settings/omp-models': typeof ChatSettingsOmpModelsRoute
   '/settings/omp-modes': typeof ChatSettingsOmpModesRoute
+  '/settings/omp-providers': typeof ChatSettingsOmpProvidersRoute
   '/settings/omp-routing': typeof ChatSettingsOmpRoutingRoute
   '/settings/omp-runtime': typeof ChatSettingsOmpRuntimeRoute
   '/settings/omp-sampling': typeof ChatSettingsOmpSamplingRoute
@@ -382,10 +408,13 @@ export interface FileRoutesById {
   '/_chat/settings/omp-advisor': typeof ChatSettingsOmpAdvisorRoute
   '/_chat/settings/omp-approvals': typeof ChatSettingsOmpApprovalsRoute
   '/_chat/settings/omp-context': typeof ChatSettingsOmpContextRoute
+  '/_chat/settings/omp-customization': typeof ChatSettingsOmpCustomizationRoute
   '/_chat/settings/omp-discovery': typeof ChatSettingsOmpDiscoveryRoute
+  '/_chat/settings/omp-mcp': typeof ChatSettingsOmpMcpRoute
   '/_chat/settings/omp-memory': typeof ChatSettingsOmpMemoryRoute
   '/_chat/settings/omp-models': typeof ChatSettingsOmpModelsRoute
   '/_chat/settings/omp-modes': typeof ChatSettingsOmpModesRoute
+  '/_chat/settings/omp-providers': typeof ChatSettingsOmpProvidersRoute
   '/_chat/settings/omp-routing': typeof ChatSettingsOmpRoutingRoute
   '/_chat/settings/omp-runtime': typeof ChatSettingsOmpRuntimeRoute
   '/_chat/settings/omp-sampling': typeof ChatSettingsOmpSamplingRoute
@@ -427,10 +456,13 @@ export interface FileRouteTypes {
     | '/settings/omp-advisor'
     | '/settings/omp-approvals'
     | '/settings/omp-context'
+    | '/settings/omp-customization'
     | '/settings/omp-discovery'
+    | '/settings/omp-mcp'
     | '/settings/omp-memory'
     | '/settings/omp-models'
     | '/settings/omp-modes'
+    | '/settings/omp-providers'
     | '/settings/omp-routing'
     | '/settings/omp-runtime'
     | '/settings/omp-sampling'
@@ -470,10 +502,13 @@ export interface FileRouteTypes {
     | '/settings/omp-advisor'
     | '/settings/omp-approvals'
     | '/settings/omp-context'
+    | '/settings/omp-customization'
     | '/settings/omp-discovery'
+    | '/settings/omp-mcp'
     | '/settings/omp-memory'
     | '/settings/omp-models'
     | '/settings/omp-modes'
+    | '/settings/omp-providers'
     | '/settings/omp-routing'
     | '/settings/omp-runtime'
     | '/settings/omp-sampling'
@@ -514,10 +549,13 @@ export interface FileRouteTypes {
     | '/_chat/settings/omp-advisor'
     | '/_chat/settings/omp-approvals'
     | '/_chat/settings/omp-context'
+    | '/_chat/settings/omp-customization'
     | '/_chat/settings/omp-discovery'
+    | '/_chat/settings/omp-mcp'
     | '/_chat/settings/omp-memory'
     | '/_chat/settings/omp-models'
     | '/_chat/settings/omp-modes'
+    | '/_chat/settings/omp-providers'
     | '/_chat/settings/omp-routing'
     | '/_chat/settings/omp-runtime'
     | '/_chat/settings/omp-sampling'
@@ -720,6 +758,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatSettingsOmpRoutingRouteImport
       parentRoute: typeof ChatSettingsRoute
     }
+    '/_chat/settings/omp-providers': {
+      id: '/_chat/settings/omp-providers'
+      path: '/omp-providers'
+      fullPath: '/settings/omp-providers'
+      preLoaderRoute: typeof ChatSettingsOmpProvidersRouteImport
+      parentRoute: typeof ChatSettingsRoute
+    }
     '/_chat/settings/omp-modes': {
       id: '/_chat/settings/omp-modes'
       path: '/omp-modes'
@@ -741,11 +786,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatSettingsOmpMemoryRouteImport
       parentRoute: typeof ChatSettingsRoute
     }
+    '/_chat/settings/omp-mcp': {
+      id: '/_chat/settings/omp-mcp'
+      path: '/omp-mcp'
+      fullPath: '/settings/omp-mcp'
+      preLoaderRoute: typeof ChatSettingsOmpMcpRouteImport
+      parentRoute: typeof ChatSettingsRoute
+    }
     '/_chat/settings/omp-discovery': {
       id: '/_chat/settings/omp-discovery'
       path: '/omp-discovery'
       fullPath: '/settings/omp-discovery'
       preLoaderRoute: typeof ChatSettingsOmpDiscoveryRouteImport
+      parentRoute: typeof ChatSettingsRoute
+    }
+    '/_chat/settings/omp-customization': {
+      id: '/_chat/settings/omp-customization'
+      path: '/omp-customization'
+      fullPath: '/settings/omp-customization'
+      preLoaderRoute: typeof ChatSettingsOmpCustomizationRouteImport
       parentRoute: typeof ChatSettingsRoute
     }
     '/_chat/settings/omp-context': {
@@ -854,10 +913,13 @@ interface ChatSettingsRouteChildren {
   ChatSettingsOmpAdvisorRoute: typeof ChatSettingsOmpAdvisorRoute
   ChatSettingsOmpApprovalsRoute: typeof ChatSettingsOmpApprovalsRoute
   ChatSettingsOmpContextRoute: typeof ChatSettingsOmpContextRoute
+  ChatSettingsOmpCustomizationRoute: typeof ChatSettingsOmpCustomizationRoute
   ChatSettingsOmpDiscoveryRoute: typeof ChatSettingsOmpDiscoveryRoute
+  ChatSettingsOmpMcpRoute: typeof ChatSettingsOmpMcpRoute
   ChatSettingsOmpMemoryRoute: typeof ChatSettingsOmpMemoryRoute
   ChatSettingsOmpModelsRoute: typeof ChatSettingsOmpModelsRoute
   ChatSettingsOmpModesRoute: typeof ChatSettingsOmpModesRoute
+  ChatSettingsOmpProvidersRoute: typeof ChatSettingsOmpProvidersRoute
   ChatSettingsOmpRoutingRoute: typeof ChatSettingsOmpRoutingRoute
   ChatSettingsOmpRuntimeRoute: typeof ChatSettingsOmpRuntimeRoute
   ChatSettingsOmpSamplingRoute: typeof ChatSettingsOmpSamplingRoute
@@ -885,10 +947,13 @@ const ChatSettingsRouteChildren: ChatSettingsRouteChildren = {
   ChatSettingsOmpAdvisorRoute: ChatSettingsOmpAdvisorRoute,
   ChatSettingsOmpApprovalsRoute: ChatSettingsOmpApprovalsRoute,
   ChatSettingsOmpContextRoute: ChatSettingsOmpContextRoute,
+  ChatSettingsOmpCustomizationRoute: ChatSettingsOmpCustomizationRoute,
   ChatSettingsOmpDiscoveryRoute: ChatSettingsOmpDiscoveryRoute,
+  ChatSettingsOmpMcpRoute: ChatSettingsOmpMcpRoute,
   ChatSettingsOmpMemoryRoute: ChatSettingsOmpMemoryRoute,
   ChatSettingsOmpModelsRoute: ChatSettingsOmpModelsRoute,
   ChatSettingsOmpModesRoute: ChatSettingsOmpModesRoute,
+  ChatSettingsOmpProvidersRoute: ChatSettingsOmpProvidersRoute,
   ChatSettingsOmpRoutingRoute: ChatSettingsOmpRoutingRoute,
   ChatSettingsOmpRuntimeRoute: ChatSettingsOmpRuntimeRoute,
   ChatSettingsOmpSamplingRoute: ChatSettingsOmpSamplingRoute,

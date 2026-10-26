@@ -26,6 +26,9 @@ import { DraftInput } from "../ui/draft-input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { toastManager } from "../ui/toast";
 import { OmpAgentFilesSection } from "./OmpAgentFilesSection";
+import { OmpCustomizationSection } from "./OmpCustomizationSection";
+import { OmpMcpSection } from "./OmpMcpSection";
+import { OmpModelsConfigSection } from "./OmpModelsConfigSection";
 import { OmpSettingsForm, type OmpSettingsFormProps } from "./OmpSettingsForm";
 import {
   AgentAdvisorRulesEditor,
@@ -221,6 +224,8 @@ export function OmpSettingsPageBody({
   readonly pageId: OmpSettingsPageId;
 }) {
   const page = OMP_SETTINGS_PAGES[pageId];
+  // Custom providers live in models.yml only; that page has no settings to read.
+  const hasSettings = page.keys.length > 0;
   const readSettings = useAtomCommand(serverEnvironment.readOmpSettings, { reportFailure: false });
   const writeSetting = useAtomCommand(serverEnvironment.writeOmpSetting, { reportFailure: false });
   const resetSetting = useAtomCommand(serverEnvironment.resetOmpSetting, { reportFailure: false });
@@ -229,6 +234,7 @@ export function OmpSettingsPageBody({
 
   // The parent keys this body by environment and instance, so state starts fresh for each.
   useEffect(() => {
+    if (!hasSettings) return;
     let cancelled = false;
     void readSettings({ environmentId, input: { instanceId } }).then((result) => {
       if (cancelled) return;
@@ -241,7 +247,7 @@ export function OmpSettingsPageBody({
     return () => {
       cancelled = true;
     };
-  }, [environmentId, instanceId, readSettings]);
+  }, [environmentId, instanceId, readSettings, hasSettings]);
 
   const applied = (
     key: string,
@@ -271,7 +277,16 @@ export function OmpSettingsPageBody({
   return (
     <div className="flex flex-col gap-3 px-3 py-3 sm:px-4" data-omp-settings-page={pageId}>
       <p className="text-muted-foreground text-xs">{page.description}</p>
-      {form === null ? (
+      {pageId === "providers" ? (
+        <OmpModelsConfigSection environmentId={environmentId} instanceId={instanceId} />
+      ) : null}
+      {pageId === "mcp" ? (
+        <OmpMcpSection environmentId={environmentId} instanceId={instanceId} />
+      ) : null}
+      {pageId === "customization" ? (
+        <OmpCustomizationSection environmentId={environmentId} instanceId={instanceId} />
+      ) : null}
+      {!hasSettings ? null : form === null ? (
         <p className="text-muted-foreground text-xs">
           {loadFailed ? "OMP settings are unavailable." : "Reading OMP settings…"}
         </p>

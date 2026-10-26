@@ -25,6 +25,7 @@ export type SettingsPath =
   | "/settings/snap-shot"
   | "/settings/providers"
   | "/settings/omp-models"
+  | "/settings/omp-providers"
   | "/settings/omp-routing"
   | "/settings/omp-thinking"
   | "/settings/omp-advisor"
@@ -36,6 +37,8 @@ export type SettingsPath =
   | "/settings/omp-runtime"
   | "/settings/omp-search"
   | "/settings/omp-discovery"
+  | "/settings/omp-mcp"
+  | "/settings/omp-customization"
   | "/settings/omp-terminal"
   | "/settings/integrations"
   | "/settings/scheduled-tasks"
@@ -99,6 +102,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/snap-shot": "SnapShots",
   "/settings/providers": "Providers",
   "/settings/omp-models": "OMP Models & Roles",
+  "/settings/omp-providers": "OMP Custom providers",
   "/settings/omp-routing": "OMP Routing",
   "/settings/omp-thinking": "OMP Thinking",
   "/settings/omp-advisor": "OMP Advisor & Agents",
@@ -110,6 +114,8 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/omp-runtime": "OMP Runtime",
   "/settings/omp-search": "OMP Search",
   "/settings/omp-discovery": "OMP Discovery",
+  "/settings/omp-mcp": "OMP MCP",
+  "/settings/omp-customization": "OMP Customization",
   "/settings/omp-terminal": "OMP Terminal prefs",
   "/settings/integrations": "Integrations",
   "/settings/scheduled-tasks": "Scheduled Tasks",
@@ -724,6 +730,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "omp-providers",
+    title: "OMP custom providers",
+    to: "/settings/omp-providers",
+    searchTerms: [
+      "omp custom providers models.yml models.yaml base url api key endpoint openai compatible ollama lm studio llama.cpp proxy local models context window max tokens reasoning",
+    ],
+  },
+  {
     id: "omp-routing",
     title: "OMP routing",
     to: "/settings/omp-routing",
@@ -807,6 +821,22 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/omp-discovery",
     searchTerms: [
       "omp inherited config discovery claude codex agents pi skills commands mcp project config context files AGENTS.md enabled disabled providers",
+    ],
+  },
+  {
+    id: "omp-mcp",
+    title: "OMP MCP servers",
+    to: "/settings/omp-mcp",
+    searchTerms: [
+      "omp mcp servers mcp.json .mcp.json model context protocol stdio http sse startup timeout notifications",
+    ],
+  },
+  {
+    id: "omp-customization",
+    title: "OMP customization",
+    to: "/settings/omp-customization",
+    searchTerms: [
+      "omp customization skills SKILL.md rules RULES.md ttsr prompt templates prompts hooks pre post custom tools agents unpack bundled",
     ],
   },
   {
@@ -1181,6 +1211,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/keybindings": null,
   "/settings/providers": null,
   "/settings/omp-models": null,
+  "/settings/omp-providers": null,
   "/settings/omp-routing": null,
   "/settings/omp-thinking": null,
   "/settings/omp-advisor": null,
@@ -1192,6 +1223,8 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/omp-runtime": null,
   "/settings/omp-search": null,
   "/settings/omp-discovery": null,
+  "/settings/omp-mcp": null,
+  "/settings/omp-customization": null,
   "/settings/omp-terminal": null,
   "/settings/integrations": null,
   "/settings/source-control": "environment-defaults",

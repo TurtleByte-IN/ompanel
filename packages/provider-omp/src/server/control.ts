@@ -50,6 +50,13 @@ export const OMP_CONTROL_TIMEOUTS_MS = {
   config: 10_000,
   /** `omp skill list --json`, or an RPC server's `ready` plus `get_available_commands`. */
   catalog: 10_000,
+  /**
+   * An RPC server in a scratch agent directory: `ready` and `get_available_models`. It starts
+   * without the agent directory's caches, so it gets longer than the probe.
+   */
+  modelsCheck: 15_000,
+  /** `omp agents unpack --user --json`. */
+  agents: 10_000,
 } as const;
 export type OmpControlBudget = keyof typeof OMP_CONTROL_TIMEOUTS_MS;
 
@@ -120,7 +127,9 @@ export type OmpControlOperation =
   | "config_reset"
   | "config_path"
   | "skill_list"
-  | "available_commands";
+  | "available_commands"
+  | "models_check"
+  | "agents_unpack";
 
 /** Carries no process output: stderr and stdout may contain credentials. */
 export class OmpControlError extends Schema.TaggedError<OmpControlError>()("OmpControlError", {
@@ -139,6 +148,8 @@ export class OmpControlError extends Schema.TaggedError<OmpControlError>()("OmpC
     "config_path",
     "skill_list",
     "available_commands",
+    "models_check",
+    "agents_unpack",
   ]),
   reason: Schema.Literals([
     "missing",
@@ -317,6 +328,23 @@ const decodeAvailableCommands = Schema.decodeUnknownEffect(
   Schema.Struct({ commands: Schema.Array(AvailableSlashCommandSchema) }),
 );
 
+/** The two fields of a `get_available_models` entry the `models.yml` check reads. */
+const ListedModelSchema = Schema.Struct({ provider: Schema.String, id: Schema.String });
+export type OmpListedModel = typeof ListedModelSchema.Type;
+const decodeListedModels = Schema.decodeUnknownEffect(
+  Schema.Struct({ models: Schema.Array(ListedModelSchema) }),
+);
+
+/** `omp agents unpack --json` (`cli/agents-cli.ts` `UnpackResult`): absolute paths. */
+const OmpAgentsUnpack = Schema.Struct({
+  targetDir: Schema.String,
+  total: Schema.Number,
+  written: Schema.Array(Schema.String),
+  skipped: Schema.Array(Schema.String),
+});
+export type OmpAgentsUnpack = typeof OmpAgentsUnpack.Type;
+const decodeAgentsUnpack = Schema.decodeEffect(Schema.fromJsonString(OmpAgentsUnpack));
+
 export type OmpProbeFailure =
   | { readonly stage: "version"; readonly reason: "missing" | "spawn" | "timeout" | "exit" }
   | { readonly stage: "ready"; readonly reason: "spawn" | "timeout" | "exit" | "invalid" };
@@ -431,6 +459,20 @@ export interface OmpControlService {
   readonly availableCommands: (
     target: OmpControlTarget,
   ) => Effect.Effect<ReadonlyArray<OmpAvailableSlashCommand>, OmpControlError>;
+  /**
+   * RPC `get_available_models` (15 s) from a fresh control server whose agent directory is
+   * `agentDir` (`PI_CODING_AGENT_DIR`; the profile is dropped, since a profile outranks it), run
+   * with `--approval-mode always-ask`. Fails `exit` when omp quits before `ready`, as it does when
+   * it finds no model at all.
+   */
+  readonly modelsInAgentDir: (
+    target: OmpControlTarget,
+    agentDir: string,
+  ) => Effect.Effect<ReadonlyArray<OmpListedModel>, OmpControlError>;
+  /** `omp [--profile p] agents unpack --user --json` (10 s): never overwrites an existing file. */
+  readonly agentsUnpack: (
+    target: OmpControlTarget,
+  ) => Effect.Effect<OmpAgentsUnpack, OmpControlError>;
 }
 
 export interface OmpControlServiceOptions {
@@ -441,6 +483,20 @@ export interface OmpControlServiceOptions {
 
 const profileArgs = (profile: string): ReadonlyArray<string> =>
   profile === "" ? [] : ["--profile", profile];
+
+/** Environment variables that pick an agent directory other than `PI_CODING_AGENT_DIR`. */
+const AGENT_DIR_OVERRIDES = ["OMP_PROFILE", "PI_PROFILE", "PI_CODING_AGENT_DIR", "PI_CONFIG_FILES"];
+
+/** `environment` with `agentDir` as the agent directory and nothing that would outrank it. */
+const agentDirEnvironment = (
+  environment: NodeJS.ProcessEnv,
+  agentDir: string,
+): NodeJS.ProcessEnv => {
+  const next: NodeJS.ProcessEnv = { ...environment };
+  for (const key of AGENT_DIR_OVERRIDES) delete next[key];
+  next["PI_CODING_AGENT_DIR"] = agentDir;
+  return next;
+};
 
 interface RpcSession {
   readonly ready: typeof ReadyFrame.Type;
@@ -663,6 +719,7 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
   const openRpcSession = Effect.fn("OmpControl.openRpcSession")(function* (
     operation: OmpControlOperation,
     target: OmpControlTarget,
+    extraArgs: ReadonlyArray<string> = [],
   ): Effect.fn.Return<RpcSession, OmpControlError, Scope.Scope> {
     const sessionScope = yield* Effect.scope;
     const outgoing = yield* Queue.unbounded<Uint8Array>();
@@ -670,7 +727,7 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
       .spawn(
         command(
           target,
-          [...profileArgs(target.profile), ...OMP_CONTROL_RPC_ARGS],
+          [...profileArgs(target.profile), ...OMP_CONTROL_RPC_ARGS, ...extraArgs],
           Stream.fromQueue(outgoing),
         ),
       )
@@ -1000,6 +1057,57 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
     return data.commands;
   });
 
+  const modelsInAgentDir = Effect.fn("OmpControl.modelsInAgentDir")(function* (
+    target: OmpControlTarget,
+    agentDir: string,
+  ) {
+    const scratch: OmpControlTarget = {
+      ...target,
+      profile: "",
+      environment: agentDirEnvironment(target.environment, agentDir),
+    };
+    const data = yield* withDeadline(
+      "models_check",
+      "modelsCheck",
+      // OMP's own default is `yolo` (O-9): no omp starts without an explicit approval mode, even
+      // one with its tools off.
+      openRpcSession("models_check", scratch, ["--approval-mode", "always-ask"]).pipe(
+        Effect.flatMap((session) => session.request({ type: "get_available_models" })),
+        Effect.flatMap((response) =>
+          decodeListedModels(response).pipe(
+            Effect.mapError(
+              (cause) =>
+                new OmpControlError({ operation: "models_check", reason: "invalid", cause }),
+            ),
+          ),
+        ),
+      ),
+    );
+    return data.models;
+  });
+
+  const agentsUnpack = Effect.fn("OmpControl.agentsUnpack")(function* (target: OmpControlTarget) {
+    const output = yield* collect("agents_unpack", "agents", target, [
+      ...profileArgs(target.profile),
+      "agents",
+      "unpack",
+      "--user",
+      "--json",
+    ]);
+    if (output.code !== 0) {
+      return yield* new OmpControlError({
+        operation: "agents_unpack",
+        reason: "exit",
+        exitCode: output.code,
+      });
+    }
+    return yield* decodeAgentsUnpack(output.stdout.trim()).pipe(
+      Effect.mapError(
+        (cause) => new OmpControlError({ operation: "agents_unpack", reason: "invalid", cause }),
+      ),
+    );
+  });
+
   interface CacheEntry {
     readonly deferred: Deferred.Deferred<unknown, unknown>;
     settledAt: number | null;
@@ -1062,5 +1170,7 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
     configPath,
     skillList,
     availableCommands,
+    modelsInAgentDir,
+    agentsUnpack,
   } satisfies OmpControlService;
 });
