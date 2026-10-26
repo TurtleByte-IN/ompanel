@@ -10,6 +10,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
@@ -1704,6 +1705,171 @@ it.layer(
               models: [...initialProvider.models],
             }),
           );
+        }).pipe(Effect.provide(runtimeServices));
+      }),
+    );
+
+    it.effect("never publishes an older provider list after a newer one", () =>
+      Effect.gen(function* () {
+        // Issue #150: one instance's update was still persisting when another instance's newer
+        // update published, then published the list it had computed before that update, so every
+        // client went back to OMP's "Checking the OMP sidecar..." and stayed there.
+        const makeSnapshot = (driver: string, checkedAt: string): ServerProvider => ({
+          instanceId: ProviderInstanceId.make(driver),
+          driver: ProviderDriverKind.make(driver),
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          checkedAt,
+          version: "1.0.0",
+          models: [],
+          slashCommands: [],
+          skills: [],
+        });
+        const makeInstance = (snapshot: ServerProvider) =>
+          Effect.gen(function* () {
+            const changes = yield* PubSub.unbounded<ServerProvider>();
+            const instance = {
+              instanceId: snapshot.instanceId,
+              driverKind: snapshot.driver,
+              continuationIdentity: {
+                driverKind: snapshot.driver,
+                continuationKey: `${snapshot.driver}:instance:${snapshot.instanceId}`,
+              },
+              displayName: undefined,
+              enabled: true,
+              snapshot: {
+                resolveMaintenance: () =>
+                  Effect.succeed(
+                    makeManualOnlyProviderMaintenanceCapabilities({
+                      provider: snapshot.driver,
+                      packageName: null,
+                    }),
+                  ),
+                getSnapshot: Effect.succeed(snapshot),
+                refresh: Effect.succeed(snapshot),
+                streamChanges: Stream.fromPubSub(changes),
+                applyUsageLimits: () => Effect.void,
+              },
+              orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+              textGeneration: {} as ProviderInstance["textGeneration"],
+            } satisfies ProviderInstance;
+            return { instance, changes };
+          });
+        const slow = yield* makeInstance(makeSnapshot("cursor", "2026-10-26T00:00:00.000Z"));
+        const fast = yield* makeInstance(makeSnapshot("opencode", "2026-10-26T00:00:00.000Z"));
+        const instances = [slow.instance, fast.instance];
+        const layerInstanceRegistry = Layer.succeed(
+          ProviderInstanceRegistry.ProviderInstanceRegistry,
+          {
+            getInstance: (instanceId) =>
+              Effect.succeed(instances.find((instance) => instance.instanceId === instanceId)),
+            listInstances: Effect.succeed(instances),
+            listUnavailable: Effect.succeed([]),
+            streamChanges: Stream.empty,
+            subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), (pubsub) =>
+              PubSub.subscribe(pubsub),
+            ),
+          },
+        );
+        // Holds the slow instance's next status-cache write until released, and reports when that
+        // write has cleaned up: the update publishes right after.
+        const holdSlowWrite = yield* Ref.make(false);
+        const slowWriteHeld = yield* Deferred.make<void>();
+        const releaseSlowWrite = yield* Deferred.make<void>();
+        const slowWriteCleanedUp = yield* Deferred.make<void>();
+        const slowCacheFile = `${slow.instance.instanceId}.json`;
+        const layerSlowFileSystem = Layer.effect(
+          FileSystem.FileSystem,
+          Effect.gen(function* () {
+            const fileSystem = yield* FileSystem.FileSystem;
+            const cleanupPending = yield* Ref.make(false);
+            return {
+              ...fileSystem,
+              rename: (from, to) =>
+                Effect.gen(function* () {
+                  if (to.endsWith(slowCacheFile) && (yield* Ref.getAndSet(holdSlowWrite, false))) {
+                    yield* Deferred.succeed(slowWriteHeld, undefined);
+                    yield* Deferred.await(releaseSlowWrite);
+                    yield* Ref.set(cleanupPending, true);
+                  }
+                  return yield* fileSystem.rename(from, to);
+                }),
+              remove: (path, options) =>
+                fileSystem.remove(path, options).pipe(
+                  Effect.andThen(
+                    Effect.gen(function* () {
+                      if (
+                        path.includes(`${slowCacheFile}.`) &&
+                        (yield* Ref.getAndSet(cleanupPending, false))
+                      ) {
+                        yield* Deferred.succeed(slowWriteCleanedUp, undefined);
+                      }
+                    }),
+                  ),
+                ),
+            } satisfies FileSystem.FileSystem;
+          }),
+        ).pipe(Layer.provide(NodeServices.layer));
+        const scope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+        const runtimeServices = yield* Layer.build(
+          ProviderRegistry.layer.pipe(
+            Layer.provideMerge(layerInstanceRegistry),
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), {
+                prefix: "t3-provider-registry-publish-order-",
+              }),
+            ),
+            Layer.provideMerge(layerBackgroundPolicyAlwaysRun),
+            Layer.provideMerge(layerSlowFileSystem),
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ).pipe(Scope.provide(scope));
+
+        yield* Effect.gen(function* () {
+          const registry = yield* ProviderRegistry.ProviderRegistry;
+          const published: Array<ReadonlyArray<ServerProvider>> = [];
+          const fastCheckedAt = (providers: ReadonlyArray<ServerProvider>) =>
+            providers.find((provider) => provider.instanceId === fast.instance.instanceId)
+              ?.checkedAt;
+          const newerSeen = yield* Deferred.make<void>();
+          const sentinelSeen = yield* Deferred.make<void>();
+          yield* Stream.runForEach(yield* registry.subscribeChanges, (providers) =>
+            Effect.gen(function* () {
+              published.push(providers);
+              const checkedAt = fastCheckedAt(providers);
+              if (checkedAt === "2026-10-26T00:01:00.000Z")
+                yield* Deferred.succeed(newerSeen, undefined);
+              if (checkedAt === "2026-10-26T00:02:00.000Z")
+                yield* Deferred.succeed(sentinelSeen, undefined);
+            }),
+          ).pipe(Effect.forkScoped);
+
+          // The slow update computes its list, then waits in its cache write while a newer update
+          // lands and publishes.
+          yield* Ref.set(holdSlowWrite, true);
+          yield* PubSub.publish(slow.changes, makeSnapshot("cursor", "2026-10-26T00:01:00.000Z"));
+          yield* Deferred.await(slowWriteHeld);
+          yield* PubSub.publish(fast.changes, makeSnapshot("opencode", "2026-10-26T00:01:00.000Z"));
+          yield* Deferred.await(newerSeen);
+          // The slow update finishes and publishes; a later update marks the end.
+          yield* Deferred.succeed(releaseSlowWrite, undefined);
+          yield* Deferred.await(slowWriteCleanedUp);
+          yield* PubSub.publish(fast.changes, makeSnapshot("opencode", "2026-10-26T00:02:00.000Z"));
+          yield* Deferred.await(sentinelSeen);
+
+          const firstNewer = published.findIndex(
+            (providers) => fastCheckedAt(providers) === "2026-10-26T00:01:00.000Z",
+          );
+          assert.deepStrictEqual(
+            published
+              .slice(firstNewer)
+              .filter((providers) => fastCheckedAt(providers) === "2026-10-26T00:00:00.000Z"),
+            [],
+          );
+          assert.deepStrictEqual(published.at(-1), yield* registry.getProviders);
         }).pipe(Effect.provide(runtimeServices));
       }),
     );

@@ -19,6 +19,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
 
@@ -86,6 +87,16 @@ export class ProviderRegistry extends Context.Service<
     }) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
     readonly streamChanges: Stream.Stream<ReadonlyArray<ServerProvider>>;
+
+    /**
+     * Subscribes when it runs, so a list read afterwards is never newer than the changes the
+     * stream delivers; `streamChanges` subscribes only once it is pulled.
+     */
+    readonly subscribeChanges: Effect.Effect<
+      Stream.Stream<ReadonlyArray<ServerProvider>>,
+      never,
+      Scope.Scope
+    >;
   }
 >()("t3/provider/ProviderRegistry") {}
 
@@ -411,6 +422,22 @@ export const layer = Layer.effect(
     const providersRef = yield* Ref.make<ReadonlyArray<ServerProvider>>(
       cachedProviders.map((provider) => classifyCompatibility(provider, initialManifest)),
     );
+    // Subscribers keep the last list published. Updates persist between changing the list and
+    // publishing it, so publishing the list an update computed let an older update land after a
+    // newer one and leave every client on a stale list (OMP stuck on "Checking the OMP
+    // sidecar..." until its next probe). Every publish sends the current list instead, in order,
+    // and only when it differs from the last one sent.
+    const publishSemaphore = yield* Semaphore.make(1);
+    const lastPublishedRef = yield* Ref.make(yield* Ref.get(providersRef));
+    const publishCurrentProviders = publishSemaphore.withPermits(1)(
+      Effect.gen(function* () {
+        const providers = yield* Ref.get(providersRef);
+        const previous = yield* Ref.getAndSet(lastPublishedRef, providers);
+        if (haveProvidersChanged(previous, providers)) {
+          yield* PubSub.publish(changesPubSub, providers);
+        }
+      }),
+    );
     const workspaceRefreshesRef = yield* Ref.make<
       ReadonlyMap<ProviderInstance, ReadonlyMap<string, Deferred.Deferred<void>>>
     >(new Map());
@@ -514,7 +541,7 @@ export const layer = Layer.effect(
           });
         }
         if (options?.publish !== false) {
-          yield* PubSub.publish(changesPubSub, providers);
+          yield* publishCurrentProviders;
         }
       }
 
@@ -785,7 +812,7 @@ export const layer = Layer.effect(
             },
           );
           if (haveProvidersChanged(previousProviders, providers)) {
-            yield* PubSub.publish(changesPubSub, providers);
+            yield* publishCurrentProviders;
           }
         }
 
@@ -833,7 +860,7 @@ export const layer = Layer.effect(
           },
         );
         if (haveProvidersChanged(previousProviders, providers)) {
-          yield* PubSub.publish(changesPubSub, providers);
+          yield* publishCurrentProviders;
         }
         yield* Ref.update(maintenanceActionStatesRef, (previous) => {
           const next = new Map(previous);
@@ -889,7 +916,7 @@ export const layer = Layer.effect(
       }).pipe(
         Effect.tap(([previousProviders, nextProviders]) =>
           haveProvidersChanged(previousProviders, nextProviders)
-            ? PubSub.publish(changesPubSub, nextProviders)
+            ? publishCurrentProviders
             : Effect.void,
         ),
         Effect.map(([, nextProviders]) => nextProviders),
@@ -1015,6 +1042,9 @@ export const layer = Layer.effect(
       setProviderMaintenanceActionState,
       get streamChanges() {
         return Stream.fromPubSub(changesPubSub);
+      },
+      get subscribeChanges() {
+        return PubSub.subscribe(changesPubSub).pipe(Effect.map(Stream.fromSubscription));
       },
     } satisfies ProviderRegistry["Service"];
   }),
