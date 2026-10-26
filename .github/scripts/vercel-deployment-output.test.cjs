@@ -21,7 +21,12 @@ assert.equal(steps.length, 3, "Expected both release steps and the preview step"
 const url = "https://t3code-fixture-pinglabs.vercel.app";
 const warning = 'Error while parsing config file: "/runner/t3code/pnpm-lock.yaml"';
 
-function runStep(script, stdout, exitCode = 0) {
+function runStep(
+  script,
+  stdout,
+  exitCode = 0,
+  env = { OMPANEL_WEB_ROUTER_URL: "https://hosted.example.test" },
+) {
   const directory = mkdtempSync(join(tmpdir(), "t3-vercel-output-"));
   const outputFile = join(directory, "output");
   try {
@@ -43,6 +48,7 @@ function runStep(script, stdout, exitCode = 0) {
           GITHUB_OUTPUT: outputFile,
           FIXTURE_STDOUT: stdout,
           FIXTURE_EXIT: String(exitCode),
+          ...env,
         },
       },
     );
@@ -85,3 +91,12 @@ for (const [name, script] of steps) {
     });
   }
 }
+
+// Ompanel runs no hosted app, so the deploy must never fall back to an upstream origin.
+test("hosted web: refuses to build without its own router URL", () => {
+  const [, script] = steps.find(([name]) => name === "hosted web");
+  const result = runStep(script, url, 0, {});
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /OMPANEL_WEB_ROUTER_URL is not set/);
+  assert.equal(result.output, "");
+});
