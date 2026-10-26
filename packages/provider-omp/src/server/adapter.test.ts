@@ -386,9 +386,11 @@ posixOnly("OmpAdapter.openSession", () => {
           assert.strictEqual(state.argv().cwd, NodeFS.realpathSync(work));
           assert.strictEqual(NodeFS.readFileSync(overlayPath, "utf8"), OMP_EMPTY_OVERLAY);
           assert.strictEqual(NodeFS.statSync(overlayPath).mode & 0o777, 0o600);
-          // After the handshake the session enables OMP's ask dialog.
+          // After the handshake the session subscribes to the subagent frames that feed the
+          // agents panel and enables OMP's ask dialog.
           assert.deepStrictEqual(state.events(), [
             "command:negotiate_protocol",
+            "command:set_subagent_subscription",
             "command:set_ask_dialog",
           ]);
           assert.strictEqual(NodeFS.readdirSync(dirs.pidfiles).length, 1);

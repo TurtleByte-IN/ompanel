@@ -96,6 +96,15 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
       label: "environment-data:orchestration:stop-workflow",
       tag: ORCHESTRATION_V2_WS_METHODS.stopWorkflow,
     }),
+    controlSubagent: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:orchestration:control-subagent",
+      tag: ORCHESTRATION_V2_WS_METHODS.controlSubagent,
+    }),
+    // A command, not a query: the agents panel pages it with `fromByte` while the subagent runs.
+    readSubagentTranscript: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:orchestration:read-subagent-transcript",
+      tag: ORCHESTRATION_V2_WS_METHODS.readSubagentTranscript,
+    }),
     turnItem: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:turn-item",
       tag: ORCHESTRATION_V2_WS_METHODS.getTurnItem,

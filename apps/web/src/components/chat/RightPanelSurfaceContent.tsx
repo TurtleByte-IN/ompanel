@@ -31,6 +31,9 @@ const DevicePanel = lazy(() =>
   import("../device/DevicePanel").then((module) => ({ default: module.DevicePanel })),
 );
 const FilePreviewPanel = lazy(() => import("../files/FilePreviewPanel"));
+const AgentsPanel = lazy(() =>
+  import("../agents/AgentsPanel").then((module) => ({ default: module.AgentsPanel })),
+);
 
 export type RightPanelTerminalProps = Omit<
   PersistentThreadTerminalPanelProps,
@@ -179,6 +182,12 @@ export function RightPanelSurfaceContent(props: {
               useRightPanelStore.getState().show(threadRef);
             }}
           />
+        </Suspense>
+      );
+    case "agents":
+      return (
+        <Suspense fallback={null}>
+          <AgentsPanel key={scopedThreadKey(threadRef)} threadRef={threadRef} />
         </Suspense>
       );
     case "files":

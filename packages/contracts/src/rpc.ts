@@ -216,6 +216,7 @@ import {
   ORCHESTRATION_V2_WS_METHODS,
   OrchestrationGetWorkflowScriptError,
   OrchestrationV2StopWorkflowError,
+  OrchestrationV2SubagentControlError,
   OrchestrationV2DispatchCommandError,
   OrchestrationV2GetShellSnapshotError,
   OrchestrationV2CommandOutputError,
@@ -1723,6 +1724,21 @@ const WsOrchestrationV2StopWorkflowRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.st
   error: Schema.Union([OrchestrationV2StopWorkflowError, EnvironmentAuthorizationError]),
 });
 
+const WsOrchestrationV2ControlSubagentRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.controlSubagent, {
+  payload: OrchestrationV2RpcSchemas.controlSubagent.input,
+  success: OrchestrationV2RpcSchemas.controlSubagent.output,
+  error: Schema.Union([OrchestrationV2SubagentControlError, EnvironmentAuthorizationError]),
+});
+
+const WsOrchestrationV2ReadSubagentTranscriptRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.readSubagentTranscript,
+  {
+    payload: OrchestrationV2RpcSchemas.readSubagentTranscript.input,
+    success: OrchestrationV2RpcSchemas.readSubagentTranscript.output,
+    error: Schema.Union([OrchestrationV2SubagentControlError, EnvironmentAuthorizationError]),
+  },
+);
+
 const WsOrchestrationV2GetWorkflowScriptRpc = Rpc.make(
   ORCHESTRATION_V2_WS_METHODS.getWorkflowScript,
   {
@@ -2103,6 +2119,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2DispatchCommandRpc,
   WsOrchestrationV2GetWorkflowScriptRpc,
   WsOrchestrationV2StopWorkflowRpc,
+  WsOrchestrationV2ControlSubagentRpc,
+  WsOrchestrationV2ReadSubagentTranscriptRpc,
   WsOrchestrationV2GetTurnItemRpc,
   WsOrchestrationV2GetTurnDiffRpc,
   WsOrchestrationV2GetFullThreadDiffRpc,

@@ -671,6 +671,23 @@ describe("rightPanelStore", () => {
     });
   });
 
+  it("keeps an agents surface saved by the current version", () => {
+    const panelState = {
+      isOpen: true,
+      activeSurfaceId: "agents",
+      surfaces: [
+        { id: "diff", kind: "diff" },
+        { id: "agents", kind: "agents" },
+      ],
+    };
+    expect(
+      migratePersistedRightPanelState({ byThreadKey: { "env-1:thread-A": panelState } }, 15),
+    ).toEqual({
+      byThreadKey: { "env-1:thread-A": panelState },
+      threadPanelVisibilityByThreadKey: {},
+    });
+  });
+
   it("persists inline preference without restoring an open popover", () => {
     expect(
       migratePersistedRightPanelState({

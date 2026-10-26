@@ -2387,6 +2387,7 @@ export default function ChatView(props: ChatViewProps) {
     moveRightPanelSurfaceStable,
     onOpenTurnDiffStable,
     openChangesFromThreadPanelStable,
+    onToggleAgentsStable,
     openFileSurfaceStable,
     toggleRightPanelMaximizedStable,
     toggleRightPanelStable,
@@ -3143,6 +3144,9 @@ export default function ChatView(props: ChatViewProps) {
     onToggleTerminal: toggleTerminalVisibilityStable,
     onToggleThreadPanel: toggleThreadPanelStable,
     onToggleRightPanel: toggleRightPanelStable,
+    agentsAvailable: (serverProjection?.subagents.length ?? 0) > 0,
+    agentsOpen: activeRightPanelKind === "agents",
+    onToggleAgents: onToggleAgentsStable,
   } satisfies PanelLayoutControlsProps;
   const panelToggleControls = (
     <PanelLayoutControls

@@ -749,6 +749,27 @@ export const OrchestrationV2SubagentWorkflow = Schema.Struct({
 });
 export type OrchestrationV2SubagentWorkflow = typeof OrchestrationV2SubagentWorkflow.Type;
 
+/** What a provider-native subagent has spent so far, as the provider reports it. */
+export const OrchestrationV2SubagentUsage = Schema.Struct({
+  costUsd: Schema.optional(Schema.Number.check(Schema.isGreaterThanOrEqualTo(0))),
+  totalTokens: Schema.optional(NonNegativeInt),
+  toolCalls: Schema.optional(NonNegativeInt),
+  durationMs: Schema.optional(NonNegativeInt),
+});
+export type OrchestrationV2SubagentUsage = typeof OrchestrationV2SubagentUsage.Type;
+
+/**
+ * Controls the owning provider session offers for one provider-native subagent through
+ * `orchestration.controlSubagent` and `orchestration.readSubagentTranscript`. Absent: none.
+ */
+export const OrchestrationV2SubagentControls = Schema.Struct({
+  transcript: Schema.Boolean,
+  steer: Schema.Boolean,
+  kill: Schema.Boolean,
+  revive: Schema.Boolean,
+});
+export type OrchestrationV2SubagentControls = typeof OrchestrationV2SubagentControls.Type;
+
 /**
  * Wire-only, for clients that opted in with `acceptDedupedBodies` or `dedupeBodies=1`: the field
  * was blanked because an earlier record on the same response or stream holds the same value.
@@ -787,6 +808,10 @@ export const OrchestrationV2Subagent = Schema.Struct({
   ]),
   progress: Schema.optional(Schema.String),
   workflow: Schema.optional(OrchestrationV2SubagentWorkflow),
+  /** Nesting below the thread's own agent: 0 for a subagent the thread's agent spawned. */
+  depth: Schema.optional(NonNegativeInt),
+  usage: Schema.optional(OrchestrationV2SubagentUsage),
+  controls: Schema.optional(OrchestrationV2SubagentControls),
   result: Schema.NullOr(Schema.String),
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
@@ -3297,6 +3322,8 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   getThreadProjection: "orchestration.getThreadProjection",
   getWorkflowScript: "orchestration.getWorkflowScript",
   stopWorkflow: "orchestration.stopWorkflow",
+  controlSubagent: "orchestration.controlSubagent",
+  readSubagentTranscript: "orchestration.readSubagentTranscript",
   getTurnItem: "orchestration.getTurnItem",
   launchThread: "orchestration.launchThread",
   subscribeArchivedShell: "orchestration.subscribeArchivedShell",
@@ -3701,12 +3728,89 @@ export class OrchestrationV2StopWorkflowError extends Schema.TaggedError<Orchest
   }
 }
 
+/** What to do to a provider-native subagent; `controls` on the subagent says which apply. */
+export const OrchestrationV2SubagentControlAction = Schema.Union([
+  /** Send a message to a running subagent as its user. */
+  Schema.Struct({ type: Schema.Literal("steer"), message: TrimmedNonEmptyString }),
+  /** Stop a running subagent; its transcript is kept, so it can be revived. */
+  Schema.Struct({ type: Schema.Literal("kill") }),
+  /** Bring a finished or killed subagent back from its transcript, optionally with a message. */
+  Schema.Struct({
+    type: Schema.Literal("revive"),
+    message: Schema.optional(TrimmedNonEmptyString),
+  }),
+]);
+export type OrchestrationV2SubagentControlAction = typeof OrchestrationV2SubagentControlAction.Type;
+
+export const OrchestrationV2ControlSubagentInput = Schema.Struct({
+  threadId: ThreadId,
+  subagentId: NodeId,
+  action: OrchestrationV2SubagentControlAction,
+});
+export type OrchestrationV2ControlSubagentInput = typeof OrchestrationV2ControlSubagentInput.Type;
+
+export const OrchestrationV2ReadSubagentTranscriptInput = Schema.Struct({
+  threadId: ThreadId,
+  subagentId: NodeId,
+  /** `nextByte` of the previous page; absent reads from the start. */
+  fromByte: Schema.optional(NonNegativeInt),
+});
+export type OrchestrationV2ReadSubagentTranscriptInput =
+  typeof OrchestrationV2ReadSubagentTranscriptInput.Type;
+
+/** One transcript message, reduced to what a viewer shows. */
+export const OrchestrationV2SubagentTranscriptEntry = Schema.Struct({
+  role: Schema.Literals(["user", "assistant", "tool", "system"]),
+  text: Schema.String,
+  /** The tool a `tool` entry ran. */
+  toolName: Schema.optional(Schema.String),
+  isError: Schema.optional(Schema.Boolean),
+});
+export type OrchestrationV2SubagentTranscriptEntry =
+  typeof OrchestrationV2SubagentTranscriptEntry.Type;
+
+/** An incremental transcript read: append `entries`, or replace everything when `reset`. */
+export const OrchestrationV2SubagentTranscriptPage = Schema.Struct({
+  fromByte: NonNegativeInt,
+  nextByte: NonNegativeInt,
+  reset: Schema.Boolean,
+  entries: Schema.Array(OrchestrationV2SubagentTranscriptEntry),
+});
+export type OrchestrationV2SubagentTranscriptPage =
+  typeof OrchestrationV2SubagentTranscriptPage.Type;
+
+export class OrchestrationV2SubagentControlError extends Schema.TaggedError<OrchestrationV2SubagentControlError>()(
+  "OrchestrationV2SubagentControlError",
+  {
+    threadId: ThreadId,
+    subagentId: NodeId,
+    reason: Schema.Literals(["not-found", "unsupported", "unavailable", "failed"]),
+    /** The provider's own explanation, for `failed`. */
+    detail: Schema.optional(Schema.String),
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    switch (this.reason) {
+      case "not-found":
+        return "This subagent is not part of the thread.";
+      case "unsupported":
+        return "This provider cannot do that to a subagent.";
+      case "unavailable":
+        return "This subagent's provider session is not running.";
+      case "failed":
+        return this.detail ?? "The provider refused the subagent request.";
+    }
+  }
+}
+
 export const OrchestrationV2RpcError = Schema.Union([
   OrchestrationV2DispatchCommandError,
   OrchestrationV2GetThreadProjectionError,
   OrchestrationV2GetShellSnapshotError,
   OrchestrationV2ThreadLaunchError,
   OrchestrationV2StopWorkflowError,
+  OrchestrationV2SubagentControlError,
 ]);
 export type OrchestrationV2RpcError = typeof OrchestrationV2RpcError.Type;
 
@@ -3895,6 +3999,14 @@ export const OrchestrationV2RpcSchemas = {
   stopWorkflow: {
     input: OrchestrationV2StopWorkflowInput,
     output: Schema.Void,
+  },
+  controlSubagent: {
+    input: OrchestrationV2ControlSubagentInput,
+    output: Schema.Void,
+  },
+  readSubagentTranscript: {
+    input: OrchestrationV2ReadSubagentTranscriptInput,
+    output: OrchestrationV2SubagentTranscriptPage,
   },
   getWorkflowScript: {
     input: OrchestrationV2GetWorkflowScriptInput,
