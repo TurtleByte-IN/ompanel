@@ -107,7 +107,12 @@ const PAIRING_ANNOUNCEMENT = /^\s*pairingUrl: \S+$/;
  * under the `recorded` directories. Reports name the secret's label and the file, never the value.
  */
 const scanForSecrets = (input: {
-  readonly secrets: ReadonlyArray<{ readonly label: string; readonly value: string }>;
+  readonly secrets: ReadonlyArray<{
+    readonly label: string;
+    readonly value: string;
+    /** Files that store this secret by design (credential storage, not a record of the run). */
+    readonly storedIn?: ReadonlyArray<string>;
+  }>;
   readonly serverLog: string;
   readonly recorded: ReadonlyArray<string>;
   /** Single files, e.g. the database and its write-ahead log. */
@@ -141,6 +146,7 @@ const scanForSecrets = (input: {
     .filter((secret) => secret.value.length >= 8)
     .flatMap((secret) =>
       sources
+        .filter((source) => !(secret.storedIn ?? []).includes(source.file))
         .filter((source) => forms(secret.value).some((form) => source.text.includes(form)))
         .map((source) => `${secret.label} in ${source.file}`),
     );
@@ -322,7 +328,12 @@ export const startOmpStack = async (options: OmpStackOptions = {}): Promise<OmpS
       NodeFS.closeSync(log);
       const leakedSecrets = scanForSecrets({
         secrets: [
-          { label: "pairing token", value: new URL(pairingUrl).hash.replace(/^#token=/, "") },
+          {
+            label: "pairing token",
+            value: new URL(pairingUrl).hash.replace(/^#token=/, ""),
+            // The pairing grant row keeps it until it is spent (TurtleByte-IN/ompanel#162).
+            storedIn: [NodePath.join(userdata, "statev2.sqlite")],
+          },
           ...secrets.map((value, index) => ({ label: `secretEnvironment[${index}]`, value })),
           ...(vendor?.exchanged() ?? []).map((value) => ({ label: "OAuth code", value })),
         ],
