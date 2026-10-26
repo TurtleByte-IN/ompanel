@@ -147,12 +147,15 @@ function decide(files, packages, full) {
     (pkg) => pkg.hasTest && !OWN_TEST_JOB.has(pkg.name) && affected.has(pkg.name),
   );
   const has = (name) => affected.has(name);
+  const build = has("@t3tools/desktop") || has("t3") || has("@t3tools/web");
 
   return {
     affected: [...affected].sort(),
     outputs: {
       typecheck: affected.size > 0,
-      build: has("@t3tools/desktop") || has("t3") || has("@t3tools/web"),
+      build,
+      // Boots the server build; its own script is not a dependency of the server.
+      boot_smoke: build || (files ?? []).includes("scripts/smoke-server-boot.ts"),
       test: tested.length > 0,
       // Empty means every package the Test job covers.
       test_packages: everything ? "" : tested.map((pkg) => pkg.name).join(" "),

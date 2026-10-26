@@ -31,6 +31,7 @@ jobs:
     outputs:
       typecheck: ${{ steps.detect.outputs.typecheck }}
       build: ${{ steps.detect.outputs.build }}
+      boot_smoke: ${{ steps.detect.outputs.boot_smoke }}
       test: ${{ steps.detect.outputs.test }}
       test_packages: ${{ steps.detect.outputs.test_packages }}
       test_web: ${{ steps.detect.outputs.test_web }}
@@ -620,6 +621,51 @@ jobs:
       - name: Exercise release-only workflow steps
         run: node scripts/release-smoke.ts
 
+  # Nothing else runs the built server. Builds it as `pnpm dev:desktop` and the
+  # release do (t3#build after the web build), on a fresh install (pnpm keeps
+  # the lockfile frozen under CI), then boots apps/server/dist/bin.mjs under
+  # Node (the CLI) and under Electron's Node with a fd 3 bootstrap (the desktop
+  # backend). Fails if either exits, misses readiness, or dies once ready.
+  boot_smoke:
+    permissions:
+      contents: read
+      id-token: write
+    name: Server Boot Smoke
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.boot_smoke != 'false' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+            !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: ./.github/actions/setup-ci-deps
+        with:
+          task-cache-read-token: ${{ secrets.T3_TASK_CACHE_READ_TOKEN }}
+
+      - name: Cache Electron download
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/electron
+          key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('node_modules/.pnpm/electron@*/node_modules/electron/package.json') }}
+
+      - name: Ensure Electron runtime is installed
+        run: vp run --filter @t3tools/desktop ensure:electron
+
+      - name: Build server
+        run: vp run --filter t3 build
+
+      - name: Boot built server under Node and Electron
+        timeout-minutes: 5
+        run: node scripts/smoke-server-boot.ts --target node --target electron
+
   # Branch protection requires this job by its name, `Check`. It fails when any
   # other job fails, is cancelled, or is skipped without a reason, so splitting
   # or resharding jobs needs no ruleset change. Add every new job to `needs`.
@@ -640,6 +686,7 @@ jobs:
         rust,
         mobile_native_static_analysis,
         release_smoke,
+        boot_smoke,
       ]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
