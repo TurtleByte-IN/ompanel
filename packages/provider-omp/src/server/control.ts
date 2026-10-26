@@ -41,8 +41,13 @@ import { OmpAnsi } from "./ompAnsi.ts";
 export const OMP_CONTROL_TIMEOUTS_MS = {
   /** `omp --version`. */
   version: 4_000,
-  /** The probe's RPC server: `ready` frame, `get_login_providers` and `get_available_models`. */
-  ready: 10_000,
+  /**
+   * The probe's RPC server: `ready` frame, `get_login_providers` and `get_available_models`. With
+   * no default model, OMP first awaits one model-discovery pass (up to 15 s per fetch,
+   * `RUNTIME_DYNAMIC_MODEL_FETCH_TIMEOUT_MS`) before refusing, so a shorter deadline turns a fresh
+   * install into "did not answer" instead of "needs setup".
+   */
+  ready: 20_000,
   /** `omp usage --json`. */
   usage: 10_000,
   /**
