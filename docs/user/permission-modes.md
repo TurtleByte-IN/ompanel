@@ -32,6 +32,11 @@ Grok offers no **Auto-accept edits**. A Grok thread already set to it runs in **
 file-change approvals offer **Allow all edits this session**. Its command approvals have no
 session-wide choice, because Grok would remember that command for the whole project.
 
+OMP offers **Supervised**, **Auto-accept edits** and **Full access**, enforced by OMP itself; it
+has no automatic review, so it offers no **Auto**. An OMP thread already set to **Auto** runs in
+**Supervised**. Changing the mode of an OMP thread applies from its next message without
+restarting OMP. See [OMP permissions](./providers-omp.md#permissions).
+
 ACP Registry agents run their own tools in their own mode; Ompanel answers their approval requests
 by the permission mode. See [ACP Registry permissions](./providers-acp.md#permissions-and-terminals).
 

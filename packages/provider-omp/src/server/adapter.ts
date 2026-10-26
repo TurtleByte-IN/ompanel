@@ -23,6 +23,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import type { RpcServerFrame } from "../../contract/src/wire.generated.ts";
 import { makeOmpHostBridge } from "./hostTools.ts";
+import { ompApprovalModeFor } from "./launch.ts";
 import { OMP_PROVIDER, OmpThreadMapper, type OmpTurnOutcome } from "./mapper.ts";
 import type { OmpRpcRequestError, OmpRpcRequestOptions } from "./rpcProcess.ts";
 import type { OmpPidfiles } from "./pidfiles.ts";
@@ -74,7 +75,8 @@ const OMP_PROVIDER_CAPABILITIES = {
     supportsMultipleProviderThreadsPerSession: false,
     supportsModelSwitchInSession: true,
     supportsProviderSwitchingViaHandoff: true,
-    supportsRuntimeModeSwitchInSession: false,
+    // A mode change reaches the live process as `set_approval_mode` before the next prompt.
+    supportsRuntimeModeSwitchInSession: true,
     pendingRequestsSurviveRestart: false,
   },
   threads: {
@@ -490,6 +492,39 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       return result.providerThread;
     });
 
+    /** The mode the process enforces: the launch flag, then each `set_approval_mode` OMP accepted. */
+    let appliedApprovalMode = ompApprovalModeFor(input.runtimePolicy.runtimeMode);
+    /**
+     * Brings OMP to the turn's permission mode without a restart. A refusal (a session locked
+     * to yolo by `--auto-approve`) fails the turn before its prompt, so OMP never runs a turn
+     * under a mode other than the one the thread shows.
+     */
+    const applyApprovalMode = Effect.fnUntraced(function* (
+      runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+    ) {
+      const wanted = ompApprovalModeFor(runtimePolicy.runtimeMode);
+      if (wanted === appliedApprovalMode) return;
+      const result = yield* process
+        .request("set_approval_mode", { mode: wanted }, { timeoutMs: SIDE_REQUEST_TIMEOUT_MS })
+        .pipe(
+          Effect.mapError((error) =>
+            error._tag === "OmpRpcCommandError"
+              ? protocolError(
+                  `OMP refused approval mode ${wanted}: ${error.detail}`,
+                  "permission_mode_refused",
+                )
+              : protocolError(`OMP approval mode ${wanted} not applied: ${error.message}`),
+          ),
+        );
+      if (result.mode !== wanted) {
+        return yield* protocolError(
+          `OMP kept approval mode ${result.mode} when asked for ${wanted}`,
+          "permission_mode_refused",
+        );
+      }
+      appliedApprovalMode = wanted;
+    });
+
     let appliedSessionName: string | null = null;
     const startTurn = Effect.fnUntraced(function* (
       turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
@@ -505,6 +540,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
           "previous_turn_active",
         );
       }
+      yield* applyApprovalMode(turnInput.runtimePolicy);
       // T3 names the thread; OMP keeps it as a user-set title, which its own titling respects.
       const title = turnInput.appThread.title;
       if (title !== appliedSessionName) {

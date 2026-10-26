@@ -55,6 +55,7 @@ const PROVIDER_FAILURE_CATEGORIES: Partial<
 const PROVIDER_FAILURE_REASONS: Record<ProviderAdapterFailureReason, string> = {
   previous_turn_active: "the previous turn is still running",
   attachment_unreadable: "an attachment could not be read",
+  permission_mode_refused: "the provider refused the thread's permission mode",
 };
 
 /**
