@@ -306,17 +306,19 @@ export function OmpAccountsSection(props: {
   async function run<A>(command: () => Promise<AtomCommandResult<A, unknown>>) {
     setPending(true);
     setError(null);
+    let value: A | undefined;
     try {
       const result = await command();
-      if (result._tag === "Success") return result.value;
-      if (!isAtomCommandInterrupted(result)) {
+      if (result._tag === "Success") value = result.value;
+      else if (!isAtomCommandInterrupted(result)) {
         const failure = squashAtomCommandFailure(result);
         setError(failure instanceof Error ? failure.message : "The OMP request failed.");
       }
-      return undefined;
-    } finally {
-      setPending(false);
+    } catch {
+      setError("The OMP request failed.");
     }
+    setPending(false);
+    return value;
   }
 
   const refresh = () =>
