@@ -231,7 +231,6 @@ jobs:
           has() { [[ -n "$1" ]] && echo true || echo false; }
           echo "has_vercel=$(has "$VERCEL_TOKEN")" >> "$GITHUB_OUTPUT"
           echo "has_release_app=$(has "$RELEASE_APP_ID")" >> "$GITHUB_OUTPUT"
-          fi
 
       - id: previous_tag
         name: Resolve previous release tag
@@ -1020,7 +1019,6 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       TAG: ${{ needs.preflight.outputs.tag }}
       VERSION: ${{ needs.preflight.outputs.version }}
-      RELEASE_DIR: ${{ runner.temp }}/release
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -1042,10 +1040,12 @@ jobs:
           ASSETS: ${{ matrix.assets }}
         run: |
           set -euo pipefail -f
+          release_dir="$RUNNER_TEMP/release"
+          echo "RELEASE_DIR=$release_dir" >> "$GITHUB_ENV"
           args=()
           for pattern in $ASSETS; do args+=(--pattern "$pattern"); done
-          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir "$RELEASE_DIR" "${args[@]}"
-          ls -l "$RELEASE_DIR"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir "$release_dir" "${args[@]}"
+          ls -l "$release_dir"
 
       - name: Verify downloads against SHA256SUMS
         working-directory: ${{ runner.temp }}/release
