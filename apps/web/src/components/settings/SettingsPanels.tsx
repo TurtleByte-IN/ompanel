@@ -1617,6 +1617,35 @@ export function GeneralSettingsPanel() {
       <SettingsSection id="projects-and-threads" title="Projects & threads">
         <SettingsRow
           serverScoped
+          settingKeys={["trustProjectAgentConfig"]}
+          {...searchableSetting("trust-project-agent-config")}
+          description="Lets OMP use a project's own agent config: its approval rules, MCP servers, extensions and hooks. Off by default, so a cloned repository cannot auto-approve commands or start servers. Turn it on per project. A running thread restarts its agent on its next message."
+          resetAction={
+            settings.trustProjectAgentConfig !==
+            DEFAULT_UNIFIED_SETTINGS.trustProjectAgentConfig ? (
+              <SettingResetButton
+                label="trust project agent config"
+                onClick={() =>
+                  updateSettings({
+                    trustProjectAgentConfig: DEFAULT_UNIFIED_SETTINGS.trustProjectAgentConfig,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <ScopedSwitch
+              settingKeys={["trustProjectAgentConfig"]}
+              checked={settings.trustProjectAgentConfig}
+              onCheckedChange={(checked) =>
+                updateSettings({ trustProjectAgentConfig: Boolean(checked) })
+              }
+              aria-label="Trust project agent config"
+            />
+          }
+        />
+        <SettingsRow
+          serverScoped
           settingKeys={["newWorktreesStartFromOrigin"]}
           {...searchableSetting("start-from-origin")}
           description="Uses the latest commit of the base branch’s tracked remote branch, even if its name differs. Otherwise uses the same-named branch on origin. Uses your local branch if that remote branch is missing."

@@ -1,27 +1,62 @@
 /**
- * Browser and computer-use preludes exist only in Full access (PRD §9, §6; docs/omp/security.md).
- * The thread overlay outranks project and global config; only OMP's runtime layer outranks it,
- * and `/computer`, its one client-reachable writer, is refused.
+ * Browser and computer-use preludes exist only in Full access, and an untrusted project's own
+ * agent config is ignored (PRD §9; docs/omp/security.md). The thread overlay outranks project and
+ * global config; only OMP's runtime layer outranks it, and `/computer`, its one client-reachable
+ * writer, is refused.
  */
 import type { RuntimeMode } from "@t3tools/contracts";
 
-import { OMP_GUARDED_TOOL_KEYS } from "../configForm.ts";
+import { OMP_GUARDED_KEYS } from "../configForm.ts";
+import { contractAtLeast } from "./hostTools.ts";
 
-type OmpGuardedToolKey = (typeof OMP_GUARDED_TOOL_KEYS)[number];
+type OmpGuardedKey = (typeof OMP_GUARDED_KEYS)[number];
+
+/** The contract whose OMP honours `workspace.trusted` and reports the guard in `get_state`. */
+export const OMP_WORKSPACE_TRUST_CONTRACT = "1.9.0";
+
+export const ompWorkspaceTrustAvailable = (contractVersion: string): boolean =>
+  contractAtLeast(contractVersion, OMP_WORKSPACE_TRUST_CONTRACT);
 
 /**
- * The guarded keys' overlay values for a thread in `runtimeMode` with the Computer Use trait at
- * `computer`. Outside Full access both are `false`. In Full access the browser follows OMP's
- * own config (`undefined` removes the key) and computer use follows the trait, or OMP's config
- * when the selection leaves it unset.
+ * Overlay values: preludes off outside Full access (in Full access the browser follows OMP's
+ * config, computer use the trait); `trusted: false` writes `workspace.trusted: false`, while
+ * trusted, or `undefined` on an OMP before 1.9.0, leaves the key to the user's config.
  */
 export const ompGuardedToolOverlay = (
   runtimeMode: RuntimeMode,
   computer: boolean | undefined,
-): Readonly<Record<OmpGuardedToolKey, boolean | undefined>> =>
-  runtimeMode === "full-access"
+  trusted?: boolean,
+): Readonly<Record<OmpGuardedKey, boolean | undefined>> => ({
+  ...(runtimeMode === "full-access"
     ? { "browser.enabled": undefined, "computer.enabled": computer }
-    : { "browser.enabled": false, "computer.enabled": false };
+    : { "browser.enabled": false, "computer.enabled": false }),
+  "workspace.trusted": trusted === false ? false : undefined,
+});
+
+/** The `get_state` field (contract 1.9.0) that reports each guarded key as OMP resolved it. */
+const GUARD_STATE_FIELD: Readonly<Record<OmpGuardedKey, string>> = {
+  "browser.enabled": "browserEnabled",
+  "computer.enabled": "computerEnabled",
+  "workspace.trusted": "workspaceTrusted",
+};
+
+/**
+ * The guarded keys whose pinned value a `get_state` answer does not report yet; keys left to
+ * OMP's own config are skipped, and a missing field counts as not applied.
+ */
+export const ompGuardMismatches = (
+  wanted: Readonly<Record<OmpGuardedKey, boolean | undefined>>,
+  state: unknown,
+): ReadonlyArray<OmpGuardedKey> =>
+  OMP_GUARDED_KEYS.filter((key) => {
+    if (wanted[key] === undefined) return false;
+    const field = GUARD_STATE_FIELD[key];
+    const reported =
+      typeof state === "object" && state !== null && field in state
+        ? (state as Readonly<Record<string, unknown>>)[field]
+        : undefined;
+    return reported !== wanted[key];
+  });
 
 /** A composer prompt Ompanel keeps from OMP: the failure reason the client sees, and why. */
 export interface OmpRefusedCommand {

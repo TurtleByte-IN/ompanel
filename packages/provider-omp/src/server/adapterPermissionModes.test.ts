@@ -52,11 +52,12 @@ const PROMPT_TURN: ReadonlyArray<FakeOmpStep> = [
   },
 ];
 
-const policy = (runtimeMode: RuntimeMode) =>
+const policy = (runtimeMode: RuntimeMode, workspaceTrusted?: boolean) =>
   ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
     runtimeMode,
     interactionMode: "default",
     cwd: null,
+    ...(workspaceTrusted === undefined ? {} : { workspaceTrusted }),
   });
 
 /** OMP default, with the Computer Use trait when `computer` is set. */
@@ -78,6 +79,12 @@ const openThread = Effect.fnUntraced(function* (
     readonly prompt?: ReadonlyArray<FakeOmpStep>;
     /** The Computer Use trait the thread opens with. */
     readonly computer?: boolean;
+    /** The OMP contract the fake reports and the adapter expects (default 1.0.0). */
+    readonly contract?: string;
+    /** The project's trust at open. */
+    readonly trusted?: boolean;
+    /** Extra fake environment (`FAKE_OMP_GUARD_STALE`). */
+    readonly env?: Readonly<Record<string, string>>;
   } = {},
 ) {
   const state = options.state ?? (yield* makeFakeOmpState);
@@ -94,13 +101,17 @@ const openThread = Effect.fnUntraced(function* (
   const adapter = yield* makeOmpAdapter({
     instanceId: INSTANCE_ID,
     profile: "",
-    environment: state.env(env),
+    environment: {
+      ...state.env(env),
+      ...(options.contract === undefined ? {} : { FAKE_OMP_CONTRACT: options.contract }),
+      ...options.env,
+    },
     platform,
     defaultCwd: state.dir,
     resolveBinary: Effect.succeed(state.executable()),
     dirs,
     pidfiles: yield* makeOmpPidfiles({ dir: dirs.pidfiles, platform }),
-    expectedContractVersion: "1.0.0",
+    expectedContractVersion: options.contract ?? "1.0.0",
     threadSessions: makeOmpThreadSessions(),
     sessions: state.sessions,
   });
@@ -108,7 +119,7 @@ const openThread = Effect.fnUntraced(function* (
     threadId: THREAD_ID,
     providerSessionId: ProviderSessionId.make("session-modes"),
     modelSelection: selection(options.computer),
-    runtimePolicy: policy(launchMode),
+    runtimePolicy: policy(launchMode, options.trusted),
   });
   let terminals = 0;
   yield* session.events.pipe(
@@ -134,7 +145,7 @@ const openThread = Effect.fnUntraced(function* (
   const turn = (
     runtimeMode: RuntimeMode,
     awaitTerminal = true,
-    input: { readonly text?: string; readonly computer?: boolean } = {},
+    input: { readonly text?: string; readonly computer?: boolean; readonly trusted?: boolean } = {},
   ) =>
     Effect.gen(function* () {
       ordinal += 1;
@@ -179,7 +190,7 @@ const openThread = Effect.fnUntraced(function* (
           creationSource: "web",
         },
         modelSelection: selection(input.computer),
-        runtimePolicy: policy(runtimeMode),
+        runtimePolicy: policy(runtimeMode, input.trusted),
       });
       if (awaitTerminal) assert.isTrue(yield* waitUntil(() => terminals > settledBefore));
     });
@@ -421,6 +432,74 @@ posixOnly("OmpAdapter browser and computer-use guard", () => {
         "browser and computer use could not be switched off",
       );
       assert.lengthOf(sent("prompt"), 0);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+});
+
+posixOnly("OmpAdapter workspace trust (contract 1.9.0)", () => {
+  it.live("keeps an older OMP's overlay free of workspace.trusted", () =>
+    Effect.gen(function* () {
+      const { turn, overlay } = yield* openThread("approval-required", [
+        { respond: { mode: "always-ask" } },
+      ]);
+      yield* turn("approval-required");
+      assert.notProperty(overlay(), "workspace");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("pins an untrusted project before start and confirms the guard before the prompt", () =>
+    Effect.gen(function* () {
+      const { turn, sent, overlay } = yield* openThread(
+        "approval-required",
+        [{ respond: { mode: "always-ask" } }],
+        { contract: "1.9.0", trusted: false },
+      );
+      assert.deepStrictEqual(overlay()["workspace"], { trusted: false });
+      yield* turn("approval-required", true, { trusted: false });
+      assert.lengthOf(sent("prompt"), 1);
+      assert.isAtLeast(sent("get_state").length, 2);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("leaves a trusted project's key to OMP's own config", () =>
+    Effect.gen(function* () {
+      const { turn, sent, overlay } = yield* openThread(
+        "full-access",
+        [{ respond: { mode: "yolo" } }],
+        { contract: "1.9.0", trusted: true },
+      );
+      yield* turn("full-access", true, { trusted: true });
+      assert.notProperty(overlay(), "workspace");
+      assert.lengthOf(sent("prompt"), 1);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("fails closed when OMP never reports the pinned guard", () =>
+    Effect.gen(function* () {
+      const { turn, sent } = yield* openThread(
+        "approval-required",
+        [{ respond: { mode: "always-ask" } }],
+        { contract: "1.9.0", trusted: false, env: { FAKE_OMP_GUARD_STALE: "1" } },
+      );
+      const error = yield* turn("approval-required", false, { trusted: false }).pipe(Effect.flip);
+      assert.strictEqual(refusal(error).reason, "workspace_trust_unapplied");
+      assert.lengthOf(sent("prompt"), 0);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("restarts OMP when the project's trust changed since it started", () =>
+    Effect.gen(function* () {
+      const { turn, sent, overlay, state } = yield* openThread(
+        "approval-required",
+        [{ respond: { mode: "always-ask" } }],
+        { contract: "1.9.0", trusted: true },
+      );
+      const error = yield* turn("approval-required", false, { trusted: false }).pipe(Effect.flip);
+      assert.strictEqual(refusal(error).reason, "workspace_trust_changed");
+      assert.lengthOf(sent("prompt"), 0);
+      // The overlay already holds the new trust for the process the next turn starts.
+      assert.deepStrictEqual(overlay()["workspace"], { trusted: false });
+      assert.isTrue(yield* waitUntil(() => state.events().includes("stdin-end")));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

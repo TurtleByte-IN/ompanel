@@ -67,15 +67,19 @@ const OMP_LAUNCH_SCOPED_KEYS: Readonly<Record<string, true>> = {
 };
 
 /**
- * Keys that follow the thread's permission mode, so a per-thread override would never apply: the
- * approval mode is a launch flag (`--approval-mode`), which outranks overlays, and the browser
- * and computer-use preludes are pinned in the overlay by the adapter (server/toolGuards.ts).
+ * Keys that follow the thread's permission mode or its project's trust, so a per-thread override
+ * would never apply: the approval mode is a launch flag (`--approval-mode`), which outranks
+ * overlays; the preludes and `workspace.trusted` are pinned in the overlay (server/toolGuards.ts).
  */
-export const OMP_GUARDED_TOOL_KEYS = ["browser.enabled", "computer.enabled"] as const;
+export const OMP_GUARDED_KEYS = [
+  "browser.enabled",
+  "computer.enabled",
+  "workspace.trusted",
+] as const;
 
 const OMP_PERMISSION_MODE_KEYS: Readonly<Record<string, true>> = {
   "tools.approvalMode": true,
-  ...Object.fromEntries(OMP_GUARDED_TOOL_KEYS.map((key) => [key, true] as const)),
+  ...Object.fromEntries(OMP_GUARDED_KEYS.map((key) => [key, true] as const)),
 };
 
 type ThreadRpcCommandName =

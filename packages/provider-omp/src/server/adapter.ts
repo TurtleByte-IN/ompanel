@@ -41,7 +41,7 @@ import type {
   SessionState,
 } from "../../contract/src/wire.generated.ts";
 import { type OmpGoalCommand, parseOmpGoalCommand } from "../composer.ts";
-import { OMP_GUARDED_TOOL_KEYS } from "../configForm.ts";
+import { OMP_GUARDED_KEYS } from "../configForm.ts";
 import type { OmpCommandHooks } from "./commands.ts";
 import { OMP_GOAL_BUDGET_REPLY, ompGoalReply } from "./goal.ts";
 import { makeOmpHostBridge } from "./hostTools.ts";
@@ -113,10 +113,12 @@ import {
   recordOmpMetric,
 } from "./telemetry.ts";
 import {
+  ompGuardMismatches,
   ompGuardedToolOverlay,
   ompRefusedSlashCommand,
   type OmpReportedBuiltins,
   ompReportedBuiltins,
+  ompWorkspaceTrustAvailable,
 } from "./toolGuards.ts";
 import { type OmpSetVibeModeResult, ompVibeModeAvailable } from "./vibe.ts";
 
@@ -124,6 +126,9 @@ import { type OmpSetVibeModeResult, ompVibeModeAvailable } from "./vibe.ts";
 const STREAM_FLUSH = Duration.millis(50);
 /** Reads and title syncs around a turn; a slow answer costs only the meter or the title. */
 const SIDE_REQUEST_TIMEOUT_MS = 2_000;
+/** OMP reloads an overlay 200 ms after it changes; its guard is confirmed for up to 3 s. */
+const GUARD_CONFIRM_ATTEMPTS = 30;
+const GUARD_CONFIRM_INTERVAL = Duration.millis(100);
 /** Model and trait commands; `set_model` may refresh the model's metadata first. */
 const SELECTION_REQUEST_TIMEOUT_MS = 10_000;
 /** The overlay key the role chip writes (docs/omp/models.md). */
@@ -351,19 +356,28 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
     yield* setOverlayKey(threadId, ROLE_OVERLAY_KEY, wanted);
   });
 
+  /** Whether this instance's OMP honours `workspace.trusted` and reports the guard in `get_state`. */
+  const workspaceTrustAvailable = ompWorkspaceTrustAvailable(options.expectedContractVersion);
+
   /**
-   * Pins the browser and computer-use preludes to the thread's permission mode in its overlay
-   * (toolGuards.ts): off outside Full access. Returns the values written.
+   * Pins the browser and computer-use preludes to the thread's permission mode, and
+   * `workspace.trusted` to its project's trust, in its overlay (toolGuards.ts). Returns the
+   * values written.
    */
   const syncToolGuard = Effect.fnUntraced(function* (
     threadId: string,
     runtimeMode: ProviderAdapter.ProviderAdapterV2RuntimePolicy["runtimeMode"],
     computer: boolean | undefined,
+    trusted: boolean,
   ) {
-    const wanted = ompGuardedToolOverlay(runtimeMode, computer);
+    const wanted = ompGuardedToolOverlay(
+      runtimeMode,
+      computer,
+      workspaceTrustAvailable ? trusted : undefined,
+    );
     const current = yield* withAdapterFiles(readOmpThreadOverlay(options.dirs.threads, threadId));
     let next = current;
-    for (const key of OMP_GUARDED_TOOL_KEYS) {
+    for (const key of OMP_GUARDED_KEYS) {
       if (ompOverlayValue(next, key) !== wanted[key]) {
         next = yield* ompOverlayWith(next, key, wanted[key]);
       }
@@ -402,11 +416,14 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
     yield* syncRoleOverlay(input.threadId, readOmpTraitSelection(input.modelSelection).role).pipe(
       Effect.mapError(openError),
     );
-    // The preludes are advertised from the first system prompt, so the guard holds before start.
+    // The preludes are advertised from the first system prompt, and project MCP servers and
+    // extensions load at start, so the guard holds before start.
+    const startedTrusted = input.runtimePolicy.workspaceTrusted === true;
     yield* syncToolGuard(
       input.threadId,
       input.runtimePolicy.runtimeMode,
       readOmpTraitSelection(input.modelSelection).computer,
+      startedTrusted,
     ).pipe(Effect.mapError(openError));
     const process = yield* startOmpSessionProcess({
       binaryPath,
@@ -1035,9 +1052,9 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
     });
 
     /**
-     * Holds the browser and computer-use preludes to the turn's mode and trait before every turn,
-     * from the overlay on disk (no cache: a settings write may have replaced it); switching them
-     * off fails closed. Until OMP's watcher reloads, both run only through `eval`, which asks.
+     * Before every turn, re-pins the guard keys from the overlay on disk (no cache), then on
+     * contract 1.9.0 waits until `get_state` reports them; either failing ends the turn before its
+     * prompt. Project MCP servers and extensions load only at start, so a trust change restarts OMP.
      */
     const applyToolGuard = Effect.fnUntraced(function* (
       threadId: string,
@@ -1046,17 +1063,47 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
     ) {
       const computer = readOmpTraitSelection(modelSelection).computer;
       const restricted = runtimePolicy.runtimeMode !== "full-access";
-      yield* syncToolGuard(threadId, runtimePolicy.runtimeMode, computer).pipe(
+      const trusted = runtimePolicy.workspaceTrusted === true;
+      const wanted = yield* syncToolGuard(
+        threadId,
+        runtimePolicy.runtimeMode,
+        computer,
+        trusted,
+      ).pipe(
         Effect.catch((error) =>
-          restricted
+          restricted || (workspaceTrustAvailable && !trusted)
             ? Effect.fail(
                 protocolError(
-                  `OMP browser and computer use could not be switched off for this permission mode: ${error.message}`,
-                  "tool_guard_unapplied",
+                  `OMP's overlay could not be written for this permission mode and project trust: ${error.message}`,
+                  restricted ? "tool_guard_unapplied" : "workspace_trust_unapplied",
                 ),
               )
-            : traitRefused("computer")(error),
+            : traitRefused("computer")(error).pipe(Effect.as(undefined)),
         ),
+      );
+      if (!workspaceTrustAvailable || wanted === undefined) return;
+      if (trusted !== startedTrusted) {
+        // The overlay now holds the new trust; the process the next turn opens starts with it.
+        yield* process.close().pipe(Effect.ignore, Effect.forkIn(scope));
+        return yield* protocolError(
+          "This project's trust changed after OMP started; OMP restarts to load or drop the project's own agent config. Send the message again.",
+          "workspace_trust_changed",
+        );
+      }
+      let mismatched = ompGuardMismatches(wanted, {});
+      for (let attempt = 0; attempt < GUARD_CONFIRM_ATTEMPTS; attempt++) {
+        const state: unknown = yield* process
+          .request("get_state", undefined, { timeoutMs: SIDE_REQUEST_TIMEOUT_MS })
+          .pipe(Effect.orElseSucceed(() => ({})));
+        mismatched = ompGuardMismatches(wanted, state);
+        if (mismatched.length === 0) return;
+        yield* Effect.sleep(GUARD_CONFIRM_INTERVAL);
+      }
+      return yield* protocolError(
+        `OMP did not apply ${mismatched.join(", ")} from the thread's overlay`,
+        mismatched.includes("workspace.trusted")
+          ? "workspace_trust_unapplied"
+          : "tool_guard_unapplied",
       );
     });
 

@@ -2,9 +2,11 @@ import { assert, describe, it } from "@effect/vitest";
 
 import {
   ompBuiltinAllowed,
+  ompGuardMismatches,
   ompGuardedToolOverlay,
   ompRefusedSlashCommand,
   ompReportedBuiltins,
+  ompWorkspaceTrustAvailable,
 } from "./toolGuards.ts";
 
 describe("ompGuardedToolOverlay", () => {
@@ -14,6 +16,7 @@ describe("ompGuardedToolOverlay", () => {
         assert.deepStrictEqual(ompGuardedToolOverlay(mode, computer), {
           "browser.enabled": false,
           "computer.enabled": false,
+          "workspace.trusted": undefined,
         });
       }
     }
@@ -23,11 +26,70 @@ describe("ompGuardedToolOverlay", () => {
     assert.deepStrictEqual(ompGuardedToolOverlay("full-access", true), {
       "browser.enabled": undefined,
       "computer.enabled": true,
+      "workspace.trusted": undefined,
     });
     assert.deepStrictEqual(ompGuardedToolOverlay("full-access", undefined), {
       "browser.enabled": undefined,
       "computer.enabled": undefined,
+      "workspace.trusted": undefined,
     });
+  });
+
+  it("writes workspace.trusted: false for an untrusted project; trusted leaves OMP's config", () => {
+    assert.strictEqual(
+      ompGuardedToolOverlay("full-access", true, false)["workspace.trusted"],
+      false,
+    );
+    assert.isUndefined(ompGuardedToolOverlay("auto", undefined, true)["workspace.trusted"]);
+    // An OMP before contract 1.9.0 gets no key it does not know.
+    assert.isUndefined(ompGuardedToolOverlay("auto", undefined, undefined)["workspace.trusted"]);
+  });
+
+  it("needs contract 1.9.0 for workspace trust", () => {
+    assert.isFalse(ompWorkspaceTrustAvailable("1.6.0"));
+    assert.isFalse(ompWorkspaceTrustAvailable("1.8.0"));
+    assert.isTrue(ompWorkspaceTrustAvailable("1.9.0"));
+    assert.isTrue(ompWorkspaceTrustAvailable("1.10.2"));
+    assert.isFalse(ompWorkspaceTrustAvailable("2.0.0"));
+  });
+});
+
+describe("ompGuardMismatches", () => {
+  const wanted = ompGuardedToolOverlay("approval-required", true, false);
+
+  it("passes when get_state reports every pinned value", () => {
+    assert.deepStrictEqual(
+      ompGuardMismatches(wanted, {
+        browserEnabled: false,
+        computerEnabled: false,
+        workspaceTrusted: false,
+        isStreaming: false,
+      }),
+      [],
+    );
+  });
+
+  it("names each key OMP has not applied, and treats a missing field as not applied", () => {
+    assert.deepStrictEqual(
+      ompGuardMismatches(wanted, { browserEnabled: true, workspaceTrusted: false }),
+      ["browser.enabled", "computer.enabled"],
+    );
+    assert.deepStrictEqual(ompGuardMismatches(wanted, null), [
+      "browser.enabled",
+      "computer.enabled",
+      "workspace.trusted",
+    ]);
+  });
+
+  it("skips keys left to OMP's own config", () => {
+    const fullAccess = ompGuardedToolOverlay("full-access", undefined, true);
+    assert.deepStrictEqual(ompGuardMismatches(fullAccess, { browserEnabled: true }), []);
+    assert.deepStrictEqual(
+      ompGuardMismatches(ompGuardedToolOverlay("full-access", true, true), {
+        computerEnabled: false,
+      }),
+      ["computer.enabled"],
+    );
   });
 });
 
