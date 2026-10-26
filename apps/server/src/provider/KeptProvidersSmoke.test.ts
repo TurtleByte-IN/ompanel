@@ -1,6 +1,6 @@
 // PRD §12: Ompanel keeps T3's other providers. Each must start in the server's instance registry:
-// created, probed and listed. Spawns go to a missing path, so no real CLI runs. Sessions on each
-// provider run in the per-driver replay fixtures (docs/omp/open-questions.md).
+// created, probed and listed. Hermetic: spawns go to a missing path and credential variables are
+// pinned empty. Sessions on each provider run in the per-driver replay fixtures.
 import { vi } from "vite-plus/test";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, it, assert } from "@effect/vitest";
@@ -53,6 +53,21 @@ const KEPT_PROVIDERS = [
 ] as const;
 
 const MISSING_BINARY_DIR = "/nonexistent/ompanel-kept-providers-smoke";
+// Every credential variable a kept driver reads from the environment, pinned empty on each
+// instance so a developer's key is never used: Cursor's bundled SDK would send CURSOR_API_KEY
+// to Cursor while probing, and spawn redirection does not cover an SDK.
+const PINNED_EMPTY_ENVIRONMENT = [
+  "CURSOR_API_KEY",
+  "CURSOR_AUTH_TOKEN",
+  "XAI_API_KEY",
+  "OPENCODE_API_KEY",
+  "OPENCODE_AUTH_CONTENT",
+  "META_API_KEY",
+  "GEMINI_API_KEY",
+  "GOOGLE_API_KEY",
+  "OPENAI_API_KEY",
+  "ANTHROPIC_API_KEY",
+].map((name) => ({ name, value: "", sensitive: true }));
 const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
 
 const layerTestHttpClient = Layer.succeed(
@@ -111,7 +126,11 @@ describe("kept T3 providers", () => {
             providerInstances: Object.fromEntries(
               KEPT_PROVIDERS.map(([driver, instanceId]) => [
                 ProviderInstanceId.make(instanceId),
-                { driver: ProviderDriverKind.make(driver), enabled: true },
+                {
+                  driver: ProviderDriverKind.make(driver),
+                  enabled: true,
+                  environment: PINNED_EMPTY_ENVIRONMENT,
+                },
               ]),
             ),
           }),

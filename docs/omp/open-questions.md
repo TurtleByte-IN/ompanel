@@ -14,7 +14,8 @@ as notifications and ignores TUI styling" in `uiRequests.test.ts`). Neither need
   component factory, so only its removal arrives (`widgetKey: "autoresearch"`, no
   `widgetLines`) — every `setWidget` in the recorded `omp_*` fixtures is that. Built-in
   `setStatus` comes only from the bundled `/review` and `/annotate` commands: a
-  "Loading…" line, removed when the command finishes.
+  transient progress line (`/review`: "Loading open PRs…", `/annotate`: "Rephrasing
+  annotation source with the session model…"), removed when the command finishes.
 - Both are keyed state that replaces itself, sent at any time; an extension may update
   its status on every turn. A card per update would pile up in the transcript. The
   fitting surface is a per-thread status strip keyed by `statusKey` / `widgetKey`,
@@ -62,7 +63,9 @@ so their layout is OMP's to change.
 Kept. `apps/server/src/provider/KeptProvidersSmoke.test.ts` fails when a driver leaves
 `BUILT_IN_DRIVERS`, and starts Codex, Claude, Cursor, Grok, OpenCode, Antigravity, Pi,
 Muse and ACP Registry through the server's instance registry: each is created, probed
-and listed. No provider CLI runs, so each reports what it is missing. Sessions on each
+and listed. No provider CLI runs and every credential variable the drivers read
+(`CURSOR_API_KEY`, `XAI_API_KEY`, ...) is pinned empty, so no developer key is used and
+each reports what it is missing. Sessions on each
 run in the per-driver replay fixtures
 (`apps/server/src/orchestration-v2/testkit/*ReplayFixtures.integration.test.ts`) and,
 for Antigravity, `AntigravityAdapterV2.test.ts`.
