@@ -31,6 +31,7 @@ export interface OmpStack {
   /** Live `omp` session processes, from the server's pidfiles. */
   readonly ompProcesses: () => ReadonlyArray<OmpProcess>;
   readonly git: (...args: ReadonlyArray<string>) => string;
+  /** The server's output, pairing token redacted. */
   readonly serverLog: () => string;
   readonly stop: () => Promise<void>;
 }
@@ -169,7 +170,8 @@ export const startOmpStack = async (): Promise<OmpStack> => {
     model,
     ompProcesses,
     git,
-    serverLog: () => NodeFS.readFileSync(logPath, "utf8"),
+    serverLog: () =>
+      NodeFS.readFileSync(logPath, "utf8").replaceAll(/#token=\S+/g, "#token=<redacted>"),
     stop: async () => {
       const leftover = ompProcesses();
       server.kill("SIGTERM");

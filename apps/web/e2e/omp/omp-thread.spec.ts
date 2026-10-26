@@ -80,9 +80,12 @@ test.beforeAll(async ({ browser }) => {
   NodeFS.mkdirSync(ARTIFACTS, { recursive: true });
   stack = await startOmpStack();
   context = await browser.newContext({ viewport: { width: 1400, height: 900 } });
-  await context.tracing.start({ screenshots: true, snapshots: true, sources: true });
   page = await context.newPage();
-  await page.goto(stack.pairingUrl);
+  // Through `location` rather than `page.goto`, so the report's step titles never show the
+  // pairing token; tracing starts after pairing for the same reason.
+  await page.evaluate((url) => window.location.assign(url), stack.pairingUrl);
+  await page.waitForURL((url) => url.protocol === "http:" && !url.pathname.startsWith("/pair"));
+  await context.tracing.start({ screenshots: true, snapshots: true, sources: true });
 });
 
 test.beforeEach(async () => {
