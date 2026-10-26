@@ -483,6 +483,10 @@
       "types": "./src/mcpApp.ts",
       "import": "./src/mcpApp.ts"
     },
+    "./ompToolCard": {
+      "types": "./src/ompToolCard.ts",
+      "import": "./src/ompToolCard.ts"
+    },
     "./atomicWrite": {
       "types": "./src/atomicWrite.ts",
       "import": "./src/atomicWrite.ts"

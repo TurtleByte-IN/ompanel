@@ -13,6 +13,7 @@ import {
 } from "@t3tools/client-runtime/work-log/item-detail";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import { isJavaScriptReplTool } from "@t3tools/shared/toolActivity";
+import { readOmpToolCard } from "@t3tools/shared/ompToolCard";
 import { ExternalLinkIcon, GitBranchIcon, RotateCcwIcon } from "lucide-react";
 import { memo, type ReactNode, Suspense, use } from "react";
 
@@ -31,6 +32,7 @@ import { CommandOutputPanel, useCommandOutputStreaming } from "./CommandOutputPa
 import { resolveExternalWebLinkHref } from "./externalLinkContextMenu";
 import type { ExpandedImagePreview } from "./ExpandedImagePreview";
 import { ShellCommandBlock } from "./ShellCommandBlock";
+import { OmpToolCard } from "./OmpToolCard";
 import type { TurnItemSource } from "./timelineRowContext";
 
 interface V2ItemInspectorProps {
@@ -253,6 +255,7 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
   );
   const item = fetched.item;
   const outputState = fetched.output;
+  const ompCard = item.type === "dynamic_tool" ? readOmpToolCard(item.output) : null;
   const support = useV2ItemSupport({
     environmentId: props.environmentId,
     sourceThreadId: props.projectedItem.sourceThreadId,
@@ -388,12 +391,30 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
       ) : null}
 
       {item.type === "dynamic_tool" ? (
-        <ToolCallBody
-          toolName={item.toolName}
-          args={item.input}
-          {...outputState}
-          onImageExpand={props.onImageExpand}
-        />
+        ompCard !== null ? (
+          <OmpToolCard
+            card={ompCard}
+            environmentId={props.environmentId}
+            threadId={props.projectedItem.sourceThreadId}
+            images={outputState.images.map((resource) => (
+              <ChatMarkdownAssetImage
+                key={resource.index}
+                environmentId={props.environmentId}
+                resource={resource}
+                alt="Tool output image"
+                maxHeightRem={16}
+                onImageExpand={props.onImageExpand}
+              />
+            ))}
+          />
+        ) : (
+          <ToolCallBody
+            toolName={item.toolName}
+            args={item.input}
+            {...outputState}
+            onImageExpand={props.onImageExpand}
+          />
+        )
       ) : null}
 
       {item.type === "approval_request" ? <StructuredValue value={item.prompt} /> : null}
