@@ -55,8 +55,79 @@ The server never looks up `omp` on `PATH`. It takes the first of:
    matches `omp.lock`. A relative path or bare name there is an error.
 3. `tools/omp/<tag>/<asset>` under the server's base directory (the download
    cache), if its sha256 matches `omp.lock`.
+4. If none of these exists, the server downloads the pinned sidecar into the
+   cache (see below) and uses it.
 
-A bundled or cached file whose sha256 differs is never run.
+A bundled or cached file whose sha256 differs is never run, and is never
+replaced by a download either: the status shows the refusal. A binary path
+set by hand is shown in the status as not checked against `omp.lock`.
+
+Every status check, and every spawn, resolves the sidecar again and re-hashes
+it. The file is opened once, its owner and mode are checked on that handle,
+its bytes are hashed through the same handle, and the path must still name the
+same unchanged file (device, inode, size, mtime and ctime) when hashing ends.
+A file swapped or rewritten in between is refused. Cached probe results are
+keyed on that identity, so a replaced binary is never reported ready from the
+cache.
+
+## First-run download (web and server)
+
+When no sidecar is bundled or cached, the server fetches
+`https://github.com/<repository>/releases/download/<tag>/<asset>` from the
+pinned fork release:
+
+- It refuses before any request when `omp.lock` has no asset or no sha256 for
+  the host platform, or names an asset that is not a plain file name.
+- The bytes stream into a new temp file in `tools/omp/<tag>/`, created
+  exclusively with mode 0700, and are hashed as they arrive (at most 1 GiB, 10
+  minutes).
+- Only when the sha256 matches `omp.lock` is the temp file renamed over
+  `<asset>`, in the same folder, so the target is either absent or complete.
+  On a mismatch or any failure the temp file is deleted.
+- Concurrent checks share one download.
+
+## Cache folder rules
+
+On macOS and Linux the server creates `tools/omp` and `tools/omp/<tag>` with
+mode 0700. It refuses to use the cache, or to download into it, when either
+folder or the cached file is not owned by the current user, is writable by
+group or others, or is not a plain folder or file (a symlink is refused). Only
+the user who runs Ompanel can then replace the binary after it is verified.
+A bundled sidecar must not be writable by group or others; it may belong to
+another user, such as root for a system-wide install. Windows keeps the cache
+in the user's profile and skips the POSIX checks.
+
+## Desktop bundling
+
+`scripts/build-desktop-artifact.ts` stages the pinned sidecar for each OMP
+release target the app runs on as `omp/<target>/omp` (`omp.exe` on Windows)
+in the app's resources: `darwin-arm64` or `darwin-x64` on macOS (both for a
+universal app), `linux-x64` or `linux-arm64`, `win32-x64` or `win32-arm64`. It
+downloads each asset from the fork release and checks its sha256 against
+`omp.lock`, or takes the asset from `OMPANEL_DESKTOP_OMP_SIDECAR_DIR` (a folder
+of release assets by name) and checks it the same way. A lock with no sidecar
+for a target makes the build ship without OMP and log a warning; the server
+then downloads it on first use.
+
+electron-builder copies the folder as an extra resource and keeps it out of
+`app.asar`. Signing must not rewrite the file, or its sha256 would no longer
+match: macOS signing skips it (`signIgnore`) and Windows signing excludes it
+(`signExts`). The macOS asset therefore keeps the signature the OMP release
+gave it; notarizing Ompanel needs that to be a Developer ID signature, which
+the fork's release CI applies once its `APPLE_*` secrets are set (until then it
+signs ad hoc). A universal macOS app ships both Darwin sidecars unchanged in
+both halves (`x64ArchFiles`).
+
+At start-up the packaged desktop app looks for
+`<resources>/omp/<platform>-<arch>/omp[.exe]` for its own process
+architecture and, when it exists, passes the absolute path to the server in
+`OMPANEL_OMP_BUNDLED_PATH`. The WSL backend gets no bundled path.
+
+To try packaging before a release carries the assets, point
+`OMPANEL_DESKTOP_OMP_LOCK` at a lock file whose `sidecars` hold the sha256 of
+local stand-in binaries in `OMPANEL_DESKTOP_OMP_SIDECAR_DIR`. The app that
+results carries a sidecar its own server refuses, since the server checks
+against the `omp.lock` it was built with.
 
 ## Status checks
 
@@ -65,7 +136,8 @@ An enabled OMP instance runs `omp --version` (4 s limit), then starts
 --no-lsp --no-title` (plus `--profile <name>` when the instance sets one) and
 reads its first frame, which must be `ready` (10 s limit). The process is
 stopped right after. `--no-tools` also keeps MCP servers from starting. The
-result is cached for 30 s per instance, binary, profile and working directory.
+result is cached for 30 s per instance, binary (path and file identity),
+profile and working directory.
 
 The instance is ready only when `ready.contractVersion` equals
 `contract.version` in `omp.lock`; a sidecar that reports another version, or

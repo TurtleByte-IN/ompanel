@@ -61,6 +61,15 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { Command, Flag } from "effect/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import {
+  installOmpSidecar,
+  OMP_LOCK,
+  OmpHostLinuxLibc,
+  OmpLockFile,
+  type OmpLock,
+  type OmpSidecarPlatform,
+} from "@t3tools/provider-omp/sidecar";
 
 const LINUX_ICON_SIZES = [16, 22, 24, 32, 48, 64, 128, 256, 512] as const;
 const DESKTOP_APP_ID = APP_ID;
@@ -473,6 +482,19 @@ export class ResourceMonitorBuildOutputMissingError extends Schema.TaggedError<R
 ) {
   override get message(): string {
     return `Resource monitor build for ${this.rustTarget} did not produce ${this.binaryPath}.`;
+  }
+}
+
+export class OmpSidecarBundleError extends Schema.TaggedError<OmpSidecarBundleError>()(
+  "OmpSidecarBundleError",
+  {
+    sidecarPlatform: Schema.String,
+    detail: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return `Cannot bundle the OMP sidecar for ${this.sidecarPlatform}: ${this.detail}`;
   }
 }
 
@@ -992,6 +1014,9 @@ export const DESKTOP_FILE_EXCLUSIONS = [
   "!apps/desktop/prod-resources/windows-server/**/*",
   "!apps/desktop/prod-resources/wsl-runtime.tar.gz",
   "!apps/desktop/prod-resources/wsl-runtime.tar.gz.sha256",
+  // Shipped once, as an extra resource; never also packed into app.asar.
+  "!apps/desktop/prod-resources/omp",
+  "!apps/desktop/prod-resources/omp/**/*",
   "!apps/desktop/gnome-extension",
   "!apps/desktop/gnome-extension/**/*",
 ] as const;
@@ -1109,6 +1134,35 @@ export const LINUX_CAPTURE_EXTRA_RESOURCES = [
 export const LINUX_BROWSER_SECRET_EXTRA_RESOURCES = [
   { from: "apps/desktop/prod-resources/browser-secret", to: "browser-secret" },
 ] as const;
+
+/** Staged as `omp/<OmpSidecarPlatform>/omp[.exe]`; the desktop app names it to the server. */
+export const OMP_SIDECAR_RESOURCE_DIR = "omp";
+export const OMP_SIDECAR_EXTRA_RESOURCES = [
+  { from: `apps/desktop/prod-resources/${OMP_SIDECAR_RESOURCE_DIR}`, to: OMP_SIDECAR_RESOURCE_DIR },
+] as const;
+// The server runs the sidecar only when its sha256 matches omp.lock, so packaging must not
+// re-sign it: macOS signing skips it (the OMP release signs it) and Windows does not sign it.
+export const MAC_OMP_SIDECAR_SIGN_IGNORE = `/Contents/Resources/${OMP_SIDECAR_RESOURCE_DIR}/[^/]+/omp$`;
+// electron-builder matches signExts by suffix; a leading `!` excludes.
+export const WINDOWS_OMP_SIDECAR_SIGN_EXCLUSION = "!omp.exe";
+// A universal app ships both Darwin sidecars unchanged in both halves instead of lipo-merging them.
+export const MAC_UNIVERSAL_OMP_SIDECAR_X64_ARCH_FILES = `Contents/Resources/${OMP_SIDECAR_RESOURCE_DIR}/*/omp`;
+
+export function ompSidecarExecutableName(platform: typeof BuildPlatform.Type): string {
+  return platform === "win" ? "omp.exe" : "omp";
+}
+
+/** The OMP release targets an app for `platform`/`arch` ships; desktop Linux is glibc only. */
+export function resolveOmpSidecarPlatforms(
+  platform: typeof BuildPlatform.Type,
+  arch: typeof BuildArch.Type,
+): ReadonlyArray<OmpSidecarPlatform> {
+  if (platform === "mac") {
+    return arch === "universal" ? ["darwin-arm64", "darwin-x64"] : [`darwin-${arch}`];
+  }
+  const singleArch = arch === "arm64" ? "arm64" : "x64";
+  return platform === "linux" ? [`linux-${singleArch}`] : [`win32-${singleArch}`];
+}
 
 export interface MacPasskeySigningConfiguration {
   readonly appId: string;
@@ -2454,6 +2508,92 @@ export const stageBrowserSecret = Effect.fn("stageBrowserSecret")(function* (inp
   );
 });
 
+const OMP_SIDECAR_HOST_PLATFORMS = {
+  mac: "darwin",
+  linux: "linux",
+  win: "win32",
+} as const satisfies Record<typeof BuildPlatform.Type, NodeJS.Platform>;
+
+/**
+ * Stages `<prod-resources>/omp/<target>/omp[.exe]` per release target, sha256-checked against the
+ * lock, from the fork release or `sourceDir` (assets by name). Returns false, staging nothing, when
+ * the lock pins no sidecar for a target; the server then downloads it on first use.
+ */
+export const stageOmpSidecar = Effect.fn("stageOmpSidecar")(function* (input: {
+  readonly stageProdResourcesDir: string;
+  readonly downloadDir: string;
+  readonly platform: typeof BuildPlatform.Type;
+  readonly arch: typeof BuildArch.Type;
+  readonly lock: OmpLock;
+  readonly sourceDir: Option.Option<string>;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const destinationRoot = path.join(input.stageProdResourcesDir, OMP_SIDECAR_RESOURCE_DIR);
+  yield* fs.remove(destinationRoot, { recursive: true, force: true }).pipe(Effect.ignore);
+
+  const targets = resolveOmpSidecarPlatforms(input.platform, input.arch);
+  const unpinned = targets.filter((target) => !input.lock.sidecars[target]?.sha256);
+  if (unpinned.length > 0) {
+    yield* Effect.logWarning(
+      `[desktop-artifact] omp.lock (${input.lock.tag}) pins no sidecar sha256 for ${unpinned.join(", ")}; this build ships no OMP sidecar.`,
+    );
+    return false;
+  }
+
+  for (const target of targets) {
+    const pinned = input.lock.sidecars[target]!;
+    const source = yield* Option.match(input.sourceDir, {
+      onNone: () =>
+        installOmpSidecar({ cacheDir: input.downloadDir }, input.lock).pipe(
+          Effect.provideService(HostProcess.Platform, OMP_SIDECAR_HOST_PLATFORMS[input.platform]),
+          Effect.provideService(
+            HostProcess.Architecture,
+            target.endsWith("arm64") ? "arm64" : "x64",
+          ),
+          Effect.provideService(OmpHostLinuxLibc, "gnu"),
+          Effect.provide(FetchHttpClient.layer),
+          Effect.mapError(
+            (cause) =>
+              new OmpSidecarBundleError({ sidecarPlatform: target, detail: cause.message, cause }),
+          ),
+        ),
+      onSome: (sourceDir) =>
+        Effect.gen(function* () {
+          const candidate = path.join(sourceDir, pinned.asset);
+          const bytes = yield* fs.readFile(candidate).pipe(
+            Effect.mapError(
+              (cause) =>
+                new OmpSidecarBundleError({
+                  sidecarPlatform: target,
+                  detail: `cannot read ${candidate}.`,
+                  cause,
+                }),
+            ),
+          );
+          const digest = NodeCrypto.createHash("sha256").update(bytes).digest("hex");
+          if (digest !== pinned.sha256.toLowerCase()) {
+            return yield* new OmpSidecarBundleError({
+              sidecarPlatform: target,
+              detail: `${candidate} has sha256 ${digest}; omp.lock pins ${pinned.sha256}.`,
+            });
+          }
+          return candidate;
+        }),
+    });
+    const destination = path.join(
+      destinationRoot,
+      target,
+      ompSidecarExecutableName(input.platform),
+    );
+    yield* fs.makeDirectory(path.dirname(destination), { recursive: true });
+    yield* fs.copyFile(source, destination);
+    yield* fs.chmod(destination, 0o755);
+    yield* Effect.log(`[desktop-artifact] Staged OMP sidecar ${input.lock.tag} (${target}).`);
+  }
+  return true;
+});
+
 const generateMacIconSet = Effect.fn("build-desktop-artifact.generateMacIconSet")(function* (
   sourcePng: string,
   targetIcns: string,
@@ -2772,6 +2912,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     | undefined,
   wslRuntimeBundled = false,
   arch?: typeof BuildArch.Type,
+  ompSidecarBundled = false,
 ) {
   const buildConfig: Record<string, unknown> = {
     appId: DESKTOP_APP_ID,
@@ -2799,6 +2940,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       ...(platform === "linux" ? LINUX_BROWSER_SECRET_EXTRA_RESOURCES : []),
       ...(platform === "win" ? WINDOWS_SERVER_EXTRA_RESOURCES : []),
       ...(platform === "win" && wslRuntimeBundled ? WSL_RUNTIME_EXTRA_RESOURCES : []),
+      ...(ompSidecarBundled ? OMP_SIDECAR_EXTRA_RESOURCES : []),
     ],
   };
   const updateChannel = resolveDesktopUpdateChannel(version);
@@ -2859,6 +3001,14 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         },
       ],
       ...(signed ? { sign: path.join(repoRoot, "scripts/sign-macos.ts") } : {}),
+      ...(ompSidecarBundled
+        ? {
+            signIgnore: [MAC_OMP_SIDECAR_SIGN_IGNORE],
+            ...(arch === "universal"
+              ? { x64ArchFiles: MAC_UNIVERSAL_OMP_SIDECAR_X64_ARCH_FILES }
+              : {}),
+          }
+        : {}),
       ...(macPasskeySigning
         ? {
             entitlements: macPasskeySigning.entitlementsPath,
@@ -2944,7 +3094,11 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       target: [target],
       icon: "icon.ico",
       // Smart App Control validates unpacked native libraries independently; sign them too.
-      signExts: [".node", ".dll"],
+      signExts: [
+        ".node",
+        ".dll",
+        ...(ompSidecarBundled ? [WINDOWS_OMP_SIDECAR_SIGN_EXCLUSION] : []),
+      ],
       // Resource editing sets product icons even when code signing is disabled.
       signAndEditExecutable: true,
     };
@@ -3760,6 +3914,22 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
   // electron-builder is filtering out stageResourcesDir directory in the AppImage for production
   const stageProdResourcesDir = path.join(stageAppDir, "apps/desktop/prod-resources");
   yield* fs.copy(stageResourcesDir, stageProdResourcesDir);
+  const ompLockOverride = yield* Config.String("OMPANEL_DESKTOP_OMP_LOCK").pipe(Config.option);
+  const ompSidecarBundled = yield* stageOmpSidecar({
+    stageProdResourcesDir,
+    downloadDir: path.join(stageRoot, "omp-download"),
+    platform: options.platform,
+    arch: options.arch,
+    // Packaging tests only: an app built against another lock ships a sidecar its server refuses.
+    lock: yield* Option.match(ompLockOverride, {
+      onNone: () => Effect.succeed<OmpLock>(OMP_LOCK),
+      onSome: (lockPath) =>
+        fs
+          .readFileString(lockPath)
+          .pipe(Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(OmpLockFile)))),
+    }),
+    sourceDir: yield* Config.String("OMPANEL_DESKTOP_OMP_SIDECAR_DIR").pipe(Config.option),
+  });
 
   const configuredMacPasskeySigning =
     options.platform === "mac" && options.signed
@@ -3848,6 +4018,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
         : undefined,
       bundlesWslRuntime({ platform: options.platform, runtimeArchivePath: options.wslRuntime }),
       options.arch,
+      ompSidecarBundled,
     ),
     dependencies: stageDependencies,
     devDependencies: {

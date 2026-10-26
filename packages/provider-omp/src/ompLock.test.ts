@@ -11,6 +11,7 @@ import {
 } from "../contract/src/contract.generated.ts";
 import { ContractManifest, OmpLockFile } from "../scripts/contractMatch.ts";
 import { OMP_LOCK } from "./ompLock.ts";
+import { isSafeOmpAssetName } from "./server/sidecar.ts";
 
 const readPackageJson = <S extends Schema.Top & { readonly DecodingServices: never }>(
   relativePath: string,
@@ -44,10 +45,11 @@ describe("omp.lock", () => {
     }),
   );
 
-  it("records a lowercase sha256 for every pinned sidecar", () => {
+  it("records a lowercase sha256 and a plain file name for every pinned sidecar", () => {
     for (const [platform, sidecar] of Object.entries(OMP_LOCK.sidecars)) {
       assert.match(sidecar.sha256, /^[0-9a-f]{64}$/, platform);
       assert.isTrue(sidecar.asset.startsWith("omp-"), platform);
+      assert.isTrue(isSafeOmpAssetName(sidecar.asset), platform);
     }
   });
 });

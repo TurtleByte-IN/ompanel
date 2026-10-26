@@ -9,8 +9,10 @@ import * as Path from "effect/Path";
 
 import { OMP_LOCK, type OmpLock } from "../ompLock.ts";
 import {
+  isSafeOmpAssetName,
   makeOmpSidecarResolver,
   OmpHostLinuxLibc,
+  OmpHostUserId,
   ompSidecarCachePath,
   ompSidecarPlatform,
   type OmpSidecarResolveInput,
@@ -41,7 +43,12 @@ const withFixture = <A, E>(
       Effect.gen(function* () {
         const target = path.join(dir, relative);
         yield* fileSystem.makeDirectory(path.dirname(target), { recursive: true });
+        // Independent of the umask: folders and files are writable only by their owner.
+        for (let current = path.dirname(target); current !== dir; current = path.dirname(current)) {
+          yield* fileSystem.chmod(current, 0o755);
+        }
         yield* fileSystem.writeFileString(target, contents);
+        yield* fileSystem.chmod(target, 0o755);
         return target;
       }).pipe(Effect.orDie);
     return yield* body({ dir, cacheDir: path.join(dir, "cache"), write });
@@ -87,7 +94,7 @@ describe("makeOmpSidecarResolver", () => {
           bundledPath: bundled,
           cacheDir: fixture.cacheDir,
         });
-        assert.deepStrictEqual(sidecar, { path: override, source: "override", verified: false });
+        assert.deepInclude(sidecar, { path: override, source: "override", verified: false });
       }),
     ),
   );
@@ -102,7 +109,7 @@ describe("makeOmpSidecarResolver", () => {
           bundledPath: bundled,
           cacheDir: fixture.cacheDir,
         });
-        assert.deepStrictEqual(sidecar, { path: bundled, source: "bundled", verified: true });
+        assert.deepInclude(sidecar, { path: bundled, source: "bundled", verified: true });
       }),
     ),
   );
@@ -116,7 +123,7 @@ describe("makeOmpSidecarResolver", () => {
           bundledPath: undefined,
           cacheDir: fixture.cacheDir,
         });
-        assert.deepStrictEqual(sidecar, { path: cached, source: "cache", verified: true });
+        assert.deepInclude(sidecar, { path: cached, source: "cache", verified: true });
       }),
     ),
   );
@@ -131,7 +138,7 @@ describe("makeOmpSidecarResolver", () => {
           bundledPath: bundled,
           cacheDir: fixture.cacheDir,
         });
-        assert.deepStrictEqual(sidecar, { path: cached, source: "cache", verified: true });
+        assert.deepInclude(sidecar, { path: cached, source: "cache", verified: true });
       }),
     ),
   );
@@ -245,4 +252,176 @@ describe("makeOmpSidecarResolver", () => {
       }),
     ),
   );
+
+  it.effect("re-hashes a same-size replacement whose mtime was restored", () =>
+    withFixture((fixture) =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const resolver = yield* makeOmpSidecarResolver(LOCK);
+        const input = { overridePath: "", bundledPath: undefined, cacheDir: fixture.cacheDir };
+        const cached = yield* fixture.write(yield* cacheFile(fixture), PINNED_BYTES);
+        const first = yield* resolver.resolve(input);
+        const mtime = 1_700_000_000;
+        yield* fileSystem.utimes(cached, mtime, mtime);
+        const swapped = "X".repeat(PINNED_BYTES.length);
+        yield* fileSystem.writeFileString(cached, swapped);
+        yield* fileSystem.utimes(cached, mtime, mtime);
+        const error = yield* resolver.resolve(input).pipe(Effect.flip);
+        assert.strictEqual(error.reason, "sha256_mismatch");
+        assert.isString(first.identity);
+      }),
+    ),
+  );
+
+  it.effect("gives a rewritten file a new identity so cached probe results are dropped", () =>
+    withFixture((fixture) =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const override = yield* fixture.write("custom/omp", "developer build");
+        const input = {
+          overridePath: override,
+          bundledPath: undefined,
+          cacheDir: fixture.cacheDir,
+        };
+        const before = yield* resolveWith(input);
+        yield* fileSystem.remove(override);
+        yield* fixture.write("custom/omp", "another build");
+        const after = yield* resolveWith(input);
+        assert.notStrictEqual(after.identity, before.identity);
+      }),
+    ),
+  );
+
+  it.effect("refuses a cache folder other users can write to", () =>
+    withFixture((fixture) =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        yield* fixture.write(yield* cacheFile(fixture), PINNED_BYTES);
+        yield* fileSystem.chmod(fixture.cacheDir, 0o777);
+        const error = yield* resolveWith({
+          overridePath: "",
+          bundledPath: undefined,
+          cacheDir: fixture.cacheDir,
+        }).pipe(Effect.flip);
+        assert.strictEqual(error.reason, "insecure_permissions");
+        assert.include(error.message, "writable by other users");
+      }),
+    ),
+  );
+
+  it.effect("refuses a cached file other users can write to", () =>
+    withFixture((fixture) =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const cached = yield* fixture.write(yield* cacheFile(fixture), PINNED_BYTES);
+        yield* fileSystem.chmod(cached, 0o775);
+        const error = yield* resolveWith({
+          overridePath: "",
+          bundledPath: undefined,
+          cacheDir: fixture.cacheDir,
+        }).pipe(Effect.flip);
+        assert.strictEqual(error.reason, "insecure_permissions");
+        assert.include(error.message, cached);
+      }),
+    ),
+  );
+
+  it.effect("refuses a cache owned by another user", () =>
+    withFixture((fixture) =>
+      Effect.gen(function* () {
+        yield* fixture.write(yield* cacheFile(fixture), PINNED_BYTES);
+        const error = yield* resolveWith({
+          overridePath: "",
+          bundledPath: undefined,
+          cacheDir: fixture.cacheDir,
+        }).pipe(Effect.provideService(OmpHostUserId, (process.getuid?.() ?? 0) + 1), Effect.flip);
+        assert.strictEqual(error.reason, "insecure_permissions");
+        assert.include(error.message, "not owned by the current user");
+      }),
+    ),
+  );
+
+  it.effect("refuses a cached sidecar that is a symlink", () =>
+    withFixture((fixture) =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const real = yield* fixture.write("elsewhere/omp", PINNED_BYTES);
+        const cached = yield* fixture.write(yield* cacheFile(fixture), "placeholder");
+        yield* fileSystem.remove(cached);
+        yield* fileSystem.symlink(real, cached);
+        const error = yield* resolveWith({
+          overridePath: "",
+          bundledPath: undefined,
+          cacheDir: fixture.cacheDir,
+        }).pipe(Effect.flip);
+        assert.strictEqual(error.reason, "insecure_permissions");
+        assert.include(error.message, "not a regular file");
+      }),
+    ),
+  );
+
+  it.effect("skips a bundled sidecar other users can write to", () =>
+    withFixture((fixture) =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const bundled = yield* fixture.write("bundled/omp", PINNED_BYTES);
+        yield* fileSystem.chmod(bundled, 0o777);
+        const error = yield* resolveWith({
+          overridePath: "",
+          bundledPath: bundled,
+          cacheDir: fixture.cacheDir,
+        }).pipe(Effect.flip);
+        assert.strictEqual(error.reason, "insecure_permissions");
+      }),
+    ),
+  );
+
+  it.effect.skipIf(process.getuid?.() === 0)(
+    "reports an unreadable sidecar as unreadable, not as a sha256 mismatch",
+    () =>
+      withFixture((fixture) =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const cached = yield* fixture.write(yield* cacheFile(fixture), PINNED_BYTES);
+          yield* fileSystem.chmod(cached, 0o000);
+          const error = yield* resolveWith({
+            overridePath: "",
+            bundledPath: undefined,
+            cacheDir: fixture.cacheDir,
+          }).pipe(Effect.flip);
+          assert.strictEqual(error.reason, "unreadable");
+        }),
+      ),
+  );
+
+  it.effect("refuses a lock entry without a sha256 or with a path as its asset name", () =>
+    withFixture((fixture) =>
+      Effect.gen(function* () {
+        yield* fixture.write(yield* cacheFile(fixture), PINNED_BYTES);
+        const input = { overridePath: "", bundledPath: undefined, cacheDir: fixture.cacheDir };
+        const noHash = yield* resolveWith(input, {
+          ...LOCK,
+          sidecars: { "darwin-arm64": { asset: "omp-darwin-arm64", sha256: "" } },
+        }).pipe(Effect.flip);
+        assert.strictEqual(noHash.reason, "missing_sha256");
+        for (const asset of ["../omp", "bin/omp", "bin\\omp", ".."]) {
+          const error = yield* resolveWith(input, {
+            ...LOCK,
+            sidecars: { "darwin-arm64": { asset, sha256: sha256(PINNED_BYTES) } },
+          }).pipe(Effect.flip);
+          assert.strictEqual(error.reason, "invalid_asset_name", asset);
+        }
+      }),
+    ),
+  );
+});
+
+describe("isSafeOmpAssetName", () => {
+  it("accepts plain release asset names only", () => {
+    assert.isTrue(isSafeOmpAssetName("omp-darwin-arm64"));
+    assert.isTrue(isSafeOmpAssetName("omp-windows-x64.exe"));
+    for (const asset of ["", ".", "..", "../omp", "a/b", "a\\b", ".hidden", "C:omp"]) {
+      assert.isFalse(isSafeOmpAssetName(asset), asset);
+    }
+  });
 });

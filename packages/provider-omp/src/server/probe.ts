@@ -38,6 +38,8 @@ export const OMP_PROBE_RPC_ARGS = [
 
 export interface OmpProbeInput {
   readonly binaryPath: string;
+  /** `OmpSidecar.identity` of the file at `binaryPath`; a replaced binary is probed again. */
+  readonly binaryIdentity?: string;
   readonly profile: string;
   readonly environment: NodeJS.ProcessEnv;
   readonly cwd: string;
@@ -163,7 +165,9 @@ export const makeOmpProbeCache = Effect.fn("makeOmpProbeCache")(function* (
   const get = <R>(input: OmpProbeInput, probe: Effect.Effect<OmpProbeResult, never, R>) =>
     semaphore.withPermits(1)(
       Effect.gen(function* () {
-        const key = [input.binaryPath, input.profile, input.cwd].join("\0");
+        const key = [input.binaryPath, input.binaryIdentity ?? "", input.profile, input.cwd].join(
+          "\0",
+        );
         const now = yield* Clock.currentTimeMillis;
         const cached = yield* Ref.get(entry);
         if (Option.isSome(cached) && cached.value.key === key && now - cached.value.at < ttlMs) {

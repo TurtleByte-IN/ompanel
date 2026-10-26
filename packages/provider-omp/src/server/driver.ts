@@ -22,12 +22,14 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { OmpSettings } from "../settings.ts";
 import { makeOmpAdapter } from "./adapter.ts";
 import { makeOmpProbeCache, probeOmp } from "./probe.ts";
-import { makeOmpSidecarResolver, OMP_BUNDLED_SIDECAR_ENV } from "./sidecar.ts";
+import { OMP_BUNDLED_SIDECAR_ENV } from "./sidecar.ts";
+import { makeOmpSidecarProvisioner } from "./sidecarInstall.ts";
 import { buildInitialOmpProviderSnapshot, ompProviderSnapshot } from "./status.ts";
 import { makeOmpTextGeneration } from "./textGeneration.ts";
 
@@ -81,13 +83,15 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
       continuation: { groupKey: continuationIdentity.continuationKey },
     });
     const effectiveConfig = { ...config, enabled } satisfies OmpSettings;
-    const resolver = yield* makeOmpSidecarResolver();
+    // Downloads the pinned sidecar into the cache on first use when none is bundled or cached.
+    const resolver = yield* makeOmpSidecarProvisioner();
     const probeCache = yield* makeOmpProbeCache();
     const checkProvider = Effect.gen(function* () {
       if (!effectiveConfig.enabled) return yield* buildInitialOmpProviderSnapshot(effectiveConfig);
+      // Resolve (and re-hash) right before every probe; a resolved path is never reused.
       const resolved = yield* resolver
         .resolve({ overridePath: effectiveConfig.binaryPath, bundledPath, cacheDir })
-        .pipe(Effect.result);
+        .pipe(Effect.provide(FetchHttpClient.layer), Effect.result);
       if (Result.isFailure(resolved)) {
         return ompProviderSnapshot({
           settings: effectiveConfig,
@@ -97,6 +101,7 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
       }
       const probeInput = {
         binaryPath: resolved.success.path,
+        binaryIdentity: resolved.success.identity,
         profile: effectiveConfig.profile,
         environment: processEnv,
         cwd: host.paths.cwd,
@@ -105,7 +110,7 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
       return ompProviderSnapshot({
         settings: effectiveConfig,
         checkedAt: DateTime.formatIso(yield* DateTime.now),
-        resolution: { kind: "probed", probe },
+        resolution: { kind: "probed", probe, sidecar: resolved.success },
       });
     }).pipe(
       Effect.map(stampIdentity),

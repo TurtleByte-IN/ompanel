@@ -203,6 +203,22 @@ describe("makeOmpProbeCache", () => {
     }),
   );
 
+  it.effect("probes again when the binary at the same path was replaced", () =>
+    Effect.gen(function* () {
+      const cache = yield* makeOmpProbeCache();
+      let probes = 0;
+      const probe = Effect.sync((): OmpProbeResult => {
+        probes += 1;
+        return { status: "ready", version: "18.12.6", ready: { contractVersion: "1.0.0" } };
+      });
+      yield* cache.get({ ...INPUT, binaryIdentity: "1:100:5:1:1" }, probe);
+      yield* cache.get({ ...INPUT, binaryIdentity: "1:100:5:1:1" }, probe);
+      assert.strictEqual(probes, 1);
+      yield* cache.get({ ...INPUT, binaryIdentity: "1:101:5:1:2" }, probe);
+      assert.strictEqual(probes, 2);
+    }),
+  );
+
   it.effect("shares one probe between concurrent callers", () =>
     Effect.gen(function* () {
       const cache = yield* makeOmpProbeCache();

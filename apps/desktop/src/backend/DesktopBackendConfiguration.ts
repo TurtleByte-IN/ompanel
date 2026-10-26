@@ -199,6 +199,28 @@ const resolveResourceMonitorPath = Effect.fn(
   return Option.none<string>();
 });
 
+/**
+ * The OMP sidecar a packaged app ships as `<resources>/omp/<platform>-<arch>/omp[.exe]`
+ * (see `stageOmpSidecar` in scripts/build-desktop-artifact.ts). The server runs it only when its
+ * sha256 matches omp.lock, and downloads the pinned sidecar itself when none is shipped.
+ */
+const resolveBundledOmpSidecarPath = Effect.fn(
+  "desktop.backendConfiguration.resolveBundledOmpSidecarPath",
+)(function* () {
+  const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  if (!environment.isPackaged) return Option.none<string>();
+  const fileSystem = yield* FileSystem.FileSystem;
+  const candidate = environment.path.join(
+    environment.resourcesPath,
+    "omp",
+    `${environment.platform}-${environment.processArch}`,
+    environment.platform === "win32" ? "omp.exe" : "omp",
+  );
+  return (yield* fileSystem.exists(candidate).pipe(Effect.orElseSucceed(() => false)))
+    ? Option.some(candidate)
+    : Option.none<string>();
+});
+
 const readPersistedBackendObservabilitySettings = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
@@ -485,6 +507,7 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
     input: SharedBootstrapInput & {
       readonly resourceMonitorPath: Option.Option<string>;
       readonly cliPath: Option.Option<string>;
+      readonly ompSidecarPath: Option.Option<string>;
       readonly shellEnvironmentPrepared: boolean;
     },
   ): Effect.fn.Return<
@@ -533,6 +556,7 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
         ...backendChildEnvPatch(),
         ELECTRON_RUN_AS_NODE: "1",
         OMPANEL_CLI_PATH: Option.getOrUndefined(input.cliPath),
+        OMPANEL_OMP_BUNDLED_PATH: Option.getOrUndefined(input.ompSidecarPath),
       },
       extendEnv: true,
       bootstrap,
@@ -782,11 +806,16 @@ export const make = Effect.gen(function* () {
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
     );
+    const ompSidecarPath = yield* resolveBundledOmpSidecarPath().pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
+    );
     const shellEnvironmentPrepared = yield* shellEnvironment.installIntoProcess;
     return yield* resolvePrimaryStartConfig({
       ...shared,
       resourceMonitorPath,
       cliPath,
+      ompSidecarPath,
       shellEnvironmentPrepared,
     }).pipe(
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
