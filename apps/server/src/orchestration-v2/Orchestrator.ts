@@ -3908,6 +3908,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                           : "Provider or model selection changed.",
                 // Terminal detaches revoke MCP credentials; reattachments need other detach reasons to preserve them.
                 ...(command.type === "thread.archive" ? { revokeMcpCredential: true } : {}),
+                // A turn running in the old workspace finishes there: `/wt` binds the thread from
+                // inside the turn that asked for the worktree (ompanel#132).
+                ...(command.type === "thread.metadata.update" ? { drain: true } : {}),
               },
             } satisfies PendingOrchestrationEffectV2;
             yield* Ref.update(effects, (existing) => [...existing, pendingEffect]);
