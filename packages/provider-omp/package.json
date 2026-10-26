@@ -11,6 +11,10 @@
       "types": "./src/settings.ts",
       "import": "./src/settings.ts"
     },
+    "./rpc": {
+      "types": "./src/rpc.ts",
+      "import": "./src/rpc.ts"
+    },
     "./server": {
       "types": "./src/server.ts",
       "import": "./src/server.ts"
