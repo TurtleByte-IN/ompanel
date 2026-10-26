@@ -117,7 +117,6 @@ interface ActiveTurn {
   readonly usage: UsageTotals;
   tokenUsage: OrchestrationV2ProviderTurnTokenUsage | undefined;
   promptId: string | null;
-  modelFailure: OrchestrationV2ProviderFailure | null;
   noticeCount: number;
 }
 
@@ -495,7 +494,6 @@ export class OmpThreadMapper {
       usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, reported: false },
       tokenUsage: undefined,
       promptId: null,
-      modelFailure: null,
       noticeCount: 0,
     };
     // The orchestrator owns the provider thread row; keep its identity for later updates.
@@ -568,7 +566,7 @@ export class OmpThreadMapper {
           id !== turn.promptId
         )
           break;
-        settled = this.#promptOutcome(turn, f);
+        settled = this.#promptOutcome(f);
         break;
       }
       case "message_start":
@@ -776,7 +774,11 @@ export class OmpThreadMapper {
     return events;
   }
 
-  #promptOutcome(turn: ActiveTurn, frame: Record<string, unknown>): OmpTurnOutcome {
+  /**
+   * `prompt_result.status` is the prompt's final word: a model error OMP recovered from by
+   * auto-retry or fallback still ends `completed`, and one it gave up on ends `error`.
+   */
+  #promptOutcome(frame: Record<string, unknown>): OmpTurnOutcome {
     const status = frame["status"];
     if (status === "aborted") return { status: "interrupted" };
     if (status === "error") {
@@ -791,9 +793,7 @@ export class OmpThreadMapper {
         }),
       };
     }
-    return turn.modelFailure === null
-      ? { status: "completed" }
-      : { status: "failed", failure: turn.modelFailure };
+    return { status: "completed" };
   }
 
   #sessionInfo(
@@ -1141,12 +1141,6 @@ export class OmpThreadMapper {
     message: Record<string, unknown>,
     now: DateTime.Utc,
   ): Array<Event> {
-    if (message["stopReason"] === "error" && turn.modelFailure === null) {
-      turn.modelFailure = makeProviderFailure({
-        message: stringField(message, "errorMessage") ?? "The model reported an error.",
-        class: "provider_error",
-      });
-    }
     const usage = asRecord(message["usage"]) as Partial<Usage> | undefined;
     if (usage === undefined) return [];
     turn.usage.input += count(usage.input);

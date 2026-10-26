@@ -627,4 +627,52 @@ describe("OmpThreadMapper", () => {
     );
     assert.deepStrictEqual(result.settled, { status: "interrupted" });
   });
+
+  it("completes a turn OMP recovered from a model error by auto-retry", () => {
+    const { mapper } = startedTurn();
+    mapper.handleFrame(
+      { type: "response", id: "ompanel-2", command: "prompt", success: true } as never,
+      at(1),
+    );
+    const frames = [
+      {
+        type: "message_end",
+        message: {
+          role: "assistant",
+          content: [],
+          stopReason: "error",
+          errorMessage: "overloaded",
+        },
+      },
+      {
+        type: "auto_retry_start",
+        attempt: 1,
+        maxAttempts: 3,
+        delayMs: 10,
+        errorMessage: "overloaded",
+      },
+      { type: "auto_retry_end", success: true, attempt: 1 },
+      {
+        type: "message_end",
+        message: { role: "assistant", content: [], usage: USAGE, stopReason: "stop" },
+      },
+    ];
+    for (const frame of frames) assert.isNull(mapper.handleFrame(frame as never, at(2)).settled);
+    const result = mapper.handleFrame(
+      {
+        type: "prompt_result",
+        id: "ompanel-2",
+        agentInvoked: true,
+        status: "completed",
+        sessionSettled: true,
+      } as never,
+      at(3),
+    );
+    assert.deepStrictEqual(result.settled, { status: "completed" });
+    const [terminal] = ofType(mapper.finalizeTurn(result.settled!, {}, at(4)), "turn.terminal");
+    assert.deepStrictEqual(terminal === undefined ? null : [terminal.status, terminal.failure], [
+      "completed",
+      null,
+    ]);
+  });
 });
