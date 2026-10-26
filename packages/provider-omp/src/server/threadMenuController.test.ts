@@ -48,9 +48,12 @@ const THREAD = ThreadId.make("thread/menu");
 const FILE_ID = "a1b2c3d4";
 const PAGE = "<!doctype html><title>exported</title>";
 
-/** `omp share --gist` as the pinned omp prints it (commands/share.ts), with fake ids. */
+/**
+ * `omp share --gist` as the pinned omp prints it (commands/share.ts), with fake ids: the link is
+ * `<share.serverUrl>/<gist id>#<key>`, so under Ompanel's overlay it is on the blocked host.
+ */
 const SHARE_STDOUT = [
-  "Share URL: https://my.omp.sh/s/0f3a9c#k=fake-key",
+  "Share URL: https://share-server-disabled.invalid/0f3a9c#k=fake-key",
   "Gist: https://gist.github.com/tester/0f3a9c",
   "",
 ].join("\n");
@@ -134,7 +137,7 @@ describe("parseOmpShareOutput", () => {
         `${SHARE_STDOUT}Note: large content was trimmed to fit the share size limit.\n`,
       ),
       {
-        url: "https://my.omp.sh/s/0f3a9c#k=fake-key",
+        url: "https://share-server-disabled.invalid/0f3a9c#k=fake-key",
         gistUrl: "https://gist.github.com/tester/0f3a9c",
         truncated: true,
       },
@@ -216,12 +219,45 @@ posixOnly("OMP thread menu", () => {
       });
       const file = yield* recordSession;
       const shared = yield* menu.shareGist(THREAD);
+      // The link is rebuilt on OMP's own viewer, whatever host the share server setting named.
       assert.deepStrictEqual(shared, {
         url: "https://my.omp.sh/s/0f3a9c#k=fake-key",
         gistUrl: "https://gist.github.com/tester/0f3a9c",
         truncated: false,
       });
-      assert.deepStrictEqual(omp.starts().at(-1)?.argv, ["share", file, "--gist"]);
+      const share = omp.starts().at(-1);
+      assert.deepStrictEqual(share?.argv, ["share", file, "--gist"]);
+      // The overlay outranks project settings, so a repo's `share.serverUrl` never applies.
+      assert.strictEqual(
+        share?.overlay,
+        'share:\n  serverUrl: "https://share-server-disabled.invalid"\n  store: gist\n',
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("never returns a link that is not Ompanel's gist on OMP's viewer", () =>
+    Effect.gen(function* () {
+      const omp = yield* makeFakeOmpControl;
+      const outputs = [
+        // The gist failed and the fallback upload to the blocked host failed: omp exits 1.
+        { stdout: "", stderr: "Error: fetch failed\n", exitCode: 1 },
+        // A share-server upload (no gist) or a link on another host: refused, never passed on.
+        { stdout: "Share URL: https://share-server-disabled.invalid/abc#k=x\n" },
+        {
+          stdout:
+            "Share URL: https://evil.example/0f3a9c#k=x\nGist: https://gist.github.com/t/0f3a9c\n",
+        },
+      ];
+      for (const output of outputs) {
+        const { menu, recordSession } = yield* makeHarness(omp, {
+          gh: "ready",
+          cli: { share: output },
+        });
+        yield* recordSession;
+        const refused = yield* menu.shareGist(THREAD).pipe(Effect.flip);
+        assert.strictEqual(refused.reason, "omp_failed");
+        if (output.exitCode === 1) assert.include(refused.message, "Nothing was uploaded");
+      }
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
@@ -325,114 +361,159 @@ const captureLogs = () => {
 };
 
 posixOnly("OMP collab links stay out of the journal and the logs", () => {
-  it.live("returns the links to the caller only, even when OMP puts one on a frame", () => {
-    const token = "fake-collab-token-7c1e";
-    const logs = captureLogs();
-    return Effect.gen(function* () {
-      const state = yield* makeFakeOmpState;
-      const path = yield* Path.Path;
-      const dirs = ompStateDirs(path, NodePath.join(state.dir, "state"));
-      const threadSessions = makeOmpThreadSessions();
-      const prompt = [...fakeOmpFrames.promptTurn({ text: ["Hi"] })];
-      const promptResult = prompt.pop()!;
-      const adapter = yield* makeOmpAdapter({
-        instanceId: JOURNAL_INSTANCE_ID,
-        profile: "",
-        environment: state.env({
-          ...state.sessionStore(),
-          FAKE_OMP_CONTRACT: "1.7.0",
-          FAKE_OMP_COLLAB_TOKEN: token,
-          ...state.script({
-            commands: {
-              prompt: [
-                ...prompt,
-                // A misbehaving OMP: a room frame mid-turn that carries the control link.
-                {
-                  emit: {
-                    type: "collab_state",
-                    active: true,
-                    participantCount: 1,
-                    link: `omp://join/fake-room#${token}.write`,
+  it.live(
+    "keeps links, late answers included, out of the journal and logs; stops a lost start",
+    () => {
+      const token = "fake-collab-token-7c1e";
+      const logs = captureLogs();
+      return Effect.gen(function* () {
+        const state = yield* makeFakeOmpState;
+        const path = yield* Path.Path;
+        const dirs = ompStateDirs(path, NodePath.join(state.dir, "state"));
+        const threadSessions = makeOmpThreadSessions();
+        const prompt = [...fakeOmpFrames.promptTurn({ text: ["Hi"] })];
+        const promptResult = prompt.pop()!;
+        const adapter = yield* makeOmpAdapter({
+          instanceId: JOURNAL_INSTANCE_ID,
+          profile: "",
+          environment: state.env({
+            ...state.sessionStore(),
+            FAKE_OMP_CONTRACT: "1.7.0",
+            FAKE_OMP_COLLAB_TOKEN: token,
+            // A slow relay: room answers come after the short deadlines below.
+            FAKE_OMP_COLLAB_DELAY_MS: "400",
+            ...state.script({
+              commands: {
+                prompt: [
+                  ...prompt,
+                  // A misbehaving OMP: a room frame mid-turn that carries the control link.
+                  {
+                    emit: {
+                      type: "collab_state",
+                      active: true,
+                      participantCount: 1,
+                      link: `omp://join/fake-room#${token}.write`,
+                    },
                   },
-                },
-                promptResult,
-              ],
-            },
-          }),
-        }),
-        platform,
-        defaultCwd: state.dir,
-        resolveBinary: Effect.succeed(state.executable()),
-        dirs,
-        pidfiles: yield* makeOmpPidfiles({ dir: dirs.pidfiles, platform }),
-        expectedContractVersion: "1.7.0",
-        threadSessions,
-        sessions: state.sessions,
-      }).pipe(
-        Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
-          offer: () => Effect.void,
-          take: Effect.never,
-        }),
-      );
-      const menu = makeOmpThreadMenuController({
-        control: yield* makeOmpControlService(),
-        target: () => Effect.die("no CLI in this test"),
-        globalCwd: state.dir,
-        exportsDir: NodePath.join(state.dir, "exports"),
-        threadsDir: dirs.threads,
-        sessionsLocation: state.sessions,
-        sessions: threadSessions,
-        contractVersion: "1.7.0",
-        ompVersion: "test",
-        fileSystem: yield* FileSystem.FileSystem,
-        path,
-      });
-
-      const outer = yield* Effect.scope;
-      const turns: Array<string> = [];
-      const collector = yield* Effect.gen(function* () {
-        const session = yield* adapter.openSession({
-          threadId: JOURNAL_THREAD_ID,
-          providerSessionId: ProviderSessionId.make("session-collab"),
-          modelSelection: journalModelSelection,
-          runtimePolicy: journalRuntimePolicy,
-        });
-        const fiber = yield* session.events.pipe(
-          Stream.runForEach((event) =>
-            Effect.sync(() => {
-              if (event.type === "turn.terminal") turns.push(event.type);
+                  // The turn stays open while the room calls below run, so late answers land in it.
+                  { sleepMs: 2_500 },
+                  promptResult,
+                ],
+              },
             }),
-          ),
-          Effect.forkIn(outer),
+          }),
+          platform,
+          defaultCwd: state.dir,
+          resolveBinary: Effect.succeed(state.executable()),
+          dirs,
+          pidfiles: yield* makeOmpPidfiles({ dir: dirs.pidfiles, platform }),
+          expectedContractVersion: "1.7.0",
+          threadSessions,
+          sessions: state.sessions,
+        }).pipe(
+          Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
+            offer: () => Effect.void,
+            take: Effect.never,
+          }),
         );
-        const providerThread = yield* session.ensureThread({
-          threadId: JOURNAL_THREAD_ID,
-          modelSelection: journalModelSelection,
-          runtimePolicy: journalRuntimePolicy,
+        const menu = makeOmpThreadMenuController({
+          control: yield* makeOmpControlService(),
+          target: () => Effect.die("no CLI in this test"),
+          globalCwd: state.dir,
+          exportsDir: NodePath.join(state.dir, "exports"),
+          threadsDir: dirs.threads,
+          sessionsLocation: state.sessions,
+          sessions: threadSessions,
+          contractVersion: "1.7.0",
+          ompVersion: "test",
+          fileSystem: yield* FileSystem.FileSystem,
+          path,
         });
-        yield* session.startTurn(journalTurnInput(providerThread, 1, yield* DateTime.now));
-        assert.isTrue(yield* waitUntil(() => turns.length === 1));
+        // The same thread through deadlines shorter than the relay's answers.
+        const impatient = makeOmpThreadMenuController({
+          control: yield* makeOmpControlService(),
+          target: () => Effect.die("no CLI in this test"),
+          globalCwd: state.dir,
+          exportsDir: NodePath.join(state.dir, "exports"),
+          threadsDir: dirs.threads,
+          sessionsLocation: state.sessions,
+          sessions: threadSessions,
+          contractVersion: "1.7.0",
+          ompVersion: "test",
+          fileSystem: yield* FileSystem.FileSystem,
+          path,
+          timeoutsMs: { collabStart: 100, collab: 100 },
+        });
 
-        const started = yield* menu.startCollab({ threadId: JOURNAL_THREAD_ID, access: "control" });
-        assert.include(started.link ?? "", token);
-        assert.include(started.webLink ?? "", token);
-        assert.include((yield* menu.collabStatus(JOURNAL_THREAD_ID)).link ?? "", token);
-        assert.deepStrictEqual(yield* menu.stopCollab(JOURNAL_THREAD_ID), { stopped: true });
-        return fiber;
-      }).pipe(Effect.scoped);
-      yield* Fiber.await(collector);
+        const outer = yield* Effect.scope;
+        const turns: Array<string> = [];
+        const collector = yield* Effect.gen(function* () {
+          const session = yield* adapter.openSession({
+            threadId: JOURNAL_THREAD_ID,
+            providerSessionId: ProviderSessionId.make("session-collab"),
+            modelSelection: journalModelSelection,
+            runtimePolicy: journalRuntimePolicy,
+          });
+          const fiber = yield* session.events.pipe(
+            Stream.runForEach((event) =>
+              Effect.sync(() => {
+                if (event.type === "turn.terminal") turns.push(event.type);
+              }),
+            ),
+            Effect.forkIn(outer),
+          );
+          const providerThread = yield* session.ensureThread({
+            threadId: JOURNAL_THREAD_ID,
+            modelSelection: journalModelSelection,
+            runtimePolicy: journalRuntimePolicy,
+          });
+          yield* session.startTurn(journalTurnInput(providerThread, 1, yield* DateTime.now));
+          assert.isTrue(yield* waitUntil(() => state.events().includes("command:prompt")));
 
-      const journal = NodeFS.readFileSync(
-        ompJournalPath(path, dirs.threads, JOURNAL_THREAD_ID),
-        "utf8",
-      );
-      // The turn was journaled; the frame with the link was not.
-      assert.include(journal, '"k":"turn"');
-      assert.notInclude(journal, token);
-      assert.notInclude(journal, "collab_state");
-      // The adapter saw the room frames (it logs their type) and logged no link.
-      assert.isTrue(logs.lines.some((line) => line.includes("collab_state")));
-      assert.isFalse(logs.lines.some((line) => line.includes(token)));
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer), logs.provide);
-  });
+          // A start that times out is stopped: OMP cancels it, and no room is left open.
+          const lost = yield* impatient
+            .startCollab({ threadId: JOURNAL_THREAD_ID, access: "control" })
+            .pipe(Effect.flip);
+          assert.strictEqual(lost.reason, "timeout");
+          assert.isTrue(yield* waitUntil(() => state.events().includes("command:collab_stop")));
+          assert.isFalse((yield* menu.collabStatus(JOURNAL_THREAD_ID)).active);
+
+          const started = yield* menu.startCollab({
+            threadId: JOURNAL_THREAD_ID,
+            access: "control",
+          });
+          assert.include(started.link ?? "", token);
+          assert.include(started.webLink ?? "", token);
+          // A status read that gives up; its answer, links and all, arrives later mid-turn.
+          const late = yield* impatient.collabStatus(JOURNAL_THREAD_ID).pipe(Effect.flip);
+          assert.strictEqual(late.reason, "timeout");
+          // The fake wrote that answer (its second status answer) after the read gave up.
+          assert.isTrue(
+            yield* waitUntil(
+              () =>
+                state.events().filter((event) => event === "collab-answer:collab_status").length ===
+                2,
+            ),
+          );
+          assert.lengthOf(turns, 0, "the late answers arrived while the turn ran");
+          assert.deepStrictEqual(yield* menu.stopCollab(JOURNAL_THREAD_ID), { stopped: true });
+          assert.isTrue(yield* waitUntil(() => turns.length === 1));
+          return fiber;
+        }).pipe(Effect.scoped);
+        yield* Fiber.await(collector);
+
+        const journal = NodeFS.readFileSync(
+          ompJournalPath(path, dirs.threads, JOURNAL_THREAD_ID),
+          "utf8",
+        );
+        // The turn was journaled; the frame with the link was not.
+        assert.include(journal, '"k":"turn"');
+        assert.notInclude(journal, token);
+        assert.notInclude(journal, "collab_");
+        // The adapter saw the room frames (it logs their type) and logged no link.
+        assert.isTrue(logs.lines.some((line) => line.includes("collab_state")));
+        assert.isFalse(logs.lines.some((line) => line.includes(token)));
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer), logs.provide);
+    },
+  );
 });

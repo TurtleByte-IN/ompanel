@@ -38,10 +38,31 @@ anything leaves the machine:
 - `gh` signed out: "The GitHub CLI (gh) is not signed in. Run `gh auth login`,
   then try again. Nothing was uploaded."
 
-If the gist still fails after that check (a network error, a revoked token),
-OMP falls back to its share server; the dialog then shows the link with a
-warning that the share server was used. The upload runs once per click: the
-dialog asks first, and a second click while it runs joins the first.
+Ompanel never lets that fallback upload anything. `omp share` runs with a
+config overlay (`PI_CONFIG_FILES`, which outranks global and project settings)
+that sets `share.serverUrl` to `https://share-server-disabled.invalid`, a host
+that can never resolve (RFC 6761). So:
+
+- If the gist fails after the check (a network error, a revoked token), OMP's
+  fallback upload fails too. The dialog says "OMP could not create the gist.
+  Nothing was uploaded".
+- A cloned repo's `.omp/config.yml` cannot choose the share host either: the
+  overlay wins.
+
+OMP builds the link as `<share.serverUrl>/<gist id>#<key>`. Ompanel accepts only
+a link on the blocked host with a matching `Gist:` line, then rebuilds it on
+OMP's own viewer, `https://my.omp.sh/s/<gist id>#<key>`. Any other output is
+refused.
+
+Checked against the pinned omp, with `gh` absent and a repo setting present
+(`program/evidence/p-06/share-gist-overlay.txt`):
+
+- without the overlay, OMP tried to upload to the repo's host;
+- with it, OMP tried the blocked host;
+- both runs exited 1, and nothing was uploaded.
+
+The upload runs once per click: the dialog asks first, and a second click while
+it runs joins the first.
 
 ## Share live
 
@@ -66,13 +87,25 @@ link with its QR code and the `omp join` link, and lists who joined.
 OMP's collab relay (`collab.relayUrl` in OMP's settings), outside T3's pairing,
 scopes and approvals. The dialog says this every time it opens.
 
-The links are capabilities, so Ompanel never records them: they travel from
-OMP's response to the dialog only. The adapter keeps `collab_*` frames out of
-the thread's mapping and its journal ([journal.md](journal.md)), logs record
-only frame types, and spans carry the instance and thread ids only.
+The links are capabilities, so Ompanel never records them. They travel from
+OMP's response to the dialog only:
+
+- The adapter keeps `collab_*` frames out of the thread's mapping and its
+  journal ([journal.md](journal.md)).
+- Room requests are sent with `dropLateResponse`. An answer that arrives after
+  the request gave up (a timeout, a closed dialog) is dropped by the RPC process
+  instead of reaching the journal.
+- A start that does not come back with a room is followed by `collab_stop`, so
+  no room stays open that nobody sees. That covers a timeout, a caller that
+  went away, and an answer Ompanel cannot read.
+- Logs record only frame types, and spans carry only the instance and thread
+  ids.
+
 `threadMenuController.test.ts` drives a fake OMP whose room links carry a
-marker token (and one frame that wrongly carries a link) and checks the token
-reaches neither the journal nor any log line.
+marker token, during a running turn. The fake sends one frame that wrongly
+carries a link, and delays its room answers past short deadlines, so they
+land late mid-turn. The test checks that the lost start was stopped, and that
+the token reaches neither the journal nor any log line.
 
 ## Branch tree
 

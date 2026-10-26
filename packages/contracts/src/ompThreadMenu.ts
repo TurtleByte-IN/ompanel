@@ -25,11 +25,8 @@ export type OmpExportHtmlResult = typeof OmpExportHtmlResult.Type;
 export const OmpShareGistResult = Schema.Struct({
   /** The viewer link; the decryption key is in its fragment. */
   url: Schema.String,
-  /**
-   * The secret gist holding the sealed session. Null when OMP could not create it and uploaded
-   * to its share server instead.
-   */
-  gistUrl: Schema.NullOr(Schema.String),
+  /** The secret gist holding the sealed session; Ompanel never lets OMP use its share server. */
+  gistUrl: Schema.String,
   /** Large content was trimmed to fit the share size limit. */
   truncated: Schema.Boolean,
 });

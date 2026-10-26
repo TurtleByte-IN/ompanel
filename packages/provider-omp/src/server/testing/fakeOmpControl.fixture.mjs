@@ -36,7 +36,9 @@ function writeExport(output) {
     NodeFS.writeFileSync(outPath, output.html);
 }
 
-log({ event: "start", pid: process.pid, argv, cwd: process.cwd() });
+// The `PI_CONFIG_FILES` overlay a command ran with, so tests see the settings it forced.
+const overlay = env.PI_CONFIG_FILES ? NodeFS.readFileSync(env.PI_CONFIG_FILES, "utf8") : undefined;
+log({ event: "start", pid: process.pid, argv, cwd: process.cwd(), overlay });
 
 if (!argv.includes("--mode")) {
   const command = cliCommand();

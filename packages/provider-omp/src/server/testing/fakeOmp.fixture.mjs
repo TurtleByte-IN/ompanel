@@ -461,15 +461,43 @@ function collabStatus() {
     participants: [{ name: "host", role: "host" }],
   };
 }
+/**
+ * FAKE_OMP_COLLAB_DELAY_MS delays the answers to `collab_start` and `collab_status`, as a slow
+ * relay does. Like OMP, a `collab_stop` while a start is pending cancels it: the start fails.
+ */
+const collabDelayMs = Number(env.FAKE_OMP_COLLAB_DELAY_MS ?? 0);
+let pendingStart = null;
 function answerCollab(command) {
-  const respond = (data) =>
+  const respond = (data) => {
+    record(`collab-answer:${command.type}`);
     write({ id: command.id, type: "response", command: command.type, success: true, data });
-  if (command.type === "collab_status") return respond(collabStatus());
-  if (command.type === "collab_start") {
-    collabRoom = { access: command.access ?? "control" };
-    respond(collabStatus());
-    write({ type: "collab_state", active: true, participantCount: 1 });
+  };
+  if (command.type === "collab_status") {
+    setTimeout(() => respond(collabStatus()), collabDelayMs);
     return;
+  }
+  if (command.type === "collab_start") {
+    const open = () => {
+      pendingStart = null;
+      collabRoom = { access: command.access ?? "control" };
+      respond(collabStatus());
+      write({ type: "collab_state", active: true, participantCount: 1 });
+    };
+    if (collabDelayMs === 0) return open();
+    pendingStart = { command, timer: setTimeout(open, collabDelayMs) };
+    return;
+  }
+  if (pendingStart !== null) {
+    clearTimeout(pendingStart.timer);
+    const cancelled = pendingStart.command;
+    pendingStart = null;
+    write({
+      id: cancelled.id,
+      type: "response",
+      command: cancelled.type,
+      success: false,
+      error: "collab start cancelled",
+    });
   }
   const stopped = collabRoom !== null;
   collabRoom = null;

@@ -348,6 +348,8 @@ interface FakeOmpControlLogEntry {
   readonly argv?: ReadonlyArray<string>;
   readonly cwd?: string;
   readonly frame?: Record<string, unknown>;
+  /** The `PI_CONFIG_FILES` overlay the process ran with. */
+  readonly overlay?: string;
 }
 
 /**
@@ -430,7 +432,14 @@ export const makeFakeOmpControl = Effect.acquireRelease(
       starts: () =>
         entries().flatMap((entry) =>
           entry.event === "start" && entry.pid !== undefined
-            ? [{ pid: entry.pid, argv: entry.argv ?? [], cwd: entry.cwd ?? "" }]
+            ? [
+                {
+                  pid: entry.pid,
+                  argv: entry.argv ?? [],
+                  cwd: entry.cwd ?? "",
+                  overlay: entry.overlay ?? null,
+                },
+              ]
             : [],
         ),
       /** Every frame the fake's RPC servers read from stdin, in order. */

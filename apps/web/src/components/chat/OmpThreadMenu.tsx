@@ -236,7 +236,8 @@ function OmpShareGistDialog({ dialog }: { readonly dialog: OmpThreadDialog }) {
           <DialogDescription>
             OMP encrypts this thread&apos;s session and uploads it to a secret GitHub gist with your
             <code> gh </code>
-            account. Anyone with the link can read the whole conversation, tool output included.
+            account, and nowhere else: if the gist fails, nothing is uploaded. Anyone with the link
+            can read the whole conversation, tool output included.
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -244,17 +245,7 @@ function OmpShareGistDialog({ dialog }: { readonly dialog: OmpThreadDialog }) {
             {state.status === "shared" ? (
               <>
                 <CopyableLink label="Share link" value={state.result.url} />
-                {state.result.gistUrl === null ? (
-                  <Alert variant="warning">
-                    <TriangleAlertIcon />
-                    <AlertTitle>Uploaded to OMP&apos;s share server</AlertTitle>
-                    <AlertDescription>
-                      OMP could not create the gist, so it used its share server instead.
-                    </AlertDescription>
-                  </Alert>
-                ) : (
-                  <p className="text-muted-foreground text-xs">Gist: {state.result.gistUrl}</p>
-                )}
+                <p className="text-muted-foreground text-xs">Gist: {state.result.gistUrl}</p>
                 {state.result.truncated ? (
                   <p className="text-muted-foreground text-xs">
                     Large content was trimmed to fit the share size limit.
