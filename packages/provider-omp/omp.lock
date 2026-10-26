@@ -11,5 +11,38 @@
     "version": "1.0.0",
     "schemaHash": "sha256:c69d63a87d5f91f918f9afb03f6aed8d637262e9c2f783e1524f62c1e6d14540"
   },
-  "sidecars": {}
+  "sidecars": {
+    "darwin-arm64": {
+      "asset": "omp-darwin-arm64",
+      "sha256": "612fff7dfcf2de3444ebe5832d257966f33876b099e2906d267d3fd0240ef886"
+    },
+    "darwin-x64": {
+      "asset": "omp-darwin-x64",
+      "sha256": "0daa7eadacb2b9b27b52043586bc24f8004fac7126916fa2471f819ee7f86125"
+    },
+    "linux-arm64": {
+      "asset": "omp-linux-arm64",
+      "sha256": "c7ea00c0a686a0f9fd5fa405c34a1d2f942933c51887b4c5a42de995772eea58"
+    },
+    "linux-x64": {
+      "asset": "omp-linux-x64",
+      "sha256": "e352dee11144c4a01a3742e22ff8f5e1b83d9c52418286b99c1fa571a7977502"
+    },
+    "linux-musl-arm64": {
+      "asset": "omp-linux-musl-arm64",
+      "sha256": "a72ef78c3e2e677ea0d946893779b8561b983901e087a1b6aae070df05f14c17"
+    },
+    "linux-musl-x64": {
+      "asset": "omp-linux-musl-x64",
+      "sha256": "f20267928b6264ac1e1bd282a88ed5245f95d0a0b070c6838cbe685a0f622505"
+    },
+    "win32-arm64": {
+      "asset": "omp-windows-arm64.exe",
+      "sha256": "57e5328f8c895e58182da38ec15a3c9038dcbe742259665b6ebb1f1003efd46d"
+    },
+    "win32-x64": {
+      "asset": "omp-windows-x64.exe",
+      "sha256": "e16643918a8976e2dfe45e467591a496618bde0f44e6ac9c8018f8d4e600bf5a"
+    }
+  }
 }
