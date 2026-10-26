@@ -33,11 +33,9 @@ describe("omp launch on every platform", () => {
   });
 
   it("never sets PI_CONFIG_FILES or runs `omp config init-xdg`", () => {
-    // OMP splits PI_CONFIG_FILES on `:` (Unix) or `;` (Windows); Ompanel avoids that by passing
-    // `--config`. `init-xdg` exits non-zero on Windows and moves nothing, so Ompanel follows
-    // whatever directories OMP already resolves instead (docs/omp/processes.md).
-    // Exception: `omp share` takes no `--config`, so "Share as gist" sets PI_CONFIG_FILES to one
-    // overlay path and refuses a path holding the delimiter (docs/omp/thread-menu.md).
+    // PI_CONFIG_FILES is split on `:`/`;` and `init-xdg` fails on Windows (docs/omp/processes.md).
+    // `omp share` takes no `--config`: "Share as gist" sets one delimiter-free overlay path.
+    // That one call site is allowed (docs/omp/thread-menu.md).
     const piConfigFilesExceptions = new Set([
       NodePath.join(REPO_ROOT, "packages/provider-omp/src/server/threadMenuController.ts"),
     ]);
