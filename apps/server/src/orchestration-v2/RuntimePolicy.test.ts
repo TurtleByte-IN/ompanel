@@ -62,8 +62,10 @@ function makeThread(input: {
 }
 
 const grokInstanceId = ProviderInstanceId.make("grok");
+const ompInstanceId = ProviderInstanceId.make("omp");
 const supportedRuntimeModesByInstance = new Map<ProviderInstanceId, ReadonlyArray<RuntimeMode>>([
   [grokInstanceId, ["approval-required", "auto", "full-access"]],
+  [ompInstanceId, ["approval-required", "auto-accept-edits", "full-access"]],
 ]);
 const providerInstanceFor = (instanceId: ProviderInstanceId) =>
   ({
@@ -124,6 +126,9 @@ it.layer(layerTest)("RuntimePolicyV2", (it) => {
       assert.equal(yield* modeFor(grokInstanceId, "auto"), "auto");
       assert.equal(yield* modeFor(grokInstanceId, "full-access"), "full-access");
       assert.equal(yield* modeFor(providerInstanceId, "auto-accept-edits"), "auto-accept-edits");
+      // OMP has no Auto: a thread stored as Auto reaches it as Supervised.
+      assert.equal(yield* modeFor(ompInstanceId, "auto"), "approval-required");
+      assert.equal(yield* modeFor(ompInstanceId, "auto-accept-edits"), "auto-accept-edits");
     }),
   );
 });

@@ -117,6 +117,8 @@ it.layer(layerTest)("OmpDriver", (it) => {
         "auto-accept-edits",
         "full-access",
       ]);
+      // T3 never imitates Auto by answering approvals itself, and OMP has no automatic review.
+      assert.notInclude(snapshot.supportedRuntimeModes ?? [], "auto");
       assert.isTrue(omp.launches.every((launch) => launch.command === binaryPath));
       assert.includeMembers([...(omp.launches.at(-1)?.args ?? [])], ["--profile", "work"]);
     }).pipe(Effect.scoped),

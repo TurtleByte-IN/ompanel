@@ -38,6 +38,10 @@ Policy examples:
 
 - If model switching is unsupported, start a new provider session.
 - If pending requests do not survive restart, mark old requests `not_resumable`.
+- If runtime mode switching is unsupported, detach the session on a mode change. If it is
+  supported, the new mode applies from the next turn; a session that is `running` or `waiting`
+  is still detached when the mode tightens, so the turn already under way does not finish in the
+  looser mode. Auto and Auto-accept edits count as tightening each other.
 
 Provider-thread resumption is not a capability. It is a required adapter primitive. Adapters must be able to start from a stored provider cursor/session/thread handle or return a runtime resume failure.
 

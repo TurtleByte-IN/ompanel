@@ -18,6 +18,9 @@ and modes you choose in a draft keep their permissions.
 Approve or reject requests in the conversation to let the agent continue. Permission modes do
 not prevent the agent from asking questions about the task.
 
+Choosing a stricter mode while the agent is working stops its current response, so nothing it
+is doing keeps the looser permissions. A looser mode applies from your next message.
+
 ## Provider differences
 
 Providers enforce permissions differently. Some read-only actions can proceed in **Supervised**.
@@ -31,6 +34,12 @@ runs in **Supervised**.
 Grok offers no **Auto-accept edits**. A Grok thread already set to it runs in **Supervised**. Grok
 file-change approvals offer **Allow all edits this session**. Its command approvals have no
 session-wide choice, because Grok would remember that command for the whole project.
+
+OMP offers **Supervised**, **Auto-accept edits** and **Full access**, enforced by OMP itself; it
+has no automatic review, so it offers no **Auto**. An OMP thread already set to **Auto** runs in
+**Supervised**. Changing the mode of an OMP thread applies from its next message without
+restarting OMP, except that a stricter mode chosen mid-response stops that response.
+See [OMP permissions](./providers-omp.md#permissions).
 
 ACP Registry agents run their own tools in their own mode; Ompanel answers their approval requests
 by the permission mode. See [ACP Registry permissions](./providers-acp.md#permissions-and-terminals).

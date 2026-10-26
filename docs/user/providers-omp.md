@@ -20,6 +20,25 @@ yet. The OMP provider is off by default.
 Add another OMP instance for each separate account or configuration, each with
 its own profile.
 
+## Permissions
+
+OMP enforces the thread's [permission mode](./permission-modes.md) itself:
+
+| Mode                  | OMP approval mode | Asks before                                  |
+| --------------------- | ----------------- | -------------------------------------------- |
+| **Supervised**        | `always-ask`      | Commands and file changes; reads run freely  |
+| **Auto-accept edits** | `write`           | Commands; reads and file edits run freely    |
+| **Full access**       | `yolo`            | Nothing, unless your OMP settings require it |
+
+OMP has no automatic review, so it offers no **Auto**. A thread already set to
+**Auto** runs in **Supervised**.
+
+Change the mode in the composer at any time. The new mode applies from the
+thread's next message, in the same OMP session. Choosing a stricter mode while
+OMP is working stops the current response first. If OMP refuses the new mode,
+that message fails with an error and OMP keeps its previous mode; switch back
+to that mode or start a new thread.
+
 ## Status Checks
 
 Ompanel checks OMP by running `omp --version` (it waits up to 4 seconds) and

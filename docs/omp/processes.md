@@ -21,6 +21,23 @@ The binary is resolved (and its sha256 checked, see [sidecar.md](./sidecar.md))
 right before each spawn. The process gets the server's environment plus the
 instance's environment overrides.
 
+## Permission mode changes
+
+Changing a live thread's permission mode keeps its process: the adapter declares
+`supportsRuntimeModeSwitchInSession`, so the orchestrator does not detach the
+session. Before the next prompt the adapter compares the turn's mapped approval
+mode with the one the process enforces and, if they differ, sends
+`set_approval_mode {mode}` (a runtime override; OMP's `config.yml` is not written).
+OMP refuses anything but `yolo` in a session started with `--auto-approve`/`--yolo`.
+A refusal fails that turn before its prompt with the reason
+`permission_mode_refused`; the process keeps the mode it had, and the next turn
+in a different mode asks again.
+
+A turn already running keeps the mode it started with, so the orchestrator
+still detaches a `running` or `waiting` session when the mode tightens. Closing
+a session with a turn in flight sends `abort` before closing stdin; otherwise
+OMP would drain that turn, under its old mode, for up to the 10 s graceful exit.
+
 ## Handshake
 
 1. The first frame must be `ready` (30 s limit).
