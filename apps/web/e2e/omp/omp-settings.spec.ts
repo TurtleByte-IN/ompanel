@@ -109,8 +109,21 @@ test("/wt from a thread creates a T3 worktree", async () => {
   // The thread is bound to it: the branch shows in the thread list and the thread's git panel.
   await expect(page.getByRole("navigation", { name: "Threads" }).getByText(branch)).toBeVisible();
   await expect(page.getByRole("main").getByText(branch, { exact: true })).toBeVisible();
+  // The `/wt` turn itself completes: OMP reports the move, and neither the thread nor the thread
+  // list shows a failure (ompanel#132).
+  await expect(
+    page
+      .getByRole("main")
+      .getByText(/Moved to worktree /)
+      .first(),
+  ).toBeVisible();
+  await expect(page.getByRole("main").getByText("Provider error")).toHaveCount(0);
+  await expect(
+    page.getByRole("navigation", { name: "Threads" }).getByRole("button", { name: /Failed/ }),
+  ).toHaveCount(0);
   await screenshot("02a-wt-worktree");
-  // The next message starts OMP in the worktree, on the same OMP session.
+  // The next message starts OMP in the worktree. `/wt` was the thread's first message, so OMP had
+  // no session file to reopen yet (docs/omp/host-tools.md).
   await sendAndSettle("hello from the worktree");
   await expect(assistantSays(STREAMED_PARAGRAPHS[1])).toBeVisible();
   expect(
