@@ -29,7 +29,7 @@ the last turn:
 | Advisor      | `set_advisor`                                                                                                                 |
 | Prewalk      | `set_prewalk`; an armed prewalk is spent by the turn it runs on, so it is re-armed every turn while on                        |
 | Computer Use | the thread overlay's `computer.enabled` (see below)                                                                           |
-| Vibe Mode    | `set_vibe_mode {enabled}`, from RPC contract 1.7.0 only; not offered on an older pin ([composer.md](./composer.md#vibe-mode)) |
+| Vibe Mode    | `set_vibe_mode {enabled}`, from RPC contract 1.8.0 only; not offered on an older pin ([composer.md](./composer.md#vibe-mode)) |
 | Role         | the thread overlay's `modelRoles.default`, then a session restart                                                             |
 
 A refused model or thinking level fails the turn before its prompt. A refused boolean

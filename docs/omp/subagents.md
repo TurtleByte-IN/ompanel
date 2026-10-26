@@ -40,7 +40,7 @@ never overrides a finished status; only a new `started` does.
 
 In vibe mode ([composer.md](./composer.md#vibe-mode)) each worker session the
 agent starts with `vibe_spawn` is an OMP subagent (agent `sonic` for `fast`,
-`task` for `good`; description `vibe <cli> session`). From RPC contract 1.7.0
+`task` for `good`; description `vibe <cli> session`). From RPC contract 1.8.0
 its frames carry the `vibe_spawn` call as `parentToolCallId`, on its first
 turn and on every later `vibe_send` turn, so the worker hangs under that call
 in the Agents panel tree, titled `<id>: Vibe <cli> worker`, with its transcript

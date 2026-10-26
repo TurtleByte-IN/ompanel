@@ -10,7 +10,7 @@ import { contractAtLeast } from "./subagents.ts";
  * worker frames. Earlier sidecars run vibe mode only in OMP's TUI (`/vibe`), so the composer
  * offers the trait only from this contract on.
  */
-export const OMP_VIBE_CONTRACT = "1.7.0";
+export const OMP_VIBE_CONTRACT = "1.8.0";
 
 /** Whether a sidecar speaking `contractVersion` takes `set_vibe_mode`. */
 export const ompVibeModeAvailable = (contractVersion: string): boolean =>

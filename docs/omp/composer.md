@@ -87,7 +87,7 @@ vibe mode while plan or goal mode is on, refuses a new goal while vibe mode is o
 keep vibe mode as the target session recorded it. A refused trait is logged and the turn runs.
 
 `set_vibe_mode` is newer than the pinned sidecar: it arrives with RPC contract
-`OMP_VIBE_CONTRACT` (1.7.0, `packages/provider-omp/src/server/vibe.ts`). Until `omp.lock` pins
+`OMP_VIBE_CONTRACT` (1.8.0, `packages/provider-omp/src/server/vibe.ts`). Until `omp.lock` pins
 that contract the composer does not offer the trait and the adapter never sends the command;
 `/vibe` stays in OMP's TUI.
 
