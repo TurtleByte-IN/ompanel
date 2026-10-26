@@ -20,6 +20,7 @@ import {
 // Process groups are POSIX; Windows trees are job objects.
 const platform = HostProcess.Platform.defaultValue();
 const posixOnly = describe.skipIf(platform === "win32");
+const MiB = 1024 * 1024;
 
 const start = (state: FakeOmpState, vars: Record<string, string> = {}) =>
   Effect.gen(function* () {
@@ -76,7 +77,15 @@ posixOnly("startOmpRpcProcess", () => {
     live(
       Effect.gen(function* () {
         const state = yield* makeFakeOmpState;
-        const omp = yield* start(state, { FAKE_OMP_AFTER_NEGOTIATE: "chunked" });
+        const omp = yield* start(
+          state,
+          state.script({
+            afterNegotiate: [
+              { emitChunked: { type: "notice", message: "y".repeat(3 * MiB) } },
+              { emit: { type: "notice", message: "after-chunked" } },
+            ],
+          }),
+        );
         const frames = yield* omp.frames.pipe(Stream.take(2), Stream.runCollect);
         const [big, after] = frames;
         assert.strictEqual(big?.type, "notice");
@@ -90,7 +99,24 @@ posixOnly("startOmpRpcProcess", () => {
     live(
       Effect.gen(function* () {
         const state = yield* makeFakeOmpState;
-        const omp = yield* start(state, { FAKE_OMP_AFTER_NEGOTIATE: "oversized" });
+        const byteLength = 64 * MiB + 1;
+        const omp = yield* start(
+          state,
+          state.script({
+            afterNegotiate: [
+              {
+                emit: {
+                  type: "rpc_chunk",
+                  chunkId: "fake-big",
+                  index: 0,
+                  count: Math.ceil(byteLength / (256 * 1024)),
+                  byteLength,
+                  data: Buffer.alloc(256 * 1024, 0x61).toString("base64"),
+                },
+              },
+            ],
+          }),
+        );
         const error = yield* omp.frames.pipe(Stream.runDrain, Effect.flip);
         assert.strictEqual(error.reason, "protocol");
         assert.include(error.detail, "64");
@@ -103,7 +129,10 @@ posixOnly("startOmpRpcProcess", () => {
     live(
       Effect.gen(function* () {
         const state = yield* makeFakeOmpState;
-        const omp = yield* start(state, { FAKE_OMP_AFTER_NEGOTIATE: "long-line" });
+        const omp = yield* start(
+          state,
+          state.script({ afterNegotiate: [{ writeRaw: `${"z".repeat(MiB + 16)}\n` }] }),
+        );
         const error = yield* omp.frames.pipe(Stream.runDrain, Effect.flip);
         assert.strictEqual(error.reason, "protocol");
       }),
@@ -114,9 +143,12 @@ posixOnly("startOmpRpcProcess", () => {
     live(
       Effect.gen(function* () {
         const state = yield* makeFakeOmpState;
-        const error = yield* start(state, { FAKE_OMP_AFTER_READY: "chunk-early" }).pipe(
-          Effect.flip,
-        );
+        const error = yield* start(
+          state,
+          state.script({
+            afterReady: [{ emitChunked: { type: "notice", message: "x".repeat(2 * MiB) } }],
+          }),
+        ).pipe(Effect.flip);
         assert.strictEqual(error._tag, "OmpRpcError");
         if (error._tag === "OmpRpcError") assert.strictEqual(error.reason, "protocol");
       }),

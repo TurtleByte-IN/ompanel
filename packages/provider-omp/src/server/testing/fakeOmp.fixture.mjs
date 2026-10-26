@@ -1,5 +1,6 @@
-// A scripted stand-in for `omp --mode rpc-ui`, driven by FAKE_OMP_* environment variables.
-// It records what happened to it in FAKE_OMP_STATE (argv.json, events.log, tree.json).
+// A scripted stand-in for `omp --mode rpc-ui`, driven by FAKE_OMP_* environment variables and,
+// optionally, a FAKE_OMP_SCRIPT JSON file (see `FakeOmpScript` in fakeOmp.ts).
+// It records what happened to it in FAKE_OMP_STATE (argv.json, events.log, commands.jsonl, tree.json).
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -13,17 +14,77 @@ function record(event) {
   if (stateDir) NodeFS.appendFileSync(NodePath.join(stateDir, "events.log"), `${event}\n`);
 }
 
+/** Like OMP, a `session_info_update` changes the id `get_state` reports from then on. */
+let sessionId = "fake-session";
+
 function write(frame) {
+  if (frame.type === "session_info_update") sessionId = frame.sessionId;
   process.stdout.write(`${JSON.stringify(frame)}\n`);
 }
 
+const script = env.FAKE_OMP_SCRIPT
+  ? JSON.parse(NodeFS.readFileSync(env.FAKE_OMP_SCRIPT, "utf8"))
+  : {};
+
+/** Exits once everything already written has reached the pipe. */
+function exitAfterFlush(code) {
+  process.stdout.write("", () => process.exit(code));
+}
+
+/** Replaces every `"$id"` string in `value` with the triggering command's id. */
+function bindId(value, id) {
+  if (value === "$id") return id;
+  if (Array.isArray(value)) return value.map((item) => bindId(item, id));
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, bindId(item, id)]));
+  }
+  return value;
+}
+
+/** Runs scripted steps in order; a chain per process keeps frames in step order. */
+let chain = Promise.resolve();
+function runSteps(steps, command) {
+  chain = chain.then(async () => {
+    for (const step of steps) {
+      if ("sleepMs" in step) await new Promise((resolve) => setTimeout(resolve, step.sleepMs));
+      else if ("emit" in step) write(bindId(step.emit, command?.id));
+      else if ("emitChunked" in step) writeChunked(bindId(step.emitChunked, command?.id));
+      else if ("writeRaw" in step) process.stdout.write(step.writeRaw);
+      else if ("respond" in step) {
+        write({
+          id: command.id,
+          type: "response",
+          command: command.type,
+          success: true,
+          ...(step.respond === undefined ? {} : { data: bindId(step.respond, command.id) }),
+        });
+      } else if ("fail" in step) {
+        write({
+          id: command.id,
+          type: "response",
+          command: command.type,
+          success: false,
+          error: step.fail,
+          ...(step.code === undefined ? {} : { code: step.code }),
+        });
+      } else if ("exit" in step) {
+        record(`exit:${step.exit}`);
+        exitAfterFlush(step.exit);
+        await new Promise(() => {});
+      }
+    }
+  });
+}
+
+let chunkSequence = 0;
 function writeChunked(frame) {
   const bytes = Buffer.from(JSON.stringify(frame), "utf8");
   const count = Math.ceil(bytes.byteLength / CHUNK_BYTES);
+  const chunkId = `fake-${++chunkSequence}`;
   for (let index = 0; index < count; index++) {
     write({
       type: "rpc_chunk",
-      chunkId: "fake-1",
+      chunkId,
       index,
       count,
       byteLength: bytes.byteLength,
@@ -75,34 +136,13 @@ write({
   ...(contract === "none" ? {} : { contractVersion: contract }),
 });
 if (env.FAKE_OMP_SPAWN_TREE === "1") spawnTree();
-if (env.FAKE_OMP_AFTER_READY === "chunk-early") {
-  writeChunked({ type: "notice", message: "x".repeat(2 * MiB) });
-}
+if (script.afterReady !== undefined) runSteps(script.afterReady, undefined);
 
 function afterNegotiate() {
-  switch (env.FAKE_OMP_AFTER_NEGOTIATE) {
-    case "chunked":
-      writeChunked({ type: "notice", message: "y".repeat(3 * MiB) });
-      write({ type: "notice", message: "after-chunked" });
-      break;
-    case "oversized": {
-      const byteLength = 64 * MiB + 1;
-      write({
-        type: "rpc_chunk",
-        chunkId: "fake-big",
-        index: 0,
-        count: Math.ceil(byteLength / CHUNK_BYTES),
-        byteLength,
-        data: Buffer.alloc(CHUNK_BYTES, 0x61).toString("base64"),
-      });
-      break;
-    }
-    case "long-line":
-      process.stdout.write(`${"z".repeat(MiB + 16)}\n`);
-      break;
-    default:
-      write({ type: "notice", message: "negotiated" });
-  }
+  runSteps(
+    script.afterNegotiate ?? [{ emit: { type: "notice", message: "negotiated" } }],
+    undefined,
+  );
 }
 
 let buffered = "";
@@ -116,6 +156,14 @@ process.stdin.on("data", (text) => {
     if (line.trim() === "") continue;
     const command = JSON.parse(line);
     record(`command:${command.type}`);
+    if (stateDir) {
+      NodeFS.appendFileSync(NodePath.join(stateDir, "commands.jsonl"), `${line}\n`);
+    }
+    const scripted = script.commands?.[command.type];
+    if (scripted !== undefined && command.type !== "negotiate_protocol") {
+      runSteps(scripted, command);
+      continue;
+    }
     switch (command.type) {
       case "negotiate_protocol":
         write({
@@ -136,7 +184,7 @@ process.stdin.on("data", (text) => {
           type: "response",
           command: "get_state",
           success: true,
-          data: { sessionId: "fake-session" },
+          data: { sessionId, sessionFile: `/fake/sessions/${sessionId}.jsonl` },
         });
         break;
       default:
@@ -157,5 +205,6 @@ process.stdin.on("end", () => {
     setInterval(() => {}, 1000);
     return;
   }
-  process.exit(0);
+  // OMP drains accepted work before exiting; so does the fake with scripted steps.
+  void chain.then(() => exitAfterFlush(0));
 });
