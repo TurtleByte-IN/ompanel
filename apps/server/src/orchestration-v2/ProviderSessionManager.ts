@@ -182,6 +182,8 @@ export interface ProviderSessionManagerV2Shape {
     /**
      * A session serving only this thread finishes the turn it is running before it is released,
      * instead of failing it: a workspace change, which the turn itself may have asked for (`/wt`).
+     * Until then it stays the thread's session (its records still go to the thread), so a later
+     * detach without `drain` (archive, delete, a tighter mode) still ends it at once.
      */
     readonly drain?: boolean;
   }) => Effect.Effect<void, ProviderSessionManagerV2Error>;
@@ -211,9 +213,29 @@ interface LiveSessionEntry {
   readonly idleFiber: Fiber.Fiber<void, never> | null;
   readonly pinnedSinceMs: number | null;
   readonly idleThreadUnloads: ReadonlyMap<ThreadId, IdleThreadUnload>;
-  /** Detached with `drain` while a turn ran: released once its last turn has ended. */
+  /**
+   * Detached with `drain`: its thread is no longer attached, but the session still belongs to it
+   * until released, once no turn is busy (at once if none was).
+   */
   readonly draining: { readonly threadId: ThreadId; readonly detail?: string } | null;
 }
+
+/** Threads a session's records go to: the attached ones and the one it drains a turn for. */
+const recordThreadIds = (entry: LiveSessionEntry): ReadonlySet<ThreadId> =>
+  entry.draining === null
+    ? entry.attachedThreadIds
+    : new Set([...entry.attachedThreadIds, entry.draining.threadId]);
+
+/** A draining session whose last turn has ended: nothing keeps it any more. */
+const isDrained = (
+  entry: LiveSessionEntry | undefined,
+): entry is LiveSessionEntry & {
+  readonly draining: NonNullable<LiveSessionEntry["draining"]>;
+} =>
+  entry !== undefined &&
+  entry.draining !== null &&
+  entry.busyTurns.size === 0 &&
+  entry.attachedThreadIds.size === 0;
 
 interface IdleThreadUnload {
   readonly providerThread: OrchestrationV2ProviderThread;
@@ -607,7 +629,7 @@ export const layerWithOptions = (
         };
         yield* writeProviderSessionEvents({
           runtime: input.entry.runtime,
-          threadIds: input.entry.attachedThreadIds,
+          threadIds: recordThreadIds(input.entry),
           type: "provider-session.updated",
           payload,
         });
@@ -736,7 +758,7 @@ export const layerWithOptions = (
             return [];
           }
           const providerSessionId = input.entry.runtime.providerSessionId;
-          const threadIds = new Set(input.entry.attachedThreadIds);
+          const threadIds = new Set(recordThreadIds(input.entry));
           if (input.detachedThreadId !== undefined) threadIds.add(input.detachedThreadId);
           const released = [];
           for (const threadId of threadIds) {
@@ -1427,6 +1449,26 @@ export const layerWithOptions = (
           }),
         );
 
+      // A draining session goes once its last turn ended: after the pump delivered the terminal,
+      // so ending subscribers lets that run settle normally, or after a turn failed to start.
+      // Under the open lock, so the thread's next session starts after this one has stopped and
+      // recorded it, and so a replacement opened meanwhile is left alone.
+      const releaseDrained = (providerSessionId: ProviderSessionId) =>
+        sessionOpen.withLock(
+          providerSessionId,
+          Effect.gen(function* () {
+            const current = (yield* Ref.get(sessions)).get(sessionKey(providerSessionId));
+            if (!isDrained(current)) return;
+            yield* releaseEntry({
+              providerSessionId,
+              reason: "manual_shutdown",
+              ...(current.draining.detail === undefined ? {} : { detail: current.draining.detail }),
+              detachedThreadId: current.draining.threadId,
+              gracefulSubscribers: true,
+            });
+          }),
+        );
+
       const markIdle = (
         providerSessionId: ProviderSessionId,
         providerThreadId: ProviderThreadId,
@@ -1454,6 +1496,12 @@ export const layerWithOptions = (
             });
             yield* scheduleIdleReleaseInternal(providerSessionId);
             yield* scheduleThreadUnload(providerSessionId, providerThreadId);
+            if (isDrained((yield* Ref.get(sessions)).get(key))) {
+              yield* releaseDrained(providerSessionId).pipe(
+                logReleaseFailure(providerSessionId),
+                Effect.forkIn(layerScope),
+              );
+            }
           }),
         );
 
@@ -1867,7 +1915,7 @@ export const layerWithOptions = (
           }
           yield* writeProviderSessionEvents({
             runtime: entry.runtime,
-            threadIds: current.attachedThreadIds,
+            threadIds: recordThreadIds(current),
             type: "provider-session.updated",
             payload: event.providerSession,
           });
@@ -1882,29 +1930,6 @@ export const layerWithOptions = (
             ),
           ),
       );
-
-      // Subscribers got the turn's terminal first, so ending them lets its run settle normally.
-      const releaseIfDrained = Effect.fn("ProviderSessionManager.releaseIfDrained")(function* (
-        entry: LiveSessionEntry,
-      ) {
-        const providerSessionId = entry.runtime.providerSessionId;
-        const current = (yield* Ref.get(sessions)).get(sessionKey(providerSessionId));
-        if (
-          current?.runtime !== entry.runtime ||
-          current.draining === null ||
-          current.busyTurns.size > 0 ||
-          current.attachedThreadIds.size > 0
-        ) {
-          return;
-        }
-        yield* releaseEntry({
-          providerSessionId,
-          reason: "manual_shutdown",
-          ...(current.draining.detail === undefined ? {} : { detail: current.draining.detail }),
-          detachedThreadId: current.draining.threadId,
-          gracefulSubscribers: true,
-        }).pipe(logReleaseFailure(providerSessionId), Effect.forkIn(layerScope));
-      });
 
       const startEventPump = (entry: LiveSessionEntry) => {
         let stoppedByProvider = false;
@@ -2006,7 +2031,6 @@ export const layerWithOptions = (
                         event.runOrdinal,
                       ),
                     );
-                    yield* releaseIfDrained(entry);
                   }
                 }),
               ),
@@ -2391,7 +2415,12 @@ export const layerWithOptions = (
             }
             const detachResult = yield* Ref.modify(sessions, (current) => {
               const entry = current.get(key);
-              if (entry === undefined || !entry.attachedThreadIds.has(input.threadId)) {
+              // A session draining a turn for this thread is still the thread's session.
+              if (
+                entry === undefined ||
+                (!entry.attachedThreadIds.has(input.threadId) &&
+                  entry.draining?.threadId !== input.threadId)
+              ) {
                 return [
                   Option.none<{
                     readonly entry: LiveSessionEntry;
@@ -2416,18 +2445,18 @@ export const layerWithOptions = (
                   : entry.mcpCredentialIdByThread;
               const idleThreadUnloads = new Map(entry.idleThreadUnloads);
               idleThreadUnloads.delete(input.threadId);
-              // A running turn of a session no other thread holds ends before the release
-              // (`releaseIfDrained`); an idle one is released below, at once.
+              // With `drain`, a session no other thread holds keeps belonging to this thread until
+              // its running turn has ended (`markIdle`); an idle one is released below, at once.
+              // Without, it is released now, also when an earlier detach left it draining.
               const draining =
                 input.drain === true &&
                 attachedThreadIds.size === 0 &&
-                !entry.supportsMultipleProviderThreads &&
-                entry.busyTurns.size > 0
+                !entry.supportsMultipleProviderThreads
                   ? {
                       threadId: input.threadId,
                       ...(input.detail === undefined ? {} : { detail: input.detail }),
                     }
-                  : entry.draining;
+                  : null;
               const updatedEntry = {
                 ...entry,
                 attachedThreadIds,
@@ -2461,7 +2490,11 @@ export const layerWithOptions = (
               detached.value.attachedThreadIds.size === 0 &&
               !detached.value.supportsMultipleProviderThreads
             ) {
-              if (detached.value.draining !== null) return;
+              if (detached.value.draining !== null) {
+                // Idle: released now. Busy: released when its last turn ends (`markIdle`).
+                yield* releaseDrained(input.providerSessionId);
+                return;
+              }
               yield* releaseEntry({
                 providerSessionId: input.providerSessionId,
                 reason: "manual_shutdown",

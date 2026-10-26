@@ -332,7 +332,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
     readonly backgroundTasksEndWithProcess?: boolean;
     readonly hangSessionScopeClose?: boolean;
-    readonly startTurn?: Effect.Effect<void>;
+    readonly startTurn?: Effect.Effect<void, ProviderAdapter.ProviderAdapterV2Error>;
     readonly beforeUnload?: Effect.Effect<void>;
     readonly spawnBeforeOpen?: boolean;
     readonly scopeCloseReached?: Deferred.Deferred<void>;
@@ -479,7 +479,7 @@ function layerTest(input: {
   readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
   readonly backgroundTasksEndWithProcess?: boolean;
   readonly hangSessionScopeClose?: boolean;
-  readonly startTurn?: Effect.Effect<void>;
+  readonly startTurn?: Effect.Effect<void, ProviderAdapter.ProviderAdapterV2Error>;
   readonly beforeUnload?: Effect.Effect<void>;
   readonly spawnBeforeOpen?: boolean;
   readonly scopeCloseReached?: Deferred.Deferred<void>;
@@ -2220,41 +2220,39 @@ it.effect("ProviderSessionManagerV2 terminal detach revokes the thread's MCP cre
   }),
 );
 
-/** Opens a single-thread session, subscribes to it and starts a turn that stays running. */
-const openSessionWithRunningTurn = (
-  state: Ref.Ref<TestProviderRuntimeState>,
-  fixtureName: string,
-) =>
+/** Reads `read` until `done` holds, yielding in between so forked releases can run. */
+const eventually = <A, E, R>(read: Effect.Effect<A, E, R>, done: (value: A) => boolean) =>
+  Effect.yieldNow.pipe(Effect.andThen(read), Effect.repeat({ until: done, times: 200 }));
+
+const projectedSessionStatus = (threadId: ThreadId, providerSessionId: ProviderSessionId) =>
+  ProjectionStore.ProjectionStoreV2.pipe(
+    Effect.flatMap((store) => store.getThreadRecords(threadId, ["providerSessions"])),
+    Effect.map(
+      (projection) =>
+        projection.providerSessions.find((session) => session.id === providerSessionId)?.status,
+    ),
+  );
+
+/** A turn on the session's provider thread: `start` runs it, `terminal` is the event ending it. */
+const makeTurn = (input: {
+  readonly runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime;
+  readonly threadId: ThreadId;
+  readonly providerSessionId: ProviderSessionId;
+  readonly fixtureName: string;
+}) =>
   Effect.gen(function* () {
-    const eventSink = yield* EventSink.EventSinkV2;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
-    const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+    const { threadId } = input;
     const now = yield* DateTime.now;
-    const projectId = yield* idAllocator.allocate.project({ fixtureName });
-    const threadId = yield* idAllocator.allocate.thread({ fixtureName, projectId });
-    const providerSessionId = yield* idAllocator.allocate.providerSession({
-      providerInstanceId: modelSelection.instanceId,
+    const providerThread = makeProviderThread({
+      idAllocator,
       threadId,
+      providerSessionId: input.providerSessionId,
+      now,
     });
-    const providerThread = makeProviderThread({ idAllocator, threadId, providerSessionId, now });
     const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
-    yield* eventSink.write({
-      events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
-    });
-    const runtime = yield* manager.open({
-      threadId,
-      providerSessionId,
-      modelSelection,
-      runtimePolicy,
-    });
-    const subscription = yield* runtime.subscribeEvents!;
-    const collected = yield* subscription.events.pipe(
-      Stream.runCollect,
-      Effect.exit,
-      Effect.forkScoped,
-    );
-    yield* runtime.startTurn({
+    const start = input.runtime.startTurn({
       appThread: (yield* projectionStore.getThreadProjection(threadId)).thread,
       threadId,
       runId,
@@ -2273,27 +2271,75 @@ const openSessionWithRunningTurn = (
       modelSelection,
       runtimePolicy,
     });
+    const terminal = {
+      type: "turn.terminal",
+      driver: CODEX_DRIVER,
+      providerThreadId: providerThread.id,
+      providerTurnId: idAllocator.derive.providerTurn({
+        driver: CODEX_DRIVER,
+        nativeTurnId: `${input.fixtureName}-turn`,
+      }),
+      runOrdinal: 1,
+      status: "completed",
+      failure: null,
+      threadDisposition: "reusable",
+    } satisfies ProviderAdapter.ProviderAdapterV2Event;
+    return { start, terminal };
+  });
+
+/**
+ * Opens a single-thread session and subscribes to it, as the run does; unless `start` is false,
+ * starts a turn that stays running until `terminal` is offered on `adapterQueue`.
+ */
+const openSessionWithRunningTurn = (
+  state: Ref.Ref<TestProviderRuntimeState>,
+  fixtureName: string,
+  options: { readonly start?: boolean } = {},
+) =>
+  Effect.gen(function* () {
+    const eventSink = yield* EventSink.EventSinkV2;
+    const idAllocator = yield* IdAllocator.IdAllocatorV2;
+    const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+    const now = yield* DateTime.now;
+    const projectId = yield* idAllocator.allocate.project({ fixtureName });
+    const threadId = yield* idAllocator.allocate.thread({ fixtureName, projectId });
+    const providerSessionId = yield* idAllocator.allocate.providerSession({
+      providerInstanceId: modelSelection.instanceId,
+      threadId,
+    });
+    yield* eventSink.write({
+      events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+    });
+    const runtime = yield* manager.open({
+      threadId,
+      providerSessionId,
+      modelSelection,
+      runtimePolicy,
+    });
+    const subscription = yield* runtime.subscribeEvents!;
+    const collected = yield* subscription.events.pipe(
+      Stream.runCollect,
+      Effect.exit,
+      Effect.forkScoped,
+    );
+    const turn = yield* makeTurn({ runtime, threadId, providerSessionId, fixtureName });
+    if (options.start !== false) yield* turn.start;
     const adapterQueue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
     return {
       threadId,
       providerSessionId,
+      runtime,
       collected,
-      terminal: {
-        type: "turn.terminal",
-        driver: CODEX_DRIVER,
-        providerThreadId: providerThread.id,
-        providerTurnId: idAllocator.derive.providerTurn({
-          driver: CODEX_DRIVER,
-          nativeTurnId: `${fixtureName}-turn`,
-        }),
-        runOrdinal: 1,
-        status: "completed",
-        failure: null,
-        threadDisposition: "reusable",
-      } satisfies ProviderAdapter.ProviderAdapterV2Event,
+      start: turn.start,
+      terminal: turn.terminal,
       adapterQueue: adapterQueue!,
     };
   });
+
+const exclusiveLayer = (
+  state: Ref.Ref<TestProviderRuntimeState>,
+  extra: Omit<Parameters<typeof layerTest>[0], "state" | "idleTimeoutMs" | "capabilities"> = {},
+) => layerTest({ state, idleTimeoutMs: 60_000, capabilities: ExclusiveCapabilities, ...extra });
 
 // `/wt`: the turn that asked for the worktree is still running when binding it detaches the
 // session (ompanel#132). A draining detach lets that turn finish, then releases the session.
@@ -2323,20 +2369,20 @@ it.effect("ProviderSessionManagerV2 lets a running turn finish before a draining
         );
       }
       // Released once the turn ended, without waiting for the idle timeout; subscribers end
-      // before the provider scope closes.
+      // before the provider scope closes, and the thread then records the session stopped.
       assert.isFalse(yield* manager.isLive(running.providerSessionId));
-      const closed = yield* Effect.yieldNow.pipe(
-        Effect.andThen(Ref.get(state)),
-        Effect.repeat({ until: (current) => current.closeCount > 0, times: 100 }),
-      );
+      const closed = yield* eventually(Ref.get(state), (current) => current.closeCount > 0);
       assert.equal(closed.closeCount, 1);
+      assert.equal(
+        yield* eventually(
+          projectedSessionStatus(running.threadId, running.providerSessionId),
+          (status) => status === "stopped",
+        ),
+        "stopped",
+      );
     });
 
-    yield* effect.pipe(
-      Effect.provide(
-        layerTest({ state, idleTimeoutMs: 60_000, capabilities: ExclusiveCapabilities }),
-      ),
-    );
+    yield* effect.pipe(Effect.provide(exclusiveLayer(state)));
   }),
 );
 
@@ -2344,40 +2390,220 @@ it.effect("ProviderSessionManagerV2 releases an idle session on a draining detac
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
     const effect = Effect.gen(function* () {
-      const eventSink = yield* EventSink.EventSinkV2;
-      const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
-      const now = yield* DateTime.now;
-      const threadId = ThreadId.make("thread-provider-session-manager-drain-idle");
-      const providerSessionId = yield* idAllocator.allocate.providerSession({
-        providerInstanceId: modelSelection.instanceId,
-        threadId,
+      const idle = yield* openSessionWithRunningTurn(state, "provider-session-manager-drain-idle", {
+        start: false,
       });
-      yield* eventSink.write({
-        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
-      });
-      yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
 
       yield* manager.detach({
-        providerSessionId,
-        threadId,
+        providerSessionId: idle.providerSessionId,
+        threadId: idle.threadId,
         detail: "Workspace changed.",
         drain: true,
       });
-      assert.isFalse(yield* manager.isLive(providerSessionId));
+      assert.isFalse(yield* manager.isLive(idle.providerSessionId));
       assert.equal((yield* Ref.get(state)).closeCount, 1);
+      assert.equal(yield* projectedSessionStatus(idle.threadId, idle.providerSessionId), "stopped");
+    });
+
+    yield* effect.pipe(Effect.provide(exclusiveLayer(state)));
+  }),
+);
+
+// The terminal reaches the run before the turn counts as ended: a detach landing right after
+// the run got it, before or after the pump marks the turn idle, must not take the terminal away.
+it.effect(
+  "ProviderSessionManagerV2 keeps a delivered terminal when a drain lands at turn end",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const effect = Effect.gen(function* () {
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const running = yield* openSessionWithRunningTurn(
+          state,
+          "provider-session-manager-drain-turn-end",
+        );
+        const run = yield* running.runtime.subscribeEvents!;
+        const settled = yield* run.events.pipe(
+          Stream.tap((event) =>
+            event.type === "turn.terminal"
+              ? manager.detach({
+                  providerSessionId: running.providerSessionId,
+                  threadId: running.threadId,
+                  detail: "Workspace changed.",
+                  drain: true,
+                })
+              : Effect.void,
+          ),
+          Stream.runCollect,
+          Effect.exit,
+          Effect.forkScoped,
+        );
+
+        yield* Queue.offer(running.adapterQueue, running.terminal);
+        for (const fiber of [settled, running.collected]) {
+          const exit = yield* Fiber.join(fiber);
+          assert.isTrue(Exit.isSuccess(exit), Exit.isFailure(exit) ? Cause.pretty(exit.cause) : "");
+          if (Exit.isSuccess(exit)) {
+            assert.deepEqual(
+              Array.from(exit.value).map((event) => event.type),
+              ["turn.terminal"],
+            );
+          }
+        }
+        assert.isFalse(yield* manager.isLive(running.providerSessionId));
+        assert.equal(
+          (yield* eventually(Ref.get(state), (current) => current.closeCount > 0)).closeCount,
+          1,
+        );
+      });
+
+      yield* effect.pipe(Effect.provide(exclusiveLayer(state)));
+    }),
+);
+
+// A tighter mode, archive and delete detach without `drain`: a turn still draining after a
+// workspace change ends at once, and archive and delete revoke the thread's MCP credential.
+it.effect("ProviderSessionManagerV2 ends a draining session on a detach without drain", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const mcpConfigs = yield* Ref.make<
+      ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+    >([]);
+    const effect = Effect.gen(function* () {
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const registry = yield* McpSessionRegistry.McpSessionRegistry;
+      for (const [name, detach] of [
+        ["mode", { detail: "Runtime mode changed." }],
+        ["archive", { detail: "Thread archived.", revokeMcpCredential: true }],
+        ["delete", { detail: "Thread deleted.", revokeMcpCredential: true }],
+      ] as const) {
+        const running = yield* openSessionWithRunningTurn(
+          state,
+          `provider-session-manager-drain-${name}`,
+        );
+        const token = (yield* Ref.get(mcpConfigs))
+          .at(-1)
+          ?.authorizationHeader.replace(/^Bearer\s+/, "");
+        assert.isDefined(token);
+        yield* manager.detach({
+          providerSessionId: running.providerSessionId,
+          threadId: running.threadId,
+          detail: "Workspace changed.",
+          drain: true,
+        });
+        assert.isTrue(yield* manager.isLive(running.providerSessionId), name);
+
+        yield* manager.detach({
+          providerSessionId: running.providerSessionId,
+          threadId: running.threadId,
+          ...detach,
+        });
+        assert.isFalse(yield* manager.isLive(running.providerSessionId), name);
+        const exit = yield* Fiber.join(running.collected);
+        assert.isTrue(Exit.isFailure(exit), name);
+        if (Exit.isFailure(exit)) assert.include(Cause.pretty(exit.cause), detach.detail, name);
+        if ("revokeMcpCredential" in detach) {
+          assert.isUndefined(yield* registry.resolve(token!), name);
+        }
+      }
+      assert.equal((yield* Ref.get(state)).closeCount, 3);
+    });
+
+    yield* effect.pipe(Effect.provide(exclusiveLayer(state, { mcpConfigs })));
+  }),
+);
+
+// `/wt` can bind the thread before OMP has answered the prompt that started the turn.
+it.effect("ProviderSessionManagerV2 releases a draining session whose turn fails to start", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const entered = yield* Deferred.make<void>();
+    const gate = yield* Deferred.make<void>();
+    const effect = Effect.gen(function* () {
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const running = yield* openSessionWithRunningTurn(
+        state,
+        "provider-session-manager-drain-start-failed",
+        { start: false },
+      );
+      const start = yield* running.start.pipe(Effect.exit, Effect.forkScoped);
+      yield* Deferred.await(entered);
+      yield* manager.detach({
+        providerSessionId: running.providerSessionId,
+        threadId: running.threadId,
+        detail: "Workspace changed.",
+        drain: true,
+      });
+      assert.isTrue(yield* manager.isLive(running.providerSessionId));
+
+      yield* Deferred.succeed(gate, undefined);
+      assert.isTrue(Exit.isFailure(yield* Fiber.join(start)));
+      // No terminal comes; the session goes with the failed start, not at the idle timeout.
+      assert.equal(
+        (yield* eventually(Ref.get(state), (current) => current.closeCount > 0)).closeCount,
+        1,
+      );
+      assert.isFalse(yield* manager.isLive(running.providerSessionId));
+      assert.equal(
+        yield* eventually(
+          projectedSessionStatus(running.threadId, running.providerSessionId),
+          (status) => status === "stopped",
+        ),
+        "stopped",
+      );
     });
 
     yield* effect.pipe(
       Effect.provide(
-        layerTest({ state, idleTimeoutMs: 60_000, capabilities: ExclusiveCapabilities }),
+        exclusiveLayer(state, {
+          startTurn: Deferred.succeed(entered, undefined).pipe(
+            Effect.andThen(Deferred.await(gate)),
+            Effect.andThen(unimplemented("The prompt never reached the provider.")),
+          ),
+        }),
       ),
     );
   }),
 );
 
+it.effect("ProviderSessionManagerV2 opens a fresh session for the turn after a drained one", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const effect = Effect.gen(function* () {
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const running = yield* openSessionWithRunningTurn(
+        state,
+        "provider-session-manager-drain-next-turn",
+      );
+      yield* manager.detach({
+        providerSessionId: running.providerSessionId,
+        threadId: running.threadId,
+        detail: "Workspace changed.",
+        drain: true,
+      });
+      // As in production: the old run settles on its terminal before the next message opens.
+      yield* Queue.offer(running.adapterQueue, running.terminal);
+      assert.isTrue(Exit.isSuccess(yield* Fiber.join(running.collected)));
+
+      yield* manager.open({
+        threadId: running.threadId,
+        providerSessionId: running.providerSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const current = yield* eventually(Ref.get(state), (latest) => latest.closeCount > 0);
+      assert.equal(current.openCount, 2);
+      assert.equal(current.closeCount, 1);
+      assert.isTrue(yield* manager.isLive(running.providerSessionId));
+    });
+
+    yield* effect.pipe(Effect.provide(exclusiveLayer(state)));
+  }),
+);
+
 it.effect(
-  "ProviderSessionManagerV2 reopens a thread whose detached session is still draining",
+  "ProviderSessionManagerV2 gives the thread a fresh session while its old one still drains",
   () =>
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
@@ -2394,7 +2620,8 @@ it.effect(
           drain: true,
         });
 
-        // The thread's next turn needs the session: the draining one gives way.
+        // Not how a next message arrives (its run waits for the old one), but a turn that
+        // needs the session id gets it: the draining session gives way.
         yield* manager.open({
           threadId: running.threadId,
           providerSessionId: running.providerSessionId,
@@ -2409,11 +2636,7 @@ it.effect(
         assert.isTrue(yield* manager.isLive(running.providerSessionId));
       });
 
-      yield* effect.pipe(
-        Effect.provide(
-          layerTest({ state, idleTimeoutMs: 60_000, capabilities: ExclusiveCapabilities }),
-        ),
-      );
+      yield* effect.pipe(Effect.provide(exclusiveLayer(state)));
     }),
 );
 
@@ -2511,6 +2734,52 @@ it.effect(
         ),
       );
     }),
+);
+
+// OMP's background jobs end with its process: a session that exits or crashes while it drains a
+// turn still clears them from the thread it drained for, or the thread would wait on them forever.
+it.effect("ProviderSessionManagerV2 clears the roster of a session that exits while draining", () =>
+  Effect.gen(function* () {
+    for (const exit of ["crash", "stop"] as const) {
+      const state = yield* Ref.make(emptyState);
+      const effect = Effect.gen(function* () {
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const fixtureName = `provider-session-manager-drain-${exit}-roster`;
+        const { threadId, providerSessionId, rosters } =
+          yield* openSessionWithBackgroundCommand(fixtureName);
+        const runtime = Option.getOrThrow(yield* manager.get(providerSessionId));
+        const turn = yield* makeTurn({ runtime, threadId, providerSessionId, fixtureName });
+        yield* turn.start;
+        yield* manager.detach({
+          providerSessionId,
+          threadId,
+          detail: "Workspace changed.",
+          drain: true,
+        });
+        assert.isTrue(yield* manager.isLive(providerSessionId));
+
+        const adapterQueue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId))!;
+        if (exit === "stop") {
+          yield* Queue.offer(adapterQueue, {
+            type: "provider_session.updated",
+            driver: CODEX_DRIVER,
+            providerSession: { ...runtime.providerSession, status: "stopped" },
+          });
+        }
+        // No terminal: the process is gone before the turn ended.
+        yield* Queue.end(adapterQueue);
+
+        assert.deepStrictEqual(
+          yield* eventually(rosters, (current) => current[0]?.length === 0),
+          [[], ["dev-server"]],
+          exit,
+        );
+        assert.isFalse(yield* manager.isLive(providerSessionId), exit);
+      });
+
+      yield* effect.pipe(Effect.provide(exclusiveLayer(state)));
+    }
+  }),
 );
 
 it.effect("ProviderSessionManagerV2 keeps the roster of a runtime whose tasks can outlive it", () =>

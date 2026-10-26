@@ -502,7 +502,7 @@ it.effect(
         (yield* projections.getThreadProviderContext(threadId)).providerSessions,
         [],
       );
-      // A turn still running in the old workspace finishes before the session goes (ompanel#132).
+      // A session shared by provider threads (Codex) is detached as before, without draining.
       assert.deepEqual(
         (yield* outbox.listByCommandId(CommandId.make("workspace-control"))).map(
           (effect) => effect.request,
@@ -512,7 +512,6 @@ it.effect(
             type: "provider-session.detach",
             providerSessionId: sessionId,
             detail: "Workspace changed.",
-            drain: true,
           },
         ],
       );
