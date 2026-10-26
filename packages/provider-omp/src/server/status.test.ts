@@ -21,6 +21,7 @@ describe("ompProviderSnapshot", () => {
           version: "18.12.6",
           ready: { contractVersion: OMP_LOCK.contract.version },
           loginProviders: null,
+          models: null,
         },
       },
     });
@@ -35,12 +36,38 @@ describe("ompProviderSnapshot", () => {
     );
   });
 
+  it("lists OMP's default, the probed catalog and custom models with thinking options", () => {
+    const snapshot = ompProviderSnapshot({
+      settings: { ...settings, customModels: ["local/my-model"] },
+      checkedAt,
+      resolution: {
+        kind: "probed",
+        probe: {
+          status: "ready",
+          version: "18.12.6",
+          ready: { contractVersion: OMP_LOCK.contract.version },
+          loginProviders: null,
+          models: [{ id: "o3", name: "o3", provider: "openai", reasoning: true }],
+        },
+      },
+    });
+    assert.deepStrictEqual(
+      snapshot.models.map((model) => model.slug),
+      ["default", "openai/o3", "local/my-model"],
+    );
+    const custom = snapshot.models.find((model) => model.slug === "local/my-model");
+    assert.isTrue(
+      custom?.capabilities?.optionDescriptors?.some((descriptor) => descriptor.id === "thinking"),
+    );
+  });
+
   it("names an unverified binary path while it runs", () => {
     const probe = {
       status: "ready",
       version: "18.12.6",
       ready: { contractVersion: OMP_LOCK.contract.version },
       loginProviders: null,
+      models: null,
     } as const;
     const override = ompProviderSnapshot({
       settings,
@@ -79,6 +106,7 @@ describe("ompProviderSnapshot", () => {
                 authenticated: false,
               },
             ],
+            models: null,
           },
         },
       });
@@ -102,6 +130,7 @@ describe("ompProviderSnapshot", () => {
           version: "18.12.6",
           ready: { contractVersion: "1.0.0" },
           loginProviders: null,
+          models: null,
         },
       },
     });

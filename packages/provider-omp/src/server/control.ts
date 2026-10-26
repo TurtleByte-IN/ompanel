@@ -29,12 +29,13 @@ import type {
 import type { OmpConfigScope } from "@t3tools/contracts";
 
 import { OmpConfigList, OmpConfigResetResult, OmpConfigSetResult } from "../configForm.ts";
+import { OmpCatalogModel } from "./modelTraits.ts";
 
 /** Hard deadline per operation, from spawn to exit. */
 export const OMP_CONTROL_TIMEOUTS_MS = {
   /** `omp --version`. */
   version: 4_000,
-  /** The probe's RPC server: `ready` frame plus `get_login_providers`. */
+  /** The probe's RPC server: `ready` frame, `get_login_providers` and `get_available_models`. */
   ready: 10_000,
   /** `omp usage --json`. */
   usage: 10_000,
@@ -192,6 +193,10 @@ const decodeLoginProviders = Schema.decodeUnknownEffect(
   Schema.Struct({ providers: Schema.Array(LoginProviderSchema) }),
 );
 
+const decodeCatalog = Schema.decodeUnknownEffect(
+  Schema.Struct({ models: Schema.Array(OmpCatalogModel) }),
+);
+
 const LogoutAccountSchema = Schema.Struct({
   credentialId: Schema.Int,
   provider: Schema.String,
@@ -290,6 +295,8 @@ export type OmpProbeResult =
       readonly ready: Pick<ReadyEvent, "protocolVersion" | "contractVersion">;
       /** Login providers and whether each is signed in; `null` when OMP refused the request. */
       readonly loginProviders: ReadonlyArray<OmpLoginProvider> | null;
+      /** `get_available_models`; `null` when OMP refused or sent an unreadable list. */
+      readonly models: ReadonlyArray<OmpCatalogModel> | null;
     }
   | ({ readonly status: "failed"; readonly version: string | null } & OmpProbeFailure);
 
@@ -349,7 +356,7 @@ export interface OmpControlService {
     providerId: string,
     credentialId: number,
   ) => Effect.Effect<{ readonly remainingSource?: string }, OmpControlError>;
-  /** Status probe: `--version`, then `ready` and `get_login_providers`. Cached 30 s. */
+  /** Status probe: `--version`, then `ready`, `get_login_providers` and `get_available_models`. Cached 30 s. */
   readonly probe: (target: OmpControlTarget) => Effect.Effect<OmpProbeResult>;
   /** Drops every cached result of this instance. */
   readonly invalidate: Effect.Effect<void>;
@@ -745,7 +752,17 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
             () => Effect.succeed(null),
           ),
         );
-        return { ready: session.ready, providers };
+        const models = yield* session.request({ type: "get_available_models" }).pipe(
+          Effect.flatMap(decodeCatalog),
+          Effect.map((data): ReadonlyArray<OmpCatalogModel> | null => data.models),
+          Effect.catchTags({ SchemaError: () => Effect.succeed(null) }),
+          // The composer then offers OMP's default model only.
+          Effect.catchIf(
+            (error) => error.reason === "rejected",
+            () => Effect.succeed(null),
+          ),
+        );
+        return { ready: session.ready, providers, models };
       }),
     ).pipe(Effect.result);
     if (rpcResult._tag === "Failure") {
@@ -767,6 +784,7 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
         ...(contractVersion === undefined ? {} : { contractVersion }),
       },
       loginProviders: rpcResult.success.providers,
+      models: rpcResult.success.models,
     };
   });
 

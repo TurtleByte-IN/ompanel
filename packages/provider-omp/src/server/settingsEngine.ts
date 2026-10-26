@@ -168,6 +168,50 @@ const withPath = (
   return Object.keys(child).length === 0 ? others : { ...others, [head]: child };
 };
 
+/** An overlay's JSON document without Ompanel's comment header. */
+const overlayBody = (current: string) => {
+  const body = current
+    .split("\n")
+    .filter((line) => !line.trimStart().startsWith("#"))
+    .join("\n")
+    .trim();
+  return body === "" ? "{}" : body;
+};
+
+/**
+ * The overlay `current` with dotted `key` set to `value` (removed when undefined). Fails with
+ * `invalid_overlay` when `current` is not an overlay Ompanel wrote.
+ */
+export const ompOverlayWith = Effect.fn("ompOverlayWith")(function* (
+  current: string,
+  key: string,
+  value: unknown,
+) {
+  const body = overlayBody(current);
+  const doc = yield* decodeOverlay(body).pipe(
+    Effect.mapError(() => new OmpSettingsError({ key, reason: "invalid_overlay" })),
+  );
+  // JSON is YAML, so OMP's overlay loader reads it as is.
+  const text = yield* encodeOverlay(withPath(doc, key.split("."), value)).pipe(Effect.orDie);
+  return `${OVERLAY_HEADER}${text}\n`;
+});
+
+/** The value at dotted `key` in an overlay Ompanel wrote; `undefined` when absent or unreadable. */
+export const ompOverlayValue = (current: string, key: string): unknown => {
+  const body = overlayBody(current);
+  let node: unknown;
+  try {
+    node = JSON.parse(body);
+  } catch {
+    return undefined;
+  }
+  for (const segment of key.split(".")) {
+    if (!Predicate.isObject(node)) return undefined;
+    node = (node as Record<string, unknown>)[segment];
+  }
+  return node;
+};
+
 /** `cwd` is `dir` or inside it. */
 const isWithin = (dir: string, cwd: string): boolean => {
   const base = dir.replace(/[\\/]+$/, "");
@@ -272,19 +316,8 @@ export const makeOmpSettingsEngine = (deps: {
     value: unknown,
   ) {
     const current = yield* threads.readOverlay(threadId);
-    const body = current
-      .split("\n")
-      .filter((line) => !line.trimStart().startsWith("#"))
-      .join("\n")
-      .trim();
-    const doc = yield* decodeOverlay(body === "" ? "{}" : body).pipe(
-      Effect.mapError(() => new OmpSettingsError({ key: field.key, reason: "invalid_overlay" })),
-    );
-    // JSON is YAML, so OMP's overlay loader reads it as is.
-    const text = yield* encodeOverlay(withPath(doc, field.key.split("."), value)).pipe(
-      Effect.orDie,
-    );
-    yield* threads.writeOverlay(threadId, `${OVERLAY_HEADER}${text}\n`);
+    const next = yield* ompOverlayWith(current, field.key, value);
+    yield* threads.writeOverlay(threadId, next);
     // OMP reloads overlays live; launch-scoped keys still need a new session.
     if (field.launchScoped) yield* threads.markRestartRequired(threadId, [field.key]);
     return {
