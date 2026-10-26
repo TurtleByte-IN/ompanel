@@ -61,8 +61,12 @@ a prompt that is a `/goal` command (`parseOmpGoalCommand` in
 | `/goal budget …`                             | none: RPC cannot change a running goal's budget | says so                                     |
 
 A refused op (goal mode off in `goal.enabled`, plan mode on, no paused goal to resume) fails
-the turn with OMP's reason. Like every provider's `/goal`, the command must run as its own turn.
-`/goal` is added to the `/` menu (see [commands.md](./commands.md)).
+the turn with OMP's reason. A new goal is created only after OMP has taken its objective as the
+prompt, so a goal continuation (`goal.continuationModes` with `rpc`) cannot run before the
+objective arrives; if OMP refuses the goal then, the turn notes "OMP did not set the goal" and
+the objective still runs. Like every provider's `/goal`, the command must run as its own turn:
+one sent while a turn runs is refused, never steered into the turn as text. `/goal` is added to
+the `/` menu (see [commands.md](./commands.md)).
 
 The thread's goal comes from OMP: `get_state.goal` when the session binds and after each turn,
 and every `goal_updated` frame, inside a turn or between turns. It is the provider thread's
@@ -102,8 +106,9 @@ scripted multi-subagent workflow in the eval kernel) and `jevify` (bulk classifi
 eval kernel's judge). OMP adds the hidden notice itself, so prompts go out unchanged; each word
 can be turned off with its `magicKeywords.<id>` setting.
 
-The web composer of an OMP thread offers them: typing three or more letters of one shows it in
-the suggestion menu, and a prompt that contains one shows it as a chip (`ultrathink` also
+The web composer of an OMP thread offers them: typing five or more letters of one shows it in
+the suggestion menu, which takes no keys (Tab, Enter and the arrows keep their usual meaning;
+click the suggestion to insert it), and a prompt that contains one shows it as a chip (`ultrathink` also
 lights the composer frame). The list (`OMP_MAGIC_KEYWORDS` in `composer.ts`) mirrors OMP's
 `modes/magic-keywords.ts` at the pinned tag; a word inside code, a path or an identifier does
 not count, as in OMP.

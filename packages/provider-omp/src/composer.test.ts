@@ -32,16 +32,16 @@ describe("OMP magic keywords", () => {
     assert.deepStrictEqual(words(text), expected);
   });
 
-  it("completes a typed prefix of three letters or more, not a finished word", () => {
+  it("completes a typed prefix of five letters or more, not a finished word", () => {
     assert.deepStrictEqual(
-      ompMagicKeywordCompletions("ult").map((keyword) => keyword.word),
+      ompMagicKeywordCompletions("ultra").map((keyword) => keyword.word),
       ["ultrathink"],
     );
     assert.deepStrictEqual(
-      ompMagicKeywordCompletions("work").map((keyword) => keyword.word),
+      ompMagicKeywordCompletions("workf").map((keyword) => keyword.word),
       ["workflowz"],
     );
-    assert.lengthOf(ompMagicKeywordCompletions("ul"), 0);
+    assert.lengthOf(ompMagicKeywordCompletions("ult"), 0);
     assert.lengthOf(ompMagicKeywordCompletions("ultrathink"), 0);
     assert.lengthOf(ompMagicKeywordCompletions("Ult"), 0);
     assert.lengthOf(ompMagicKeywordCompletions("xyz"), 0);

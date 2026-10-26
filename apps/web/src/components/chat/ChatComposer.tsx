@@ -1249,8 +1249,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     currentSearchKey: composerMenuSearchKey,
     highlightedSearchKey: composerHighlightedSearchKey,
   });
+  // Keyword suggestions take no keys (click or tap only), so none is the keyboard's active option.
   const activeComposerMenuItem =
-    composerMenuItems.find((item) => item.id === activeComposerMenuItemId) ?? null;
+    composerTrigger?.kind === "keyword"
+      ? null
+      : (composerMenuItems.find((item) => item.id === activeComposerMenuItemId) ?? null);
 
   useLayoutEffect(() => {
     composerMenuOpenRef.current = composerMenuOpen;

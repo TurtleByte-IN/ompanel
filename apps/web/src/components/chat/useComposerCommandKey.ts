@@ -23,11 +23,7 @@ import { composerTargetKey } from "../../composerDraftStore";
 import { listContinuationForEnter, listIndentForTab } from "../../composer-list-continuation";
 import { type Dispatch, type RefObject, type SetStateAction, useLayoutEffect, useRef } from "react";
 
-/**
- * The composer's key handling inside the editor: send shortcuts, the slash/mention menu,
- * prompt history on ArrowUp/ArrowDown, plan-mode toggle, and list continuation.
- */
-export function useComposerCommandKey(input: {
+export interface ComposerCommandKeyInput {
   readonly keybindings: ChatComposerProps["keybindings"];
   readonly sendShortcut: ChatComposerProps["settings"]["sendShortcut"];
   readonly routeKind: ChatComposerProps["routeKind"];
@@ -78,7 +74,13 @@ export function useComposerCommandKey(input: {
     dispatchMode: ComposerDispatchMode,
     submissionIntent: ComposerSubmissionIntent,
   ) => void;
-}) {
+}
+
+/**
+ * The composer's key handling inside the editor: send shortcuts, the slash/mention menu,
+ * prompt history on ArrowUp/ArrowDown, plan-mode toggle, and list continuation.
+ */
+export function useComposerCommandKey(input: ComposerCommandKeyInput) {
   const {
     keybindings,
     sendShortcut,
@@ -200,8 +202,17 @@ export function useComposerCommandKey(input: {
       composerMenuOpenRef.current = false;
       return true;
     }
-    if (menuIsActive && (submissionIntent === null || submissionIntent === "foreground")) {
-      const currentItems = composerMenuItemsRef.current;
+    const currentItems = composerMenuItemsRef.current;
+    // Magic keywords are suggested over ordinary prose ("ultra…", "orches…"), so their menu is
+    // passive: every key keeps its usual meaning and only a click or tap inserts a keyword.
+    const keywordMenu =
+      trigger?.kind === "keyword" ||
+      (currentItems.length > 0 && currentItems.every((item) => item.type === "magic-keyword"));
+    if (
+      menuIsActive &&
+      !keywordMenu &&
+      (submissionIntent === null || submissionIntent === "foreground")
+    ) {
       const selectedItem = activeComposerMenuItemRef.current ?? currentItems[0];
       if (key === "ArrowDown" && currentItems.length > 0) {
         nudgeComposerMenuHighlight("ArrowDown");
@@ -211,10 +222,7 @@ export function useComposerCommandKey(input: {
         nudgeComposerMenuHighlight("ArrowUp");
         return true;
       }
-      // A magic keyword is suggested over prose ("work" offers workflowz), so Enter still sends;
-      // Tab or a click takes the suggestion.
-      const acceptKey = key === "Tab" || (key === "Enter" && trigger?.kind !== "keyword");
-      if (acceptKey && selectedItem) {
+      if ((key === "Enter" || key === "Tab") && selectedItem) {
         onSelectComposerItem(selectedItem);
         return true;
       }

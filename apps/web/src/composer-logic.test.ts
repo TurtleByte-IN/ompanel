@@ -313,46 +313,47 @@ describe("detectComposerTrigger", () => {
 describe("detectComposerTrigger keyword completions", () => {
   const omp = { keywordCompletions: ompMagicKeywordCompletions };
 
-  it("offers a magic keyword for a typed prefix", () => {
-    const text = "fix the parser, ult";
+  it("offers a magic keyword for a typed prefix of five letters", () => {
+    const text = "fix the parser, ultra";
     expect(detectComposerTrigger(text, text.length, omp)).toEqual({
       kind: "keyword",
-      query: "ult",
+      query: "ultra",
       rangeStart: "fix the parser, ".length,
       rangeEnd: text.length,
     });
-    expect(composerStateAtPromptEnd("orch", false, omp).trigger).toEqual({
+    expect(composerStateAtPromptEnd("orches", false, omp).trigger).toEqual({
       kind: "keyword",
-      query: "orch",
+      query: "orches",
       rangeStart: 0,
-      rangeEnd: 4,
+      rangeEnd: 6,
     });
   });
 
   it.each([
     ["a complete keyword", "please ultrathink"],
-    ["a prefix below the minimum", "ul"],
+    ["a three-letter prefix", "ult"],
+    ["a four-letter prefix", "work"],
     ["a word no keyword starts with", "refactor"],
-    ["a capitalised prefix", "Ult"],
-    ["a prefix glued to punctuation", "(ult"],
+    ["a capitalised prefix", "Ultra"],
+    ["a prefix glued to punctuation", "(ultra"],
   ])("offers nothing for %s", (_name, text) => {
     expect(detectComposerTrigger(text, text.length, omp)).toBeNull();
   });
 
   it("offers nothing mid-word", () => {
-    expect(detectComposerTrigger("ultra", "ult".length, omp)).toBeNull();
-    expect(detectComposerTrigger("ult rest", "ult".length, omp)?.kind).toBe("keyword");
+    expect(detectComposerTrigger("ultrathin", "ultra".length, omp)).toBeNull();
+    expect(detectComposerTrigger("ultra rest", "ultra".length, omp)?.kind).toBe("keyword");
   });
 
   it("leaves the other triggers first", () => {
-    expect(detectComposerTrigger("/ult", 4, omp)?.kind).toBe("slash-command");
-    expect(detectComposerTrigger("@ult", 4, omp)?.kind).toBe("path");
-    expect(detectComposerTrigger("$ult", 4, omp)?.kind).toBe("skill");
-    expect(detectComposerTrigger("#ult", 4, omp)?.kind).toBe("pull-request");
+    expect(detectComposerTrigger("/ultra", 6, omp)?.kind).toBe("slash-command");
+    expect(detectComposerTrigger("@ultra", 6, omp)?.kind).toBe("path");
+    expect(detectComposerTrigger("$ultra", 6, omp)?.kind).toBe("skill");
+    expect(detectComposerTrigger("#ultra", 6, omp)?.kind).toBe("pull-request");
   });
 
   it("detects no keyword trigger without completions", () => {
-    for (const text of ["ult", "fix it, orch", "jev"]) {
+    for (const text of ["ultra", "fix it, orches", "jevif"]) {
       expect(detectComposerTrigger(text, text.length)).toBeNull();
       expect(composerStateAtPromptEnd(text).trigger).toBeNull();
       expect(detectComposerTrigger(text, text.length, {})).toBeNull();
@@ -360,8 +361,8 @@ describe("detectComposerTrigger keyword completions", () => {
   });
 
   it("replaces the typed prefix with the keyword and one space", () => {
-    const text = "ult the rest";
-    const trigger = detectComposerTrigger(text, "ult".length, omp)!;
+    const text = "ultra the rest";
+    const trigger = detectComposerTrigger(text, "ultra".length, omp)!;
     const replacement = "ultrathink ";
     const rangeEnd = extendReplacementRangeForTrailingSpace(text, trigger.rangeEnd, replacement);
     expect(replaceTextRange(text, trigger.rangeStart, rangeEnd, replacement)).toEqual({

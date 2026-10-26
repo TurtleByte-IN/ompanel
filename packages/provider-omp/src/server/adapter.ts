@@ -1106,7 +1106,18 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
           { enabled },
           { timeoutMs: SELECTION_REQUEST_TIMEOUT_MS },
         ).pipe(
-          Effect.tap((result) => Effect.sync(() => (applied.vibe = result.enabled))),
+          Effect.tap((result) =>
+            Effect.gen(function* () {
+              applied.vibe = result.enabled;
+              if (result.enabled) return;
+              // Leaving vibe mode kills every worker; a killed worker may send no final frame.
+              const now = yield* DateTime.now;
+              for (const id of subagents.liveVibeWorkerIds()) {
+                const ended = { type: "subagent_lifecycle", payload: { id, status: "aborted" } };
+                yield* emit(subagents.handleFrame(ended, mapper.subagentScope, now));
+              }
+            }),
+          ),
           Effect.catch(traitRefused("vibe")),
         );
       }
@@ -1274,21 +1285,6 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
           ? messageText
           : yield* options.commands.resolvePrompt(cwd, messageText);
       yield* applySelection(turnInput.threadId, turnInput.modelSelection);
-      if (goalCommand !== null) {
-        yield* process
-          .request(
-            "goal",
-            {
-              op: "create",
-              objective: goalCommand.objective,
-              ...(goalCommand.tokenBudget === undefined
-                ? {}
-                : { token_budget: goalCommand.tokenBudget }),
-            },
-            { timeoutMs: SELECTION_REQUEST_TIMEOUT_MS },
-          )
-          .pipe(Effect.mapError(selectionError("goal")));
-      }
       // T3 names the thread; OMP keeps it as a user-set title, which its own titling respects.
       const title = turnInput.appThread.title;
       if (title !== appliedSessionName) {
@@ -1376,11 +1372,47 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       // The reply is echoed onto the frame stream, behind any `command_output` the prompt
       // produced, and settles the turn there. A prompt that never reached OMP settles here.
       const requestOptions = { timeoutMs: null, echoResponse: true } as const;
-      yield* (
-        restart
-          ? process.request("abort_and_prompt", payload, requestOptions)
-          : process.request("prompt", payload, requestOptions)
-      ).pipe(
+      const sent: Effect.Effect<unknown, OmpRpcRequestError> = restart
+        ? process.request("abort_and_prompt", payload, requestOptions)
+        : process.request("prompt", payload, requestOptions);
+      // The goal starts once OMP runs its objective: created first, an `rpc` goal continuation
+      // could take the idle session before the objective arrives. A refusal (goal mode off, a
+      // paused goal) is noted in the turn; the objective still runs as a prompt.
+      const goalCreated: Effect.Effect<void> =
+        goalCommand === null
+          ? Effect.void
+          : process
+              .request(
+                "goal",
+                {
+                  op: "create",
+                  objective: goalCommand.objective,
+                  ...(goalCommand.tokenBudget === undefined
+                    ? {}
+                    : { token_budget: goalCommand.tokenBudget }),
+                },
+                { timeoutMs: SELECTION_REQUEST_TIMEOUT_MS },
+              )
+              .pipe(
+                Effect.asVoid,
+                Effect.catch((error: OmpRpcRequestError) =>
+                  exclusive(
+                    Effect.gen(function* () {
+                      if (mapper.activeProviderTurnId !== providerTurnId) return;
+                      const detail =
+                        error._tag === "OmpRpcCommandError" ? error.detail : error.message;
+                      const notice = {
+                        type: "notice",
+                        source: "Goal",
+                        message: `OMP did not set the goal: ${detail}`,
+                      };
+                      yield* emit(mapper.handleFrame(notice, yield* DateTime.now).events);
+                    }),
+                  ),
+                ),
+              );
+      yield* sent.pipe(
+        Effect.andThen(() => goalCreated),
         Effect.catchTags({
           OmpRpcError: (error) =>
             exclusive(
@@ -1436,6 +1468,15 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       steerInput: ProviderAdapter.ProviderAdapterV2SteerInput,
     ) {
       const providerTurnId = steerInput.providerTurnId;
+      // A goal command is an RPC action, never text for the model (`runGoalCommand`).
+      if (
+        steerInput.message.attachments.length === 0 &&
+        parseOmpGoalCommand(steerInput.message.text) !== null
+      ) {
+        return yield* protocolError(
+          "Goal commands run as their own turn. Send it again once this turn ends.",
+        );
+      }
       const payload = yield* promptPayload(steerInput.message.text, steerInput.message.attachments);
       const followUp = yield* exclusive(
         Effect.gen(function* () {

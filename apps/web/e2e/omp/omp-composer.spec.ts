@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - an end-to-end test writing artifacts.
 // Composer extras on an OMP thread (PHASES P-05): goal mode through the composer chip and the Goal
 // panel, magic-keyword chips, and the traits menu (boolean traits, role chip; Vibe Mode only once
 // the pin has `set_vibe_mode`). A real `omp` from the omp.lock tag and the scripted model.
@@ -40,13 +41,17 @@ test("sets a goal with /goal: OMP creates it over RPC and works on the objective
 
   const replies = await assistantMessages().count();
   await sendAndSettle(`/goal set --budget 200000 ${OBJECTIVE}`);
-  await expect(assistantMessages()).toHaveCount(replies + 1);
-  // The objective went to the model as the prompt, with OMP's goal tool offered.
-  const call = stack.model.calls.findLast(
-    (entry) => entry.lastRole === "user" && entry.lastText.includes(OBJECTIVE),
+  await expect(assistantMessages()).not.toHaveCount(replies);
+  // The objective went to the model as the prompt (never the `/goal` text), and once OMP set
+  // the goal, its goal context and `goal` tool followed.
+  const calls = stack.model.calls.filter((entry) =>
+    entry.userTexts.some((text) => text.includes(OBJECTIVE)),
   );
-  expect(call?.lastText).not.toContain("/goal");
-  expect(call?.tools).toContain("goal");
+  expect(calls.length).toBeGreaterThan(0);
+  expect(calls.flatMap((entry) => entry.userTexts).some((text) => text.includes("/goal set"))).toBe(
+    false,
+  );
+  expect(calls.some((entry) => entry.tools.includes("goal"))).toBe(true);
   await expect(goalChip()).toHaveAttribute("aria-label", "Goal set");
   await screenshot("p05-03-goal-set");
 });
@@ -95,12 +100,13 @@ test("the agent completes the goal with OMP's goal tool", async () => {
 
 test("offers magic keywords as chips, and OMP acts on them", async () => {
   const { page, screenshot, sendAndSettle, stack } = suite.current();
-  await composer().pressSequentially("think it through, ult");
+  await composer().pressSequentially("think it through, ultra");
   const option = page.getByRole("listbox", { name: "Magic keywords" }).getByRole("option");
   await expect(option.filter({ hasText: "ultrathink" })).toBeVisible();
   await screenshot("p05-07-keyword-suggestion");
 
-  await composer().press("Tab");
+  // The suggestion never takes a key: Tab keeps its default, only a click inserts the keyword.
+  await option.filter({ hasText: "ultrathink" }).click();
   await expect(composer()).toHaveText("think it through, ultrathink");
   await expect(page.locator('[data-magic-keyword="ultrathink"]')).toBeVisible();
   await composer().pressSequentially("please");

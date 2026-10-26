@@ -182,14 +182,42 @@ const openThread = Effect.fnUntraced(function* (options: {
         ? [event.turnItem.detail ?? event.turnItem.summary]
         : [],
     );
-  return { turn, sent, lastGoal, outputs };
+  const steer = (text: string) =>
+    session.steerTurn({
+      threadId: THREAD_ID,
+      runId: RunId.make(`run:goal:${ordinal}`),
+      providerThread,
+      providerTurnId: "provider-turn:goal" as never,
+      message: {
+        messageId: `message:goal:steer` as never,
+        text,
+        attachments: [],
+        createdBy: "user",
+        creationSource: "web",
+      },
+    });
+  const types = () => state.commands().map((command) => String(command["type"]));
+  const notices = () =>
+    events.flatMap((event) =>
+      event.type === "turn_item.updated" && event.turnItem.type === "system_notice"
+        ? [event.turnItem.message]
+        : [],
+    );
+  /** Every status the subagent's rows had, oldest first. */
+  const subagentStatuses = (nativeId: string) =>
+    events.flatMap((event) =>
+      event.type === "subagent.updated" && event.subagent.nativeTaskRef?.nativeId === nativeId
+        ? [event.subagent.status]
+        : [],
+    );
+  return { turn, sent, lastGoal, outputs, steer, types, notices, subagentStatuses };
 });
 
 posixOnly("OmpAdapter goal mode", () => {
-  it.live("/goal set creates the goal over RPC, then prompts its objective", () =>
+  it.live("/goal set prompts its objective, then creates the goal over RPC", () =>
     Effect.gen(function* () {
       const active = goal("active", { tokensUsed: 0, timeUsedSeconds: 0, tokenBudget: 50_000 });
-      const { turn, sent, lastGoal } = yield* openThread({
+      const { turn, sent, lastGoal, types } = yield* openThread({
         commands: {
           goal: [
             { emit: { type: "goal_updated", goal: active, state: goalResult(active).state } },
@@ -207,6 +235,8 @@ posixOnly("OmpAdapter goal mode", () => {
         sent("prompt").map((command) => command["message"]),
         ["Ship the release notes"],
       );
+      // The objective reaches OMP before the goal exists, so no goal continuation can take it.
+      assert.isBelow(types().indexOf("prompt"), types().indexOf("goal"));
       assert.deepStrictEqual(lastGoal(), {
         objective: "Ship the release notes",
         status: "active",
@@ -214,6 +244,34 @@ posixOnly("OmpAdapter goal mode", () => {
         tokensUsed: 0,
         timeUsedSeconds: 0,
       });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("a refused goal still runs the objective and says the goal was not set", () =>
+    Effect.gen(function* () {
+      const { turn, sent, notices } = yield* openThread({
+        commands: {
+          // OMP answers the goal while the objective's run goes on; the run ends afterwards.
+          goal: [{ fail: "Goal mode is disabled (goal.enabled)." }, ...PROMPT_TURN.slice(1)],
+          prompt: [PROMPT_TURN[0]!],
+        },
+      });
+      const terminal = yield* turn("/goal Ship the release notes");
+      assert.strictEqual(terminal.type === "turn.terminal" && terminal.status, "completed");
+      assert.lengthOf(sent("prompt"), 1);
+      assert.deepStrictEqual(notices(), [
+        "OMP did not set the goal: Goal mode is disabled (goal.enabled).",
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("a /goal sent while a turn runs is refused, never steered as text", () =>
+    Effect.gen(function* () {
+      const { steer, sent } = yield* openThread({});
+      const error = yield* steer("/goal pause").pipe(Effect.flip);
+      assert.isDefined(error);
+      assert.lengthOf(sent("steer"), 0);
+      assert.lengthOf(sent("follow_up"), 0);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
@@ -337,6 +395,41 @@ posixOnly("OmpAdapter vibe mode", () => {
       assert.strictEqual(terminal.type === "turn.terminal" && terminal.status, "completed");
       yield* turn("Again", vibe(true));
       assert.lengthOf(sent("set_vibe_mode"), 2);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("leaving vibe mode ends the workers' rows, even without a final frame", () =>
+    Effect.gen(function* () {
+      const { turn, subagentStatuses } = yield* openThread({
+        contract: OMP_VIBE_CONTRACT,
+        commands: {
+          // Every call answers "off", so each vibe-on turn asks again and sees vibe end.
+          set_vibe_mode: [{ respond: { enabled: false, killed: 1 } }],
+          prompt: [
+            PROMPT_TURN[0]!,
+            {
+              emit: {
+                type: "subagent_lifecycle",
+                payload: {
+                  id: "QuickFox",
+                  agent: "sonic",
+                  description: "vibe fast session",
+                  status: "started",
+                  parentId: null,
+                  depth: 0,
+                  parentToolCallId: "call-vibe-spawn",
+                },
+              },
+            },
+            ...PROMPT_TURN.slice(1),
+          ],
+        },
+      });
+      yield* turn("Direct the workers", vibe(true));
+      assert.deepStrictEqual(subagentStatuses("QuickFox"), ["running"]);
+      // The second turn's set_vibe_mode reports vibe off: the running worker's row ends first.
+      yield* turn("Again", vibe(true));
+      assert.deepStrictEqual(subagentStatuses("QuickFox").slice(0, 2), ["running", "cancelled"]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

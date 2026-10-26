@@ -186,6 +186,20 @@ export class OmpSubagentTracker {
     });
   }
 
+  /**
+   * The vibe workers still running here. Leaving vibe mode kills them all, and a killed worker
+   * may send no final frame, so the adapter ends them itself (docs/omp/subagents.md#vibe-workers).
+   */
+  liveVibeWorkerIds(): Array<string> {
+    return [...this.#subagents].flatMap(([id, tracked]) =>
+      tracked.description !== undefined &&
+      VIBE_WORKER_DESCRIPTION.test(tracked.description) &&
+      !isTerminal(tracked.record.status)
+        ? [id]
+        : [],
+    );
+  }
+
   /** Maps one `subagent_lifecycle` or `subagent_progress` frame; other frames map to nothing. */
   handleFrame(
     frame: { readonly type: string; readonly payload?: unknown },

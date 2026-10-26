@@ -60,7 +60,7 @@ export const OMP_MAGIC_KEYWORDS: ReadonlyArray<OmpMagicKeyword> = [
 ];
 
 /** Shortest typed prefix that offers keyword completions; shorter ones match too much prose. */
-export const OMP_MAGIC_KEYWORD_MIN_PREFIX = 3;
+const OMP_MAGIC_KEYWORD_MIN_PREFIX = 5;
 
 // OMP's boundaries (pi-tui `prompt/magic-keywords.ts`): letters, digits, `_`, `.`, `/`, `\`, `-`
 // and `::` bind the word into an identifier or path; a trailing `(` makes it a call.

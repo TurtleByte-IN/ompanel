@@ -24,7 +24,8 @@ function menu(items: ComposerCommandItem[], onSelect: (item: ComposerCommandItem
       resolvedTheme="light"
       isLoading={false}
       triggerKind="keyword"
-      activeItemId={items[0]?.id ?? null}
+      // The composer gives keyword suggestions no keyboard-active option.
+      activeItemId={null}
       onHighlightedItemChange={() => {}}
       onSelect={onSelect}
     />
@@ -37,7 +38,7 @@ describe("ComposerCommandMenu magic keywords", () => {
     const container = document.createElement("div");
     container.style.width = "560px";
     container.className = "bg-background text-foreground";
-    await using screen = await render(menu(keywordItems("ult"), onSelect), { container });
+    await using screen = await render(menu(keywordItems("ultra"), onSelect), { container });
 
     await expect.element(screen.getByRole("listbox", { name: "Magic keywords" })).toBeVisible();
     const word = screen.getByText("ultrathink", { exact: true });
@@ -60,7 +61,7 @@ describe("ComposerCommandMenu magic keywords", () => {
   it("notes the tools a keyword needs", async () => {
     const container = document.createElement("div");
     container.style.width = "560px";
-    await using screen = await render(menu(keywordItems("wor"), vi.fn()), { container });
+    await using screen = await render(menu(keywordItems("workf"), vi.fn()), { container });
 
     await expect.element(screen.getByText("workflowz", { exact: true })).toBeVisible();
     await expect.element(screen.getByText("needs task/eval")).toBeVisible();
