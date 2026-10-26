@@ -1,4 +1,5 @@
 import { downloadAttachmentForPreview } from "./attachmentDownload";
+import { httpUrl } from "./httpUrl";
 
 export function isPdfPreviewUri(uri: string): boolean {
   try {
@@ -14,13 +15,7 @@ export function pdfInitialPage(uri: string): number {
 }
 
 export function pdfLinkUrl(href: string, sourceUri: string): string | null {
-  if (href.trim().length === 0) return null;
-  try {
-    const url = new URL(href, sourceUri);
-    return url.protocol === "http:" || url.protocol === "https:" ? url.href : null;
-  } catch {
-    return null;
-  }
+  return httpUrl(href, sourceUri);
 }
 
 export async function preparePdfPreview(uri: string, signal: AbortSignal) {

@@ -15,13 +15,17 @@ import type {
 } from "@t3tools/contracts";
 import * as Redacted from "effect/Redacted";
 import { useState } from "react";
-import { Linking, TextInput, View } from "react-native";
+import { TextInput, View } from "react-native";
 
 import { Button } from "../../components/ui/Button";
 import { AppText as Text } from "../../components/ui/AppText";
+import { httpUrl } from "../../lib/httpUrl";
+import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
+
+const OPEN_URL_ERROR = "Could not open the sign-in page. Copy the link into your browser.";
 
 const SOURCE_LABEL: Record<NonNullable<OmpAccountProvider["source"]>, string> = {
   runtime: "Command-line key",
@@ -66,6 +70,8 @@ export function OmpAccountsPanel(props: OmpAccountsPanelProps) {
   const [keyProvider, setKeyProvider] = useState<string | null>(null);
   const [keyDraft, setKeyDraft] = useState("");
   const [answerDraft, setAnswerDraft] = useState({ promptId: "", value: "" });
+  // The server relays OMP's URL; only http(s) is opened, so it cannot dial or launch other apps.
+  const [blockedUrl, setBlockedUrl] = useState<string | null>(null);
   const { list, signIn } = props;
   const running = signIn?.phase === "running";
   const prompt = running ? signIn.prompt : null;
@@ -86,9 +92,9 @@ export function OmpAccountsPanel(props: OmpAccountsPanelProps) {
           {`${secret.key} is set in ${secret.path}, which is usually committed to version control. Move the key to an environment variable or OMP sign-in, and reset it in the project config.`}
         </Text>
       ))}
-      {props.error ? (
+      {props.error || (blockedUrl !== null && blockedUrl === signInUrl) ? (
         <Text accessibilityRole="alert" className="text-sm text-danger-foreground">
-          {props.error}
+          {props.error ?? OPEN_URL_ERROR}
         </Text>
       ) : null}
 
@@ -109,7 +115,11 @@ export function OmpAccountsPanel(props: OmpAccountsPanelProps) {
                 label="Open sign-in page"
                 icon="globe"
                 tone="primary"
-                onPress={() => props.onOpenUrl(signInUrl)}
+                onPress={() => {
+                  const url = httpUrl(signInUrl);
+                  if (url === null) setBlockedUrl(signInUrl);
+                  else props.onOpenUrl(url);
+                }}
               />
               <Text
                 selectable
@@ -343,9 +353,9 @@ export function OmpProviderAccounts(props: {
       }
       onCancel={() => void run(() => cancel({ environmentId, input: { instanceId } }))}
       onOpenUrl={(url) => {
-        void Linking.openURL(url).catch(() =>
-          setError("Could not open the sign-in page. Copy the link into your browser."),
-        );
+        void tryOpenExternalUrl(url, "provider-auth").then((opened) => {
+          if (!opened) setError(OPEN_URL_ERROR);
+        });
       }}
       onListSignOut={(providerId) =>
         void run(() => listSignOut({ environmentId, input: { instanceId, providerId } })).then(

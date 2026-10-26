@@ -224,6 +224,18 @@ describe("OmpAccountsPanel (mobile)", () => {
     expect(calls.signOut).toHaveBeenCalledExactlyOnceWith("anthropic", 7);
   });
 
+  it.each(["tel:+15555550100", "sms:+15555550100", "intent://scan#Intent;end", "not a url"])(
+    "refuses to open a non-http(s) sign-in URL (%s) and asks to copy the link",
+    (url) => {
+      render({ signIn: { ...RUNNING, openUrl: { url } } });
+      act(() => button("Open sign-in page").click());
+      expect(calls.openUrl).not.toHaveBeenCalled();
+      expect(container.textContent).toContain(
+        "Could not open the sign-in page. Copy the link into your browser.",
+      );
+    },
+  );
+
   it("reports a failed sign-in and the request error", () => {
     render({
       signIn: { ...RUNNING, phase: "failed", prompt: null, message: "Token exchange failed." },
