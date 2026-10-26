@@ -2,6 +2,7 @@ import type {
   OrchestrationV2ProviderCapabilities,
   OrchestrationV2ProviderSession,
   ProviderInstanceId,
+  ThreadId,
 } from "@t3tools/contracts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -21,13 +22,20 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
-import type { RpcServerFrame } from "../../contract/src/wire.generated.ts";
+import type { RpcServerFrame, SessionState } from "../../contract/src/wire.generated.ts";
 import { makeOmpHostBridge } from "./hostTools.ts";
 import { ompApprovalModeFor } from "./launch.ts";
 import { OMP_PROVIDER, OmpThreadMapper, type OmpTurnOutcome } from "./mapper.ts";
+import type { OmpSessionsLocation } from "./ompSessions.ts";
 import type { OmpRpcRequestError, OmpRpcRequestOptions } from "./rpcProcess.ts";
 import type { OmpPidfiles } from "./pidfiles.ts";
 import { type OmpStateDirs, startOmpSessionProcess } from "./session.ts";
+import {
+  ensureFreshOmpSession,
+  recordOmpThreadSession,
+  switchOmpSession,
+} from "./sessionBinding.ts";
+import { ompHistoryMessages, readOmpHistoryPages } from "./sessionHistory.ts";
 import type { OmpThreadSessions } from "./threadSessions.ts";
 import type { OmpSidecarError } from "./sidecar.ts";
 import {
@@ -178,6 +186,8 @@ export interface OmpAdapterOptions {
   readonly readyTimeoutMs?: number;
   /** This instance's running thread sessions, shared with the settings engine. */
   readonly threadSessions: OmpThreadSessions;
+  /** Where the instance's `omp` keeps its session files (`resolveOmpSessionsLocation`). */
+  readonly sessions: OmpSessionsLocation;
 }
 
 /** Operations other Ompanel items wire up; this build refuses them. */
@@ -198,8 +208,9 @@ const protocolError = (detail: string, reason?: ProviderAdapter.ProviderAdapterF
 
 /**
  * OMP's orchestration adapter. Opening a session starts the thread's `omp --mode rpc-ui`
- * process and completes the protocol handshake; the thread binds to the live OMP session, a
- * turn is one `prompt`, and every frame goes through `OmpThreadMapper`.
+ * process, completes the protocol handshake and puts the process on the thread's OMP session
+ * (a fresh one, or the one the thread ran before; docs/omp/sessions.md). A turn is one
+ * `prompt`, and every frame goes through `OmpThreadMapper`.
  */
 export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: OmpAdapterOptions) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -298,6 +309,41 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       Effect.forkIn(scope),
     );
 
+    /** The thread's session: found in `options.sessions`, remembered in the thread directory. */
+    const binding = {
+      process,
+      location: options.sessions,
+      threadsDir: options.dirs.threads,
+      threadId: input.threadId,
+    };
+    const withFiles = <A, E>(effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path>) =>
+      effect.pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+      );
+    let recorded: Pick<SessionState, "sessionId" | "sessionFile"> | null = null;
+    /** Records the session the thread runs whenever it changes (`/fresh` starts a new one). */
+    const recordSession = (state: Pick<SessionState, "sessionId" | "sessionFile">) =>
+      recorded?.sessionId === state.sessionId && recorded.sessionFile === state.sessionFile
+        ? Effect.void
+        : withFiles(recordOmpThreadSession(binding, state)).pipe(
+            Effect.tap(() =>
+              Effect.sync(() => {
+                recorded = state;
+              }),
+            ),
+          );
+    /** The session's user and assistant messages, read page by page, as thread messages. */
+    const readHistory = Effect.fnUntraced(function* (threadId: ThreadId, sessionId: string) {
+      const pages = yield* readOmpHistoryPages(process);
+      return ompHistoryMessages({
+        threadId,
+        sessionId,
+        messages: pages.flatMap((page) => page.messages),
+        now: yield* DateTime.now,
+      });
+    });
+
     const finalize = Effect.fnUntraced(function* (outcome: OmpTurnOutcome, refresh: boolean) {
       // Usage and todos live in the session, not in `prompt_result`: read them once per turn.
       const read = <A, E>(effect: Effect.Effect<A, E>) =>
@@ -318,6 +364,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
           yield* DateTime.now,
         ),
       );
+      if (Option.isSome(state) && mapper.providerThread !== null) yield* recordSession(state.value);
     });
 
     const stopDialogTimer = (nativeId: string) => {
@@ -460,6 +507,30 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
     yield* process
       .request("set_ask_dialog", { enabled: true }, { timeoutMs: SIDE_REQUEST_TIMEOUT_MS })
       .pipe(Effect.ignore);
+    // A known thread reopens its session before anything runs in it. One that cannot be
+    // reopened keeps a fresh session, and resuming the thread reports why (T3 then starts a
+    // fresh native thread and hands the conversation over).
+    const nativeSessionId = input.initialNativeThreadId;
+    const reopened =
+      nativeSessionId !== undefined &&
+      (yield* withFiles(switchOmpSession({ ...binding, sessionId: nativeSessionId })).pipe(
+        Effect.as(true),
+        Effect.catch((error) =>
+          Effect.logWarning("omp session not reopened", {
+            sessionId: nativeSessionId,
+            detail: error.message,
+          }).pipe(Effect.as(false)),
+        ),
+      ));
+    // A process that is already gone settles the session as an error on its frame stream.
+    if (!reopened) {
+      yield* ensureFreshOmpSession(process).pipe(
+        Effect.catchTag("OmpRpcError", (error) =>
+          Effect.logWarning("omp session not checked", { detail: error.message }),
+        ),
+        Effect.mapError(openError),
+      );
+    }
     yield* options.threadSessions.register({
       threadId: input.threadId,
       providerSessionId: input.providerSessionId,
@@ -478,7 +549,11 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
     // Before the first turn, so its tools and directory handling are in place.
     yield* hostBridge.setup;
 
-    /** Binds the thread to the session this process opened; switching sessions is C-10's. */
+    /**
+     * Binds the thread to its OMP session: the one it ran before (reopened if the process runs
+     * another), else the process's own fresh session. A thread with no run yet whose session
+     * already holds a conversation (an imported session) gets that history as its messages.
+     */
     const bindThread = Effect.fnUntraced(function* (
       threadId: ProviderAdapter.ProviderAdapterV2EnsureThreadInput["threadId"],
       existing: ProviderAdapter.ProviderAdapterV2EnsureThreadInput["existingProviderThread"],
@@ -490,16 +565,41 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
         }
         return bound;
       }
-      const state = yield* process.request("get_state", undefined);
+      let state = yield* process.request("get_state", undefined);
       const nativeId = existing?.nativeThreadRef?.nativeId;
-      if (nativeId !== undefined && nativeId !== state.sessionId) {
-        return yield* unavailable("resuming an earlier session");
+      if (nativeId != null && nativeId !== state.sessionId) {
+        state = yield* withFiles(switchOmpSession({ ...binding, sessionId: nativeId })).pipe(
+          Effect.mapError((error) =>
+            protocolError(`OMP session ${nativeId} could not be resumed: ${error.message}`),
+          ),
+        );
       }
       const result = mapper.bindThread(
         { threadId, state, ...(existing === undefined ? {} : { existing }) },
         yield* DateTime.now,
       );
       yield* emit(result.events);
+      yield* recordSession(state);
+      if (existing?.lastRunOrdinal === null && (state.messageCount ?? 0) > 0) {
+        const sessionId = state.sessionId;
+        yield* readHistory(threadId, sessionId).pipe(
+          Effect.flatMap((messages) =>
+            emit(
+              messages.map((message) => ({
+                type: "message.updated" as const,
+                driver: OMP_PROVIDER,
+                message,
+              })),
+            ),
+          ),
+          Effect.catch((error) =>
+            Effect.logWarning("omp session history not loaded", {
+              sessionId,
+              detail: error.message,
+            }),
+          ),
+        );
+      }
       return result.providerThread;
     });
 
@@ -681,6 +781,30 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       return ompTranscriptPage(page);
     });
 
+    /**
+     * The conversation as OMP holds it now, paged with `get_messages_page`: user and assistant
+     * messages outside any run. OMP refuses while a turn streams (`session_busy`).
+     */
+    const readThreadSnapshot = Effect.fnUntraced(function* (
+      snapshotInput: ProviderAdapter.ProviderAdapterV2ReadThreadSnapshotInput,
+    ) {
+      yield* assertOwnThread(snapshotInput.providerThread);
+      const state = yield* process.request("get_state", undefined, {
+        timeoutMs: SIDE_REQUEST_TIMEOUT_MS,
+      });
+      const messages = yield* readHistory(
+        snapshotInput.providerThread.appThreadId ?? input.threadId,
+        state.sessionId,
+      );
+      return {
+        providerThread: mapper.providerThread ?? snapshotInput.providerThread,
+        providerTurns: [],
+        messages,
+        runtimeRequests: [],
+        providerPayload: { sessionId: state.sessionId, sessionFile: state.sessionFile ?? null },
+      } satisfies ProviderAdapter.ProviderAdapterV2ThreadSnapshot;
+    });
+
     return {
       instanceId: options.instanceId,
       driver: OMP_PROVIDER,
@@ -744,7 +868,17 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
               }),
           ),
         ),
-      readThreadSnapshot: () => unavailable("thread snapshots"),
+      readThreadSnapshot: (snapshotInput) =>
+        readThreadSnapshot(snapshotInput).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProviderAdapter.ProviderAdapterReadThreadSnapshotError({
+                driver: OMP_PROVIDER,
+                providerThreadId: snapshotInput.providerThread.id,
+                cause,
+              }),
+          ),
+        ),
       rollbackThread: () => unavailable("rollback"),
       forkThread: () => unavailable("fork"),
     } satisfies ProviderAdapter.ProviderAdapterV2SessionRuntime;

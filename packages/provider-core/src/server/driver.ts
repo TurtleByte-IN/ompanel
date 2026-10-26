@@ -11,6 +11,8 @@ import type {
   ServerProvider,
   ServerProviderWorkspaceSnapshot,
   OmpConfigScope,
+  OmpSessionSummary,
+  OmpSessionsOperationError,
   OmpSettingsForm,
   OmpSettingsOperationError,
   OmpSettingsWriteResult,
@@ -92,6 +94,23 @@ export interface ProviderInstance {
   readonly ompSettings?: ProviderOmpSettingsController;
   /** OMP's own provider accounts: sign-in through RPC `login`, sign-out, auth sources. */
   readonly ompAccounts?: ProviderOmpAccountsController;
+  /** OMP's on-disk sessions (`<agent dir>/sessions`), listed for import as threads. */
+  readonly ompSessions?: ProviderOmpSessionsController;
+}
+
+/**
+ * A session as OMP stores it. `threadId` is the thread this instance last bound to it (which may
+ * since have been deleted); the server resolves `importedThreadId` from it.
+ */
+export type ProviderOmpSession = Omit<OmpSessionSummary, "importedThreadId"> & {
+  readonly threadId: ThreadId | null;
+};
+
+export interface ProviderOmpSessionsController {
+  /** Sessions whose working directory is `cwd`, newest first. */
+  readonly list: (input: {
+    readonly cwd: string;
+  }) => Effect.Effect<ReadonlyArray<ProviderOmpSession>, OmpSessionsOperationError>;
 }
 
 /**

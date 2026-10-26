@@ -8,6 +8,8 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   WS_METHODS,
+  WsServerImportOmpSessionRpc,
+  WsServerListOmpSessionsRpc,
   WsServerRefreshProvidersRpc,
   WsSubscribeServerConfigRpc,
   type OrchestrationV2StoredEvent,
@@ -21,6 +23,7 @@ import * as Deferred from "effect/Deferred";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
@@ -62,6 +65,7 @@ import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts
 import * as ProviderAuthService from "./provider/ProviderAuthService.ts";
 import * as ProviderInstanceRegistry from "./provider/ProviderInstanceRegistry.ts";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import * as ProviderRegistry from "./provider/ProviderRegistry.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
@@ -881,5 +885,194 @@ it.effect("thread resume across compacted history keeps message order and final 
         Layer.provideMerge(ReplayTestLayer),
       ),
     ),
+  ),
+);
+
+it.effect("lists OMP sessions with their threads and imports one as a thread", () =>
+  Effect.gen(function* () {
+    const instanceId = ProviderInstanceId.make("omp");
+    const driver = ProviderDriverKind.make("omp");
+    const projectId = ProjectId.make("project-omp");
+    const workspaceRoot = "/workspace/omp";
+    const derivedThreadId = (sessionId: string) =>
+      IdAllocator.deriveThreadFromProviderThread({
+        driver,
+        providerInstanceId: instanceId,
+        nativeThreadId: sessionId,
+      });
+    const session = (sessionId: string, threadId: ThreadId | null) => ({
+      sessionId,
+      cwd: workspaceRoot,
+      title: null,
+      firstMessage: `  Fix the ${sessionId} bug  `,
+      createdAt: "2026-10-25T00:00:00.000Z",
+      updatedAt: "2026-10-26T00:00:00.000Z",
+      threadId,
+    });
+    const boundThread = ThreadId.make("thread-bound");
+    const sessions = [
+      // Bound by this instance to a thread that still exists.
+      session("bound", boundThread),
+      // Imported earlier; the bound thread was since deleted.
+      session("imported", ThreadId.make("thread-deleted")),
+      session("fresh", null),
+    ];
+    const existingThreads = new Set<string>([boundThread, derivedThreadId("imported")]);
+    const listedCwds: Array<string> = [];
+    const launches: Array<ThreadLaunchService.ThreadLaunchInput> = [];
+    const responses = yield* Queue.unbounded<unknown>();
+    const services = Layer.mergeAll(
+      layerUnusedConfigRpcServices,
+      Layer.mock(ProjectService.ProjectService)({
+        getById: (id) =>
+          Effect.succeed(
+            id === projectId ? Option.some({ id, workspaceRoot } as never) : Option.none(),
+          ),
+      }),
+      Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+        getInstance: (id) =>
+          Effect.succeed(
+            id === instanceId
+              ? ({
+                  driverKind: driver,
+                  ompSessions: {
+                    list: ({ cwd }: { readonly cwd: string }) =>
+                      Effect.sync(() => {
+                        listedCwds.push(cwd);
+                        return sessions;
+                      }),
+                  },
+                } as never)
+              : undefined,
+          ),
+      }),
+      Layer.mock(ProviderRegistry.ProviderRegistry)({
+        getProviders: Effect.succeed([
+          { instanceId, models: [{ slug: "omp-default", isDefault: true }] } as never,
+        ]),
+      }),
+      Layer.mock(ThreadManagement.ThreadManagementService)({
+        getThreadShell: (threadId) =>
+          Effect.succeed(existingThreads.has(threadId) ? ({ threadId } as never) : null),
+      }),
+      Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+        launch: (input) =>
+          Effect.sync(() => {
+            launches.push(input);
+            if (input.threadId !== undefined) existingThreads.add(input.threadId);
+            return {} as never;
+          }),
+      }),
+      Layer.mock(ServerRuntimeStartup.ServerRuntimeStartup)({
+        enqueueCommand: (effect) => effect,
+      }),
+      Layer.mock(ExternalLauncher.ExternalLauncher)({}),
+      Layer.mock(UsageLimitSources.UsageLimitSources)({}),
+      Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
+      Layer.mock(DirectEndpoints.DirectEndpoints)({}),
+      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+        scratchRoot: Effect.succeedNone,
+        namedProjectsRoot: process.cwd(),
+      }),
+      Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+      Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+    );
+    const server = yield* RpcServer.makeNoSerialization(
+      RpcGroup.make(WsServerListOmpSessionsRpc, WsServerImportOmpSessionRpc),
+      {
+        ...WS_RPC_SERVER_OPTIONS,
+        onFromServer: (response) =>
+          response._tag === "Exit"
+            ? Queue.offer(
+                responses,
+                response.exit._tag === "Success" ? response.exit.value : response.exit,
+              )
+            : Effect.void,
+      },
+    ).pipe(
+      Effect.provide(
+        layerWsRpc(
+          {
+            sessionId: AuthSessionId.make("omp-sessions-test"),
+            subject: "omp-sessions-test",
+            method: "browser-session-cookie",
+            scopes: [],
+          },
+          {},
+          {},
+          yield* PreviewAutomationBroker.PreviewAutomationBroker,
+          yield* ServerBrowser.ServerBrowser,
+        ).pipe(Layer.provide(services)),
+      ),
+    );
+    const request = (
+      id: string,
+      tag: typeof WS_METHODS.serverListOmpSessions | typeof WS_METHODS.serverImportOmpSession,
+      payload: object,
+    ) =>
+      server
+        .write(0, {
+          _tag: "Request",
+          id: RpcMessage.RequestId(id),
+          tag,
+          payload: payload as never,
+          headers: Headers.empty,
+        })
+        .pipe(Effect.andThen(Queue.take(responses)));
+
+    const listed = (yield* request("list", WS_METHODS.serverListOmpSessions, {
+      instanceId,
+      projectId,
+    })) as { readonly sessions: ReadonlyArray<{ sessionId: string; importedThreadId: unknown }> };
+    assert.deepEqual(listedCwds, [workspaceRoot]);
+    assert.deepEqual(
+      listed.sessions.map((entry) => [entry.sessionId, entry.importedThreadId]),
+      [
+        ["bound", boundThread],
+        ["imported", derivedThreadId("imported")],
+        ["fresh", null],
+      ],
+    );
+    assert.notProperty(listed.sessions[0], "threadId");
+
+    const alreadyImported = yield* request("import-bound", WS_METHODS.serverImportOmpSession, {
+      instanceId,
+      projectId,
+      sessionId: "bound",
+    });
+    assert.deepEqual(alreadyImported, { threadId: boundThread, imported: false });
+
+    const imported = yield* request("import-fresh", WS_METHODS.serverImportOmpSession, {
+      instanceId,
+      projectId,
+      sessionId: "fresh",
+    });
+    assert.deepEqual(imported, { threadId: derivedThreadId("fresh"), imported: true });
+    assert.equal(launches.length, 1);
+    const launch = launches[0]!;
+    assert.equal(launch.threadId, derivedThreadId("fresh"));
+    assert.equal(launch.title, "Fix the fresh bug");
+    assert.deepEqual(launch.modelSelection, { instanceId, model: "omp-default" });
+    assert.deepEqual(launch.importedNativeThread, {
+      ref: { driver, nativeId: "fresh", strength: "strong" },
+      metadata: { updatedAt: "2026-10-26T00:00:00.000Z" },
+    });
+
+    const missing = yield* request("import-missing", WS_METHODS.serverImportOmpSession, {
+      instanceId,
+      projectId,
+      sessionId: "missing",
+    });
+    assert.include(JSON.stringify(missing), "session_not_found");
+    assert.equal(launches.length, 1);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.fresh(layerConfigSources),
+        Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
+        Layer.mock(ServerBrowser.ServerBrowser)({}),
+      ),
+    ),
+    Effect.scoped,
   ),
 );

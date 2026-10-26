@@ -85,6 +85,8 @@ const RPC_AGGREGATES = {
   [WS_METHODS.serverSubscribeOmpSignIn]: "provider",
   [WS_METHODS.serverListOmpSignOutAccounts]: "provider",
   [WS_METHODS.serverOmpSignOut]: "provider",
+  [WS_METHODS.serverListOmpSessions]: "provider",
+  [WS_METHODS.serverImportOmpSession]: "provider",
   [WS_METHODS.serverDiscoverSourceControl]: "server",
   [WS_METHODS.serverGetTraceDiagnostics]: "server",
   [WS_METHODS.serverGetProcessDiagnostics]: "server",

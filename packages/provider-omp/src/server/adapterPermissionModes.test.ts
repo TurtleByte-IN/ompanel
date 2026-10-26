@@ -91,6 +91,7 @@ const openThread = Effect.fnUntraced(function* (
     pidfiles: yield* makeOmpPidfiles({ dir: dirs.pidfiles, platform }),
     expectedContractVersion: "1.0.0",
     threadSessions: makeOmpThreadSessions(),
+    sessions: state.sessions,
   });
   const session = yield* adapter.openSession({
     threadId: THREAD_ID,

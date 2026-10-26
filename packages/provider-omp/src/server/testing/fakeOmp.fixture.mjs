@@ -2,6 +2,7 @@
 // optionally, a FAKE_OMP_SCRIPT JSON file (see `FakeOmpScript` in fakeOmp.ts).
 // It records what happened to it in FAKE_OMP_STATE (argv.json, events.log, commands.jsonl, tree.json).
 import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeTimersPromises from "node:timers/promises";
@@ -19,8 +20,174 @@ function record(event) {
 let sessionId = "fake-session";
 
 function write(frame) {
-  if (frame.type === "session_info_update") sessionId = frame.sessionId;
+  if (frame.type === "session_info_update") {
+    sessionId = frame.sessionId;
+    if (store !== null) store.current.id = frame.sessionId;
+  }
+  if (frame.type === "agent_end" && store !== null) store.appendMessages(frame.messages ?? []);
   process.stdout.write(`${JSON.stringify(frame)}\n`);
+}
+
+/**
+ * With FAKE_OMP_SESSIONS_DIR, sessions live on disk like OMP's:
+ * `<dir>/<bucket of cwd>/<timestamp>_<id>.jsonl`, a title slot, the header, then `message`
+ * entries, written once the session holds a message. `get_state`, `new_session`,
+ * `switch_session`, `get_messages_page` and `set_session_name` then work on that store unless
+ * scripted, a `prompt` records its user message and an emitted `agent_end` its messages, and an
+ * accepted `host_cwd_change_result` moves the file into the new directory's bucket.
+ * FAKE_OMP_AUTO_RESUME=1 starts on the bucket's newest session, like OMP's `autoResume`.
+ */
+function makeStore(root) {
+  const argv = process.argv.slice(2);
+  const cwdFlag = argv.indexOf("--cwd");
+  const startCwd = cwdFlag >= 0 ? argv[cwdFlag + 1] : process.cwd();
+  const bucket = (cwd) => NodePath.join(root, cwd.replace(/[\\/:]/g, "-"));
+  const fresh = (cwd) => {
+    const id = `fake-${NodeCrypto.randomUUID()}`;
+    const timestamp = new Date().toISOString();
+    return {
+      id,
+      cwd,
+      title: null,
+      timestamp,
+      file: NodePath.join(bucket(cwd), `${timestamp.replace(/[:.]/g, "-")}_${id}.jsonl`),
+      messages: [],
+    };
+  };
+  const load = (file) => {
+    let title = null;
+    let header = null;
+    const messages = [];
+    for (const line of NodeFS.readFileSync(file, "utf8").split("\n")) {
+      if (line.trim() === "") continue;
+      const entry = JSON.parse(line);
+      if (entry.type === "title") title = entry.title;
+      else if (entry.type === "session") header = entry;
+      else if (entry.type === "message") messages.push(entry.message);
+    }
+    return { id: header.id, cwd: header.cwd, title, timestamp: header.timestamp, file, messages };
+  };
+  const store = {
+    current: fresh(startCwd),
+    persist() {
+      const session = store.current;
+      if (session.messages.length === 0 && session.title === null) return;
+      NodeFS.mkdirSync(NodePath.dirname(session.file), { recursive: true });
+      const lines = [];
+      if (session.title !== null) {
+        lines.push(JSON.stringify({ type: "title", v: 1, title: session.title, source: "user" }));
+      }
+      lines.push(
+        JSON.stringify({
+          type: "session",
+          version: 3,
+          id: session.id,
+          timestamp: session.timestamp,
+          cwd: session.cwd,
+        }),
+      );
+      let parentId = null;
+      session.messages.forEach((message, index) => {
+        const id = `e${index}`;
+        lines.push(JSON.stringify({ type: "message", id, parentId, timestamp: "", message }));
+        parentId = id;
+      });
+      NodeFS.writeFileSync(session.file, `${lines.join("\n")}\n`);
+    },
+    appendMessages(messages) {
+      store.current.messages.push(...messages);
+      store.persist();
+    },
+    newSession() {
+      store.current = fresh(store.current.cwd);
+    },
+    switchSession(file) {
+      store.current = load(file);
+    },
+    moveTo(cwd) {
+      const session = store.current;
+      const target = NodePath.join(bucket(cwd), NodePath.basename(session.file));
+      const existed = NodeFS.existsSync(session.file);
+      session.cwd = cwd;
+      const source = session.file;
+      session.file = target;
+      store.persist();
+      if (existed && source !== target) NodeFS.rmSync(source);
+    },
+    page(cursor, limit) {
+      const session = store.current;
+      let offset = 0;
+      if (cursor !== undefined) {
+        const decoded = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
+        if (decoded.sessionId !== session.id || decoded.count !== session.messages.length) {
+          return null;
+        }
+        offset = decoded.offset;
+      }
+      const messages = session.messages.slice(offset, offset + (limit ?? 100));
+      const next = offset + messages.length;
+      const nextCursor =
+        next < session.messages.length
+          ? Buffer.from(
+              JSON.stringify({
+                sessionId: session.id,
+                count: session.messages.length,
+                offset: next,
+              }),
+            ).toString("base64url")
+          : undefined;
+      return {
+        messages,
+        totalMessages: session.messages.length,
+        ...(nextCursor === undefined ? {} : { nextCursor }),
+      };
+    },
+  };
+  if (env.FAKE_OMP_AUTO_RESUME === "1" && NodeFS.existsSync(bucket(startCwd))) {
+    const newest = NodeFS.readdirSync(bucket(startCwd))
+      .filter((name) => name.endsWith(".jsonl"))
+      .map((name) => NodePath.join(bucket(startCwd), name))
+      .sort((a, b) => NodeFS.statSync(b).mtimeMs - NodeFS.statSync(a).mtimeMs)[0];
+    if (newest !== undefined) store.current = load(newest);
+  }
+  return store;
+}
+
+const store = env.FAKE_OMP_SESSIONS_DIR ? makeStore(env.FAKE_OMP_SESSIONS_DIR) : null;
+
+/** The store's answer to an unscripted command, or `undefined` when it does not handle it. */
+function storeResponse(command) {
+  const ok = (data) => ({ success: true, ...(data === undefined ? {} : { data }) });
+  switch (command.type) {
+    case "get_state":
+      return ok({
+        sessionId: store.current.id,
+        sessionFile: store.current.file,
+        messageCount: store.current.messages.length,
+        ...(store.current.title === null ? {} : { sessionName: store.current.title }),
+      });
+    case "new_session":
+      store.newSession();
+      return ok({ cancelled: false });
+    case "switch_session":
+      if (!NodeFS.existsSync(command.sessionPath)) {
+        return { success: false, error: `Session file not found: ${command.sessionPath}` };
+      }
+      store.switchSession(command.sessionPath);
+      return ok({ cancelled: false });
+    case "get_messages_page": {
+      const page = store.page(command.cursor, command.limit);
+      return page === null
+        ? { success: false, error: "RPC message cursor is stale", code: "stale_cursor" }
+        : ok(page);
+    }
+    case "set_session_name":
+      store.current.title = command.name;
+      store.persist();
+      return ok(undefined);
+    default:
+      return undefined;
+  }
 }
 
 const script = env.FAKE_OMP_SCRIPT
@@ -161,9 +328,28 @@ process.stdin.on("data", (text) => {
     if (stateDir) {
       NodeFS.appendFileSync(NodePath.join(stateDir, "commands.jsonl"), `${line}\n`);
     }
+    if (store !== null && command.type === "prompt" && typeof command.message === "string") {
+      store.appendMessages([
+        {
+          role: "user",
+          content: [{ type: "text", text: command.message }],
+          timestamp: Date.now(),
+        },
+      ]);
+    }
+    if (store !== null && command.type === "host_cwd_change_result") {
+      // A host reply, not a command: OMP moves the session when the host accepted.
+      if (command.accepted === true && typeof command.cwd === "string") store.moveTo(command.cwd);
+      continue;
+    }
     const scripted = script.commands?.[command.type];
     if (scripted !== undefined && command.type !== "negotiate_protocol") {
       runSteps(scripted, command);
+      continue;
+    }
+    const stored = store === null ? undefined : storeResponse(command);
+    if (stored !== undefined) {
+      write({ id: command.id, type: "response", command: command.type, ...stored });
       continue;
     }
     switch (command.type) {

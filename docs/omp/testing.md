@@ -59,6 +59,17 @@ stays on environment variables: `FAKE_OMP_CONTRACT`,
 `FAKE_OMP_NEGOTIATE_CONTRACT`, `FAKE_OMP_V1_ONLY`, `FAKE_OMP_FIRST_FRAME`,
 `FAKE_OMP_SPAWN_TREE`, `FAKE_OMP_IGNORE_SIGTERM`, `FAKE_OMP_IGNORE_STDIN_END`.
 
+With `state.sessionStore()` merged into `env(...)` (`FAKE_OMP_SESSIONS_DIR`),
+the fake keeps sessions on disk the way OMP does, under `state.sessions.root`
+(pass `state.sessions` as the adapter's `sessions`): one bucket per `--cwd`,
+`<timestamp>_<id>.jsonl` with a title slot, header and `message` entries.
+Unscripted `get_state`, `new_session`, `switch_session`, `get_messages_page`
+(with stale cursors) and `set_session_name` work on that store; a `prompt`
+records its user message and an emitted `agent_end` its messages; an accepted
+`host_cwd_change_result` moves the file into the new directory's bucket, as
+`/wt` does. `sessionStore(root, { autoResume: true })` starts on the bucket's
+newest session, like OMP's `autoResume`.
+
 `fakeOmpFrames` builds contract-shaped frames: `promptTurn` (ack,
 `agent_start`, streamed thinking and text, an optional tool execution,
 `agent_end`, `prompt_result`), `sessionInfoUpdate`, `subagentLifecycle`,
@@ -68,7 +79,7 @@ stays on environment variables: `FAKE_OMP_CONTRACT`,
 
 Each scenario in `testkit/fixtures/ompScenarios.ts` drives one thread process
 and asserts what it saw: `context`, `rename`, `fresh`, `compact`, `cancel`,
-`branch`, `switch_session`. Its transcript,
+`branch`, `switch_session`, `messages_page`. Its transcript,
 `testkit/fixtures/omp_<name>/omp_transcript.ndjson`, holds the launch
 arguments, every stdin line (`expect_outbound`), every raw stdout line
 (`emit_inbound`, `rpc_chunk` sequences kept), the stdin close and the exit.

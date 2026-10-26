@@ -91,6 +91,13 @@ import {
   OmpSignOutInput,
   OmpSignOutResult,
 } from "./ompAccounts.ts";
+import {
+  OmpImportSessionInput,
+  OmpImportSessionResult,
+  OmpListSessionsInput,
+  OmpListSessionsResult,
+  OmpSessionsOperationError,
+} from "./ompSessions.ts";
 import { ExternalLauncherError, LaunchEditorInput } from "./editor.ts";
 import {
   AuthAccessStreamError,
@@ -538,6 +545,8 @@ export const WS_METHODS = {
   serverSubscribeOmpSignIn: "server.subscribeOmpSignIn",
   serverListOmpSignOutAccounts: "server.listOmpSignOutAccounts",
   serverOmpSignOut: "server.ompSignOut",
+  serverListOmpSessions: "server.listOmpSessions",
+  serverImportOmpSession: "server.importOmpSession",
   serverGetTraceDiagnostics: "server.getTraceDiagnostics",
   serverGetProcessDiagnostics: "server.getProcessDiagnostics",
   serverGetHostResources: "server.getHostResources",
@@ -980,6 +989,23 @@ const WsServerOmpSignOutRpc = Rpc.make(WS_METHODS.serverOmpSignOut, {
   payload: OmpSignOutInput,
   success: OmpSignOutResult,
   error: OmpAccountsRpcError,
+});
+
+const OmpSessionsRpcError = Schema.Union([
+  OmpSessionsOperationError,
+  EnvironmentAuthorizationError,
+]);
+
+export const WsServerListOmpSessionsRpc = Rpc.make(WS_METHODS.serverListOmpSessions, {
+  payload: OmpListSessionsInput,
+  success: OmpListSessionsResult,
+  error: OmpSessionsRpcError,
+});
+
+export const WsServerImportOmpSessionRpc = Rpc.make(WS_METHODS.serverImportOmpSession, {
+  payload: OmpImportSessionInput,
+  success: OmpImportSessionResult,
+  error: OmpSessionsRpcError,
 });
 
 const WsServerGetTraceDiagnosticsRpc = Rpc.make(WS_METHODS.serverGetTraceDiagnostics, {
@@ -2105,6 +2131,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerSubscribeOmpSignInRpc,
   WsServerListOmpSignOutAccountsRpc,
   WsServerOmpSignOutRpc,
+  WsServerListOmpSessionsRpc,
+  WsServerImportOmpSessionRpc,
   WsServerGetTraceDiagnosticsRpc,
   WsServerGetProcessDiagnosticsRpc,
   WsServerGetHostResourcesRpc,

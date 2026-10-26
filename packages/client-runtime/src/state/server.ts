@@ -1475,6 +1475,24 @@ export function createServerEnvironmentAtoms<R, E>(
         key: ({ environmentId, input }) => `${environmentId}:${input.instanceId}`,
       },
     }),
+    listOmpSessions: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:omp-sessions:list",
+      tag: WS_METHODS.serverListOmpSessions,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) =>
+          `${environmentId}:${input.instanceId}:${input.projectId}`,
+      },
+    }),
+    importOmpSession: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:omp-sessions:import",
+      tag: WS_METHODS.serverImportOmpSession,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) =>
+          `${environmentId}:${input.instanceId}:${input.projectId}:${input.sessionId}`,
+      },
+    }),
     readOmpSettings: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:omp-settings:read",
       tag: WS_METHODS.serverReadOmpSettings,

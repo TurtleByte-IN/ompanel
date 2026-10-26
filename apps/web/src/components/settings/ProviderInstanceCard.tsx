@@ -60,6 +60,7 @@ import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { SettingResetButton, SettingsRow, SettingsSection } from "./settingsLayout";
 import { AcpSessionManagementSection } from "./AcpSessionManagementSection";
 import { OmpAccountsSection } from "./OmpAccountsSection";
+import { OmpSessionImportSection } from "./OmpSessionImportSection";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { readCodexSetupMode } from "./CodexSetupSection.logic";
 import {
@@ -1234,6 +1235,13 @@ export function ProviderInstanceCard({
           provider={liveProvider}
           projects={acpProjects}
           readOnly={readOnly}
+        />
+      ) : null}
+      {environmentId !== undefined && liveProvider?.driver === "omp" ? (
+        <OmpSessionImportSection
+          environmentId={environmentId}
+          instanceId={instanceId}
+          projects={acpProjects}
         />
       ) : null}
 

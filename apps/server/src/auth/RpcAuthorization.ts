@@ -106,6 +106,8 @@ export const RPC_REQUIRED_SCOPES = {
   // A running sign-in shows its prompts; stored accounts carry emails.
   [WS_METHODS.serverSubscribeOmpSignIn]: AuthProvidersManageScope,
   [WS_METHODS.serverListOmpSignOutAccounts]: AuthProvidersManageScope,
+  [WS_METHODS.serverListOmpSessions]: AuthOrchestrationReadScope,
+  [WS_METHODS.serverImportOmpSession]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverDiscoverSourceControl]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetTraceDiagnostics]: AuthDiagnosticsReadScope,
   [WS_METHODS.serverGetProcessDiagnostics]: AuthDiagnosticsReadScope,
