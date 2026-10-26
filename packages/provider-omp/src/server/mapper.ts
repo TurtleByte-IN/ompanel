@@ -1297,7 +1297,10 @@ export class OmpThreadMapper {
     if (completed && proposal?.kind === "proposed_edit") {
       if (proposal.state === "proposed") {
         turn.proposals.set(toolCallId, { startedAt: call.startedAt, body: card });
-      } else if (card.toolName === "xd://resolve" || card.toolName === "xd://reject") {
+      } else if (
+        card.type === "dynamic_tool" &&
+        (card.toolName === "xd://resolve" || card.toolName === "xd://reject")
+      ) {
         // OMP applies or discards every staged proposal at once; their cards follow.
         for (const [proposalId, staged] of turn.proposals) {
           const output = asRecord(staged.body.type === "dynamic_tool" ? staged.body.output : null);

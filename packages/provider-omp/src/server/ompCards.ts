@@ -48,8 +48,8 @@ function defined<T extends Record<string, unknown>>(value: T): Defined<T> {
 }
 
 /** Content blocks of a tool result: text and inline images, as OMP sent them. */
-export function resultBlocks(result: unknown): Array<Record<string, unknown>> {
-  return list(result, "content").flatMap((block) => {
+function resultBlocks(result: unknown): Array<Record<string, unknown>> {
+  return list(result, "content").flatMap((block): Array<Record<string, unknown>> => {
     const entry = record(block);
     if (entry?.["type"] === "text" && typeof entry["text"] === "string") {
       return [{ type: "text", text: entry["text"] }];
