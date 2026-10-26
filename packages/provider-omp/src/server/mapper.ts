@@ -49,6 +49,7 @@ import {
 } from "./ompCards.ts";
 import type { OmpSubagentScope } from "./subagents.ts";
 import { OMP_HOST_TERMINAL_TOOL } from "./hostTools.ts";
+import { OmpAnsi } from "./ompAnsi.ts";
 
 export const OMP_PROVIDER = ProviderDriverKind.make("omp");
 
@@ -120,6 +121,8 @@ interface ToolCall {
   readonly toolName: string;
   readonly startedAt: DateTime.Utc;
   args: unknown;
+  /** Command output already sent as `command_output.delta` while the command runs. */
+  streamed?: string;
 }
 
 interface UsageTotals {
@@ -190,6 +193,34 @@ function resultText(result: unknown): string {
     .join("\n");
 }
 
+const isCommandTool = (toolName: string): boolean =>
+  toolName === "bash" || toolName === OMP_HOST_TERMINAL_TOOL;
+
+/** A command's output as cards and the live output view show it: plain text, no escapes. */
+const commandOutputText = (result: unknown): string => OmpAnsi.strip(resultText(result));
+
+/** How much of what was already sent locates a scrolled output window. */
+const STREAM_ANCHOR_CHARS = 256;
+
+/**
+ * The part of a running command's output not sent yet. OMP's updates carry a snapshot of its
+ * output window, which grows and, past its budget, scrolls. A scrolled window is located by the
+ * end of what was sent: wholly inside it, or starting partway through it. A window that shares
+ * nothing with it is sent whole. The card's final output replaces the live view either way.
+ */
+export function streamedOutputChunk(sent: string, snapshot: string): string {
+  if (snapshot.startsWith(sent)) return snapshot.slice(sent.length);
+  const anchor = sent.slice(-STREAM_ANCHOR_CHARS);
+  const at = snapshot.lastIndexOf(anchor);
+  if (at !== -1) return snapshot.slice(at + anchor.length);
+  for (let dropped = 1; dropped < anchor.length; dropped += 1) {
+    if (snapshot.startsWith(anchor.slice(dropped))) {
+      return snapshot.slice(anchor.length - dropped);
+    }
+  }
+  return snapshot;
+}
+
 const URI_TARGET = /^([a-z][a-z0-9+.-]*):\/\/(.*)$/i;
 /** `[PATH#TAG]` section headers of a hashline patch. */
 const HASHLINE_HEADER = /^\[([^\]\n#]+)#[0-9a-f]{4}\]\s*$/im;
@@ -235,13 +266,16 @@ function ompToolCard(input: {
   const path = stringField(args, "path");
 
   // The T3 terminal host tool stands in for `bash` (hostTools.ts) and reports the same details.
-  if (toolName === "bash" || toolName === OMP_HOST_TERMINAL_TOOL) {
+  // Without it OMP's own `bash` runs (the terminal fallback); either way running output streams
+  // as `command_output.delta` (`#toolEvent`) and the card carries the final output.
+  if (isCommandTool(toolName)) {
     const exitCode = asRecord(details)?.["exitCode"];
+    const plain = commandOutputText(result);
     return {
       title: toolName,
       type: "command_execution",
       input: stringField(args, "command") ?? "",
-      ...(output.length > 0 ? { output } : {}),
+      ...(plain.length > 0 ? { output: plain } : {}),
       ...(typeof exitCode === "number" && Number.isInteger(exitCode) ? { exitCode } : {}),
     };
   }
@@ -1291,6 +1325,31 @@ export class OmpThreadMapper {
     const completed = phase === "tool_execution_end";
     const result = completed ? frame["result"] : frame["partialResult"];
     const isError = completed && frame["isError"] === true;
+
+    if (isCommandTool(call.toolName) && phase === "tool_execution_update") {
+      // Live output is a delta on the running card, as Codex streams it; the persisted card gets
+      // the whole output at `tool_execution_end`.
+      const output = commandOutputText(result);
+      const sent = call.streamed;
+      call.streamed = output;
+      if (sent !== undefined || known !== undefined) {
+        const chunk = streamedOutputChunk(sent ?? "", output);
+        return chunk.length === 0
+          ? []
+          : [
+              {
+                type: "command_output.delta",
+                driver: OMP_PROVIDER,
+                threadId: turn.input.threadId,
+                itemId: IdAllocator.derive.turnItemFromProviderItem({
+                  driver: OMP_PROVIDER,
+                  nativeItemId: toolCallId,
+                }),
+                chunk,
+              },
+            ];
+      }
+    }
 
     if (call.toolName === "todo") {
       // The card is the list itself, once the tool has run; failures keep the generic card.

@@ -39,6 +39,21 @@ OMP is working stops the current response first. If OMP refuses the new mode,
 that message fails with an error and OMP keeps its previous mode; switch back
 to that mode or start a new thread.
 
+## Commands, Shortcuts and Notifications
+
+OMP runs shell commands in the thread's terminal, where you can watch them and
+answer password prompts. When that terminal is not available to OMP, OMP runs
+commands itself: their output still appears live on the command card, but they
+cannot ask for a password.
+
+Ompanel's keyboard shortcuts work the same in OMP threads as in any other.
+OMP's own key bindings (`keybindings.yml`) apply only to the `omp` terminal app.
+
+Messages OMP or an OMP extension shows to you (for example "Build done")
+appear in the thread. Desktop and phone notifications come, as for other
+agents, when a thread finishes, fails, or needs your approval or input; OMP's
+messages do not send one of their own yet.
+
 ## Status Checks
 
 Ompanel checks OMP by running `omp --version` (it waits up to 4 seconds) and

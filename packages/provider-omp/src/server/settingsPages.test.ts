@@ -286,4 +286,25 @@ describe("OMP settings pages", () => {
       launched,
     );
   });
+
+  it("leave keyboard shortcuts to T3: OMP's TUI and key settings are only shown, never written", () => {
+    const tuiKey = /^(startup|theme|statusLine|tui|terminal)\.|keybind|hotkey|shortcut/i;
+    const pagesFor = (key: string) =>
+      Object.values(OMP_SETTINGS_PAGES).filter((page) =>
+        page.keys.some((pattern) =>
+          pattern.endsWith(".") ? key.startsWith(pattern) : key === pattern,
+        ),
+      );
+    const tuiKeys = OMP_SETTING_KEYS.filter((key) => tuiKey.test(key));
+    assert.isAbove(tuiKeys.length, 0);
+    for (const key of tuiKeys) {
+      assert.deepStrictEqual(
+        pagesFor(key).map((page) => [page.id, page.terminalOnly]),
+        [["terminal", true]],
+        key,
+      );
+    }
+    // OMP's own bindings are a file the GUI never reads; the page says where they live.
+    assert.include(OMP_SETTINGS_PAGES.terminal.description, "keybindings.yml");
+  });
 });
