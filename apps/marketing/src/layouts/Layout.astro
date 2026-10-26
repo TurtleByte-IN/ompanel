@@ -4,12 +4,7 @@ import appIcon from "../assets/icon.webp";
 import socialCard from "../assets/social-card.webp";
 import dmSansLatinUrl from "../assets/fonts/dm-sans-latin.woff2?url";
 import "../styles/fonts.css";
-import {
-  ANDROID_PLAY_STORE_URL,
-  GITHUB_REPOSITORY_URL,
-  IOS_APP_STORE_URL,
-  MARKETING_STATS,
-} from "../lib/site";
+import { GITHUB_REPOSITORY_URL, LICENSE_URL, SECURITY_REPORT_URL } from "../lib/site";
 
 interface Props {
   title?: string;
@@ -18,12 +13,14 @@ interface Props {
 }
 
 const {
-  title = "T3 Code",
-  description = "T3 Code. The open-source control plane for coding agents.",
+  title = "Ompanel",
+  description = "Ompanel. The open-source control plane for coding agents.",
   pageClass,
 } = Astro.props;
 
-// Link unfurlers require a 1200x630 JPG/PNG at an absolute URL.
+// Link unfurlers require a 1200x630 JPG/PNG at an absolute URL, so canonical and social-card
+// tags need `site` in astro.config.mjs. Ompanel has no hosted domain yet; they are omitted until
+// one is configured.
 const socialImage = await getImage({
   src: socialCard,
   width: 1200,
@@ -31,10 +28,10 @@ const socialImage = await getImage({
   format: "jpg",
   quality: 90,
 });
-const socialImageUrl = new URL(socialImage.src, Astro.site);
+const socialImageUrl = Astro.site && new URL(socialImage.src, Astro.site);
 const socialImageAlt =
-  "T3 Code: the open-source control plane for coding agents, with Claude Code, Codex, Cursor, OpenCode, Grok and Antigravity.";
-const canonicalUrl = new URL(Astro.url.pathname, Astro.site);
+  "Ompanel: the open-source control plane for coding agents, with Claude Code, Codex, Cursor, OpenCode, Grok and Antigravity.";
+const canonicalUrl = Astro.site && new URL(Astro.url.pathname, Astro.site);
 ---
 
 <html lang="en">
@@ -42,22 +39,33 @@ const canonicalUrl = new URL(Astro.url.pathname, Astro.site);
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content={description} />
-    <link rel="canonical" href={canonicalUrl} />
+    {canonicalUrl && <link rel="canonical" href={canonicalUrl} />}
     <meta property="og:type" content="website" />
-    <meta property="og:site_name" content="T3 Code" />
-    <meta property="og:url" content={canonicalUrl} />
+    <meta property="og:site_name" content="Ompanel" />
+    {canonicalUrl && <meta property="og:url" content={canonicalUrl} />}
     <meta property="og:title" content={title} />
     <meta property="og:description" content={description} />
-    <meta property="og:image" content={socialImageUrl} />
-    <meta property="og:image:width" content="1200" />
-    <meta property="og:image:height" content="630" />
-    <meta property="og:image:alt" content={socialImageAlt} />
-    <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:site" content="@t3dotgg" />
+    {
+      socialImageUrl && (
+        <>
+          <meta property="og:image" content={socialImageUrl} />
+          <meta property="og:image:width" content="1200" />
+          <meta property="og:image:height" content="630" />
+          <meta property="og:image:alt" content={socialImageAlt} />
+        </>
+      )
+    }
+    <meta name="twitter:card" content={socialImageUrl ? "summary_large_image" : "summary"} />
     <meta name="twitter:title" content={title} />
     <meta name="twitter:description" content={description} />
-    <meta name="twitter:image" content={socialImageUrl} />
-    <meta name="twitter:image:alt" content={socialImageAlt} />
+    {
+      socialImageUrl && (
+        <>
+          <meta name="twitter:image" content={socialImageUrl} />
+          <meta name="twitter:image:alt" content={socialImageAlt} />
+        </>
+      )
+    }
     <link
       rel="preload"
       href={dmSansLatinUrl}
@@ -75,7 +83,7 @@ const canonicalUrl = new URL(Astro.url.pathname, Astro.site);
     <div class:list={["page", pageClass]}>
       <nav class="nav">
         <div class="nav-inner">
-          <a href="/" class="nav-brand" aria-label="T3 Code home">
+          <a href="/" class="nav-brand" aria-label="Ompanel home">
             <svg
               class="nav-brand-mark"
               viewBox="16 47.375 96 33.25"
@@ -84,7 +92,7 @@ const canonicalUrl = new URL(Astro.url.pathname, Astro.site);
             >
               <path d="M28.07 71.8Q24.67 71.8 21.93 70.22Q19.2 68.65 17.6 65.89Q16 63.14 16 59.58Q16 56.02 17.6 53.25Q19.21 50.49 21.94 48.93Q24.68 47.38 28.08 47.38Q31.48 47.38 34.22 48.93Q36.95 50.49 38.55 53.25Q40.15 56.02 40.15 59.58Q40.15 63.15 38.55 65.9Q36.94 68.65 34.2 70.22Q31.47 71.8 28.07 71.8ZM28.05 65.79Q29.44 65.79 30.54 65.1Q31.63 64.41 32.3 63.02Q32.97 61.64 32.97 59.59Q32.97 57.52 32.31 56.14Q31.65 54.75 30.55 54.07Q29.45 53.38 28.11 53.38Q26.75 53.38 25.63 54.07Q24.51 54.75 23.84 56.14Q23.17 57.52 23.17 59.59Q23.17 61.64 23.84 63.02Q24.51 64.41 25.62 65.1Q26.73 65.79 28.05 65.79ZM43.19 71.23V47.94H49.34L49.93 51.86H50.12Q51.15 49.62 53.06 48.5Q54.97 47.38 57.6 47.38Q59.32 47.38 60.78 47.83Q62.24 48.28 63.4 49.27Q64.55 50.27 65.31 51.94H65.5Q66.8 49.81 68.76 48.59Q70.71 47.38 73.75 47.38Q76.48 47.38 78.43 48.66Q80.39 49.94 81.45 52.38Q82.5 54.81 82.5 58.33V71.23H75.5V58.96Q75.5 56.27 74.48 54.78Q73.45 53.29 71.17 53.29Q69.69 53.29 68.62 53.95Q67.55 54.61 66.96 55.87Q66.37 57.14 66.37 58.96V71.23H59.36V58.96Q59.36 56.27 58.33 54.78Q57.3 53.29 54.97 53.29Q53.61 53.29 52.54 54Q51.47 54.72 50.85 56.04Q50.24 57.37 50.24 59.23V71.23ZM86.26 80.62V47.94H92.18L92.52 51.94H92.71Q93.56 50.53 94.78 49.52Q95.99 48.5 97.58 47.94Q99.17 47.38 101.12 47.38Q104.39 47.38 106.84 48.94Q109.29 50.51 110.64 53.26Q112 56.01 112 59.59Q112 63.16 110.64 65.91Q109.29 68.66 106.82 70.23Q104.35 71.8 100.99 71.8Q98.43 71.8 96.45 70.84Q94.46 69.89 93.3 68.45V80.62ZM99 66.12Q100.77 66.12 102.09 65.29Q103.41 64.45 104.14 62.99Q104.87 61.54 104.87 59.62Q104.87 57.7 104.14 56.25Q103.41 54.79 102.09 53.96Q100.77 53.12 99 53.12Q97.27 53.12 95.93 53.96Q94.58 54.79 93.85 56.25Q93.11 57.7 93.11 59.62Q93.11 61.54 93.85 62.99Q94.58 64.45 95.93 65.29Q97.27 66.12 99 66.12Z" />
             </svg>
-            <span class="nav-brand-name">Code</span>
+            <span class="nav-brand-name">Ompanel</span>
           </a>
           <div class="nav-right">
             <a class="nav-link" href="/download">Download</a>
@@ -93,12 +101,12 @@ const canonicalUrl = new URL(Astro.url.pathname, Astro.site);
               href={GITHUB_REPOSITORY_URL}
               target="_blank"
               rel="noopener noreferrer"
-              aria-label={`Star T3 Code on GitHub, ${MARKETING_STATS.githubStars} stars`}
+              aria-label="Ompanel on GitHub"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                 <path d="M12 2.3l2.9 5.88 6.49.94-4.7 4.58 1.11 6.47L12 17.12l-5.8 3.05 1.11-6.47-4.7-4.58 6.49-.94L12 2.3z"/>
               </svg>
-              <span><strong>{MARKETING_STATS.githubStars}</strong> GitHub stars</span>
+              <span>GitHub</span>
             </a>
           </div>
         </div>
@@ -122,17 +130,13 @@ const canonicalUrl = new URL(Astro.url.pathname, Astro.site);
               loading="lazy"
               decoding="async"
             />
-            <span>&copy; {new Date().getFullYear()} T3 Tools Inc · MIT licensed</span>
+            <span>&copy; {new Date().getFullYear()} TurtleByte · <a href={LICENSE_URL} target="_blank" rel="noopener noreferrer">MIT licensed</a></span>
           </div>
           <div class="footer-links">
             <a href={GITHUB_REPOSITORY_URL} target="_blank" rel="noopener noreferrer">GitHub</a>
-            <a href="https://discord.gg/jn4EGJjrvv" target="_blank" rel="noopener noreferrer">Discord</a>
             <a href="/download">Download</a>
-            <a href={IOS_APP_STORE_URL} target="_blank" rel="noopener noreferrer">iOS app</a>
-            <a href={ANDROID_PLAY_STORE_URL} target="_blank" rel="noopener noreferrer">Android app</a>
-            <a href="/terms-of-service">Terms</a>
-            <a href="/privacy-policy">Privacy</a>
-            <a href="/security-policy">Security</a>
+            <a href={LICENSE_URL} target="_blank" rel="noopener noreferrer">License</a>
+            <a href={SECURITY_REPORT_URL} target="_blank" rel="noopener noreferrer">Security</a>
           </div>
         </div>
       </footer>

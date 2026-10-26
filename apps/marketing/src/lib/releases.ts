@@ -1,6 +1,6 @@
-const REPO = "pingdotgg/t3code";
+import { REPOSITORY as REPO, RELEASES_URL } from "@t3tools/shared/brand";
 
-export const RELEASES_URL = `https://github.com/${REPO}/releases`;
+export { RELEASES_URL };
 export const NIGHTLY_RELEASES_URL = `${RELEASES_URL}?q=nightly&expanded=true`;
 
 const LATEST_API_URL = `https://api.github.com/repos/${REPO}/releases/latest`;
@@ -22,7 +22,7 @@ export interface Release {
 }
 
 function cacheKey(channel: ReleaseChannel) {
-  return `t3code-${channel}-release`;
+  return `ompanel-${channel}-release`;
 }
 
 async function fetchStable(): Promise<Release> {

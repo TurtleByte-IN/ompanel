@@ -5,7 +5,10 @@ import iconStable from "../assets/icon.webp";
 import iconNightly from "../assets/icon-nightly.webp";
 import Layout from "../layouts/Layout.astro";
 import { RELEASES_URL } from "../lib/releases";
-import { ANDROID_PLAY_STORE_URL, IOS_APP_STORE_URL } from "../lib/site";
+import { RAW_CONTENT_URL } from "@t3tools/shared/brand";
+
+const installScriptUrl = `${RAW_CONTENT_URL}/scripts/install.sh`;
+const installPowerShellUrl = `${RAW_CONTENT_URL}/scripts/install.ps1`;
 
 const imageProps = {
   alt: "",
@@ -16,7 +19,7 @@ const imageProps = {
 } satisfies Partial<ComponentProps<typeof Image>>;
 ---
 
-<Layout title="Download | T3 Code" description="Download T3 Code for macOS, Windows, or Linux.">
+<Layout title="Download | Ompanel" description="Download Ompanel for macOS, Windows, or Linux.">
   <div class="download-page" id="download-page" data-channel="stable">
     <header class="download-head">
       <div class="sky" aria-hidden="true"></div>
@@ -25,7 +28,7 @@ const imageProps = {
           <Image class="head-icon--stable" src={iconStable} width={64} height={64} loading="eager" {...imageProps} />
           <Image class="head-icon--nightly" src={iconNightly} width={64} height={64} loading="eager" {...imageProps} />
         </span>
-        <h1 class="heading">Download T3 Code</h1>
+        <h1 class="heading">Download Ompanel</h1>
       </div>
       <div class="channel-toggle" role="tablist" aria-label="Release channel" data-rise style="--d:90ms">
         <span class="channel-thumb" aria-hidden="true"></span>
@@ -114,37 +117,15 @@ const imageProps = {
         </p>
       </section>
 
-      <!-- Mobile has no nightly build. -->
-      <section class="platform-section platform-section--mobile" data-rise style="--d:420ms">
-        <div class="platform-header">
-          <svg class="platform-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="2" width="10" height="20" rx="2.5"/><path d="M11 18.5h2"/></svg>
-          <h2 class="platform-name">Mobile</h2>
-        </div>
-        <div class="download-cards">
-          <a class="download-card" href={IOS_APP_STORE_URL} target="_blank" rel="noopener noreferrer">
-            <span class="card-text">
-              <span class="card-arch">iPhone &amp; iPad</span>
-              <span class="card-format">App Store</span>
-            </span>
-          </a>
-          <a class="download-card" href={ANDROID_PLAY_STORE_URL} target="_blank" rel="noopener noreferrer">
-            <span class="card-text">
-              <span class="card-arch">Android</span>
-              <span class="card-format">Google Play</span>
-            </span>
-          </a>
-        </div>
-      </section>
-
       <section class="platform-section platform-section--cli" data-rise style="--d:420ms">
         <div class="platform-header">
           <svg class="platform-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 7l5 5-5 5M12 17h7"/></svg>
           <h2 class="platform-name">Terminal</h2>
         </div>
-        <code class="cli-line cli-line--stable">curl -fsSL https://t3.codes/install.sh | sh</code>
-        <code class="cli-line cli-line--stable">irm https://t3.codes/install.ps1 | iex</code>
-        <code class="cli-line cli-line--nightly">curl -fsSL https://t3.codes/install.sh | OMPANEL_CHANNEL=nightly sh</code>
-        <code class="cli-line cli-line--nightly">$env:OMPANEL_CHANNEL="nightly"; irm https://t3.codes/install.ps1 | iex</code>
+        <code class="cli-line cli-line--stable">curl -fsSL {installScriptUrl} | sh</code>
+        <code class="cli-line cli-line--stable">irm {installPowerShellUrl} | iex</code>
+        <code class="cli-line cli-line--nightly">curl -fsSL {installScriptUrl} | OMPANEL_CHANNEL=nightly sh</code>
+        <code class="cli-line cli-line--nightly">$env:OMPANEL_CHANNEL="nightly"; irm {installPowerShellUrl} | iex</code>
         <p class="cli-note">Or try it once without installing:</p>
         <code class="cli-line cli-line--stable">npx ompanel@latest</code>
         <code class="cli-line cli-line--nightly">npx ompanel@nightly</code>
@@ -168,7 +149,7 @@ const imageProps = {
   const changelogLink = document.getElementById("changelog-link") as HTMLAnchorElement;
   const releasesPageLink = document.getElementById("releases-page-link") as HTMLAnchorElement;
   const tabs = page.querySelectorAll<HTMLButtonElement>(".channel-toggle button");
-  // Only release-asset links; mobile store cards have no data-asset and keep their href.
+  // Only release-asset links carry data-asset.
   const cards = page.querySelectorAll<HTMLAnchorElement>("a[data-asset]");
 
   function readChannel(): ReleaseChannel {
@@ -407,10 +388,6 @@ const imageProps = {
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
-  }
-
-  .download-page[data-channel="nightly"] .platform-section--mobile {
-    display: none;
   }
 
   .cli-line--nightly,
