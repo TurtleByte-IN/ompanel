@@ -38,6 +38,7 @@ import type {
   Usage,
 } from "../../contract/src/wire.generated.ts";
 import type { OmpSubagentScope } from "./subagents.ts";
+import { OMP_HOST_TERMINAL_TOOL } from "./hostTools.ts";
 
 export const OMP_PROVIDER = ProviderDriverKind.make("omp");
 
@@ -214,7 +215,8 @@ function ompToolCard(input: {
   const output = resultText(result);
   const path = stringField(args, "path");
 
-  if (toolName === "bash") {
+  // The T3 terminal host tool stands in for `bash` (hostTools.ts) and reports the same details.
+  if (toolName === "bash" || toolName === OMP_HOST_TERMINAL_TOOL) {
     const exitCode = asRecord(details)?.["exitCode"];
     return {
       title: toolName,

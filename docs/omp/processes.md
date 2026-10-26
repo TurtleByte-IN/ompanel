@@ -38,6 +38,9 @@ also has its response put on the frame stream, after every frame OMP wrote
 before it; turns use this for `prompt`. What the frames mean for a thread is
 in [frames.md](./frames.md).
 
+Before the thread's first prompt, the session registers T3's terminal and MCP
+tools and hands `/wt` to T3; see [host-tools.md](./host-tools.md).
+
 ## Framing
 
 Stdout is newline-delimited JSON. A line over 1 MiB, a line that is not a

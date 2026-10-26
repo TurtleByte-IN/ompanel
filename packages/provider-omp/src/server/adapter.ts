@@ -3,7 +3,9 @@ import type {
   OrchestrationV2ProviderSession,
   ProviderInstanceId,
 } from "@t3tools/contracts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ProviderHostTools from "@t3tools/provider-core/server/ProviderHostTools";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
 import type * as Cause from "effect/Cause";
@@ -20,6 +22,7 @@ import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import type { RpcServerFrame } from "../../contract/src/wire.generated.ts";
+import { makeOmpHostBridge } from "./hostTools.ts";
 import { OMP_PROVIDER, OmpThreadMapper, type OmpTurnOutcome } from "./mapper.ts";
 import type { OmpRpcRequestError, OmpRpcRequestOptions } from "./rpcProcess.ts";
 import type { OmpPidfiles } from "./pidfiles.ts";
@@ -200,6 +203,13 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  // Present inside the T3 server; without them a thread's OMP keeps its own shell and worktrees.
+  const hostTools = Option.getOrUndefined(
+    yield* Effect.serviceOption(ProviderHostTools.ProviderHostTools),
+  );
+  const mcpSessions = Option.getOrUndefined(
+    yield* Effect.serviceOption(McpProviderSessions.McpProviderSessions),
+  );
 
   const openSession = Effect.fn("OmpAdapter.openSession")(function* (
     input: ProviderAdapter.ProviderAdapterV2OpenSessionInput,
@@ -232,6 +242,13 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
     );
 
     const scope = yield* Effect.scope;
+    const hostBridge = yield* makeOmpHostBridge({
+      process,
+      threadId: input.threadId,
+      cwd,
+      hostTools,
+      mcpSession: mcpSessions === undefined ? undefined : yield* mcpSessions.read(input.threadId),
+    });
     const now = yield* DateTime.now;
     const mapper = new OmpThreadMapper({
       instanceId: options.instanceId,
@@ -353,6 +370,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
         yield* emit(subagents.handleFrame(frame, mapper.subagentScope, yield* DateTime.now));
         return;
       }
+      if (yield* hostBridge.handleFrame(frame)) return;
       const result = mapper.handleFrame(frame, yield* DateTime.now);
       yield* emit(result.events);
       if (result.streaming && !flushScheduled) {
@@ -444,6 +462,8 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
         );
       }),
     });
+    // Before the first turn, so its tools and directory handling are in place.
+    yield* hostBridge.setup;
 
     /** Binds the thread to the session this process opened; switching sessions is C-10's. */
     const bindThread = Effect.fnUntraced(function* (
