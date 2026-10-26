@@ -71,7 +71,8 @@ function compareSubagents(left: AgentsTreeSubagent, right: AgentsTreeSubagent): 
 export function buildAgentsTree<Subagent extends AgentsTreeSubagent>(
   subagents: ReadonlyArray<Subagent>,
 ): ReadonlyArray<AgentsTreeNode<Subagent>> {
-  const sorted = subagents.toSorted(compareSubagents);
+  // Mobile (Hermes) has no Array#toSorted.
+  const sorted = [...subagents].sort(compareSubagents);
   const byId = new Map(sorted.map((subagent) => [subagent.id, subagent]));
   const childrenByParent = new Map<string, Subagent[]>();
   const roots: Subagent[] = [];
@@ -99,7 +100,7 @@ export function buildAgentsTree<Subagent extends AgentsTreeSubagent>(
   for (const subagent of sorted) {
     if (!placed.has(subagent.id)) tree.push(place(subagent, 0));
   }
-  return tree.toSorted((left, right) => compareSubagents(left.subagent, right.subagent));
+  return tree.sort((left, right) => compareSubagents(left.subagent, right.subagent));
 }
 
 /** Depth-first rows in display order, for an indented list. */

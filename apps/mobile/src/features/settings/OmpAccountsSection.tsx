@@ -288,22 +288,18 @@ export function OmpProviderAccounts(props: {
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
+  // Atom commands report failures in their result rather than throwing.
   async function run<A>(command: () => Promise<AtomCommandResult<A, unknown>>) {
     setPending(true);
     setError(null);
-    let value: A | undefined;
-    try {
-      const result = await command();
-      if (result._tag === "Success") value = result.value;
-      else if (!isAtomCommandInterrupted(result)) {
-        const failure = squashAtomCommandFailure(result);
-        setError(failure instanceof Error ? failure.message : "The OMP request failed.");
-      }
-    } catch {
-      setError("The OMP request failed.");
-    }
+    const result = await command();
     setPending(false);
-    return value;
+    if (result._tag === "Success") return result.value;
+    if (!isAtomCommandInterrupted(result)) {
+      const failure = squashAtomCommandFailure(result);
+      setError(failure instanceof Error ? failure.message : "The OMP request failed.");
+    }
+    return undefined;
   }
 
   const refresh = () =>

@@ -1,7 +1,7 @@
 import { page } from "vite-plus/test/browser";
 
 /** An iPhone-class phone in portrait: the width settings pages must fit (PRD §9). */
-export const PHONE_VIEWPORT = { width: 390, height: 844 } as const;
+const PHONE_VIEWPORT = { width: 390, height: 844 } as const;
 
 export async function usePhoneViewport(): Promise<AsyncDisposable> {
   await page.viewport(PHONE_VIEWPORT.width, PHONE_VIEWPORT.height);
