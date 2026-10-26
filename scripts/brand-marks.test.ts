@@ -84,9 +84,8 @@ const ALLOWLIST: ReadonlyArray<Allowance> = [
   },
   // Hosted infrastructure with no Ompanel equivalent yet (blocker B-003): upstream's hosted web
   // app, relay and Clerk. Only reachable when a build opts into them.
-  { path: ".env.example", marks: ["t3.codes"], reason: "B-003 hosted relay/app" },
+  { path: ".env.example", marks: ["T3 Code"], reason: "warns not to reuse upstream identifiers" },
   { path: "apps/web/vercel.ts", marks: ["t3.codes"], reason: "B-003 hosted app router" },
-  { path: "apps/mobile/app.config.ts", marks: ["t3.codes"], reason: "B-003 Clerk passkey domain" },
   { path: "infra/relay/src/monitoring.ts", marks: ["t3.codes"], reason: "B-003 relay monitoring" },
   { path: "docs/operations/release.md", marks: ["t3.codes"], reason: "B-003 hosted app channels" },
   { path: "docs/operations/relay-observability.md", marks: ["t3.codes"], reason: "B-003 relay" },
