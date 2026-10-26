@@ -2,12 +2,15 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { ProviderInstanceId, TextGenerationError } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { OmpAnsi } from "./ompAnsi.ts";
 import { makeOmpTextGeneration } from "./textGeneration.ts";
@@ -47,11 +50,24 @@ const setup = (mode: "ok" | "fail" | "hang", options?: { readonly profile?: stri
     const log = path.join(dir, "log.json");
     yield* fs.writeFileString(binary, FAKE_OMP);
     yield* fs.chmod(binary, 0o755);
+    // Wraps the real spawner so a test can await the child's first stdout bytes.
+    const firstOutput = yield* Deferred.make<ChildProcessSpawner.ChildProcessHandle>();
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const observed = ChildProcessSpawner.make((command) =>
+      spawner.spawn(command).pipe(
+        Effect.map((handle) =>
+          ChildProcessSpawner.makeHandle({
+            ...handle,
+            stdout: handle.stdout.pipe(Stream.tap(() => Deferred.succeed(firstOutput, handle))),
+          }),
+        ),
+      ),
+    );
     const textGeneration = yield* makeOmpTextGeneration({
       resolveBinary: Effect.succeed(binary),
       profile: options?.profile ?? "",
       environment: { PATH: process.env.PATH, FAKE_OMP_LOG: log, FAKE_OMP_MODE: mode },
-    });
+    }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, observed));
     const readLog = fs.readFileString(log).pipe(
       Effect.map(
         (text) =>
@@ -62,7 +78,7 @@ const setup = (mode: "ok" | "fail" | "hang", options?: { readonly profile?: stri
           },
       ),
     );
-    return { textGeneration, readLog, dir, fs, log };
+    return { textGeneration, readLog, dir, firstOutput };
   });
 
 const isAlive = (pid: number) => {
@@ -167,10 +183,9 @@ describe("OmpTextGeneration", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  // A real child process: its startup and death are OS events, so this polls on the real clock.
   it.live("cancellation kills the process and returns no partial text", () =>
     Effect.gen(function* () {
-      const { textGeneration, readLog, dir, fs, log } = yield* setup("hang");
+      const { textGeneration, dir, firstOutput } = yield* setup("hang");
       const fiber = yield* textGeneration
         .generateCommitMessage({
           cwd: dir,
@@ -180,15 +195,14 @@ describe("OmpTextGeneration", () => {
           modelSelection,
         })
         .pipe(Effect.forkChild);
-      while (!(yield* fs.exists(log))) yield* Effect.sleep("20 millis");
-      const { pid } = yield* readLog;
+      // The fake has written partial JSON and is now blocked forever.
+      const handle = yield* Deferred.await(firstOutput);
+      const pid = Number(handle.pid);
       assert.isTrue(isAlive(pid));
       yield* Fiber.interrupt(fiber);
       const exit = yield* Fiber.await(fiber);
       assert.isTrue(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause));
-      for (let attempt = 0; attempt < 100 && isAlive(pid); attempt++) {
-        yield* Effect.sleep("20 millis");
-      }
+      // Closing the operation's scope waits for the kill to land.
       assert.isFalse(isAlive(pid));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
