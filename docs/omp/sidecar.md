@@ -178,7 +178,10 @@ An enabled OMP instance runs `omp --version`, then starts an RPC control
 process, reads its first frame, which must be `ready`, and sends
 `get_login_providers`. The process is stopped right after. The check runs in
 the background: the provider list shows "Checking the OMP sidecar..." until it
-finishes and never waits for it.
+finishes and never waits for it. The result reaches every connected client even
+when it lands while the client is connecting or while another provider's status
+is being saved: the provider registry always publishes its current list, in
+order, and a client subscribes to changes before it reads the list (issue #150).
 
 The instance is ready only when `ready.contractVersion` equals
 `contract.version` in `omp.lock`; a sidecar that reports another version, or

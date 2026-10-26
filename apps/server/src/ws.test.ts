@@ -26,6 +26,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { Headers } from "effect/http";
@@ -507,7 +508,7 @@ it.effect(
         }),
         Layer.mock(ProviderRegistry.ProviderRegistry)({
           getProviders: Effect.succeed([]),
-          streamChanges: Stream.never,
+          subscribeChanges: Effect.succeed(Stream.never),
         }),
         Layer.mock(UsageLimitSources.UsageLimitSources)({ streamChanges: Stream.make([]) }),
         Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({
@@ -641,6 +642,163 @@ it.effect(
     ),
 );
 
+const makeConfigRpcServer = Effect.fn("makeConfigRpcServer")(function* (
+  providerRegistry: Partial<ProviderRegistry.ProviderRegistry["Service"]>,
+  responses: Queue.Queue<unknown>,
+) {
+  const configRpcServices = Layer.mergeAll(
+    layerUnusedConfigRpcServices,
+    Layer.mock(ExternalLauncher.ExternalLauncher)({
+      resolveAvailableEditors: () => Effect.succeed([]),
+      resolveFileManagerRevealKind: () => Effect.succeed(undefined),
+    }),
+    Layer.mock(ProviderRegistry.ProviderRegistry)(providerRegistry),
+    Layer.mock(UsageLimitSources.UsageLimitSources)({
+      current: Effect.succeed([]),
+      streamChanges: Stream.make([]),
+    }),
+    Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({
+      resolveTargets: () => Effect.succeed([]),
+    }),
+    Layer.mock(DirectEndpoints.DirectEndpoints)({ resolve: () => Effect.succeed([]) }),
+    Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+      scratchRoot: Effect.succeedNone,
+      namedProjectsRoot: process.cwd(),
+    }),
+    Layer.mock(ServerEnvironment.ServerEnvironment)({
+      getDescriptor: Effect.succeed({
+        environmentId: EnvironmentId.make("config-test"),
+        label: "Config test",
+        platform: { os: "linux", arch: "x64" },
+        serverVersion: "0.0.0",
+        capabilities: { repositoryIdentity: false },
+      }),
+    }),
+    Layer.mock(EnvironmentAuth.EnvironmentAuth)({
+      getDescriptor: () =>
+        Effect.succeed({
+          policy: "loopback-browser",
+          bootstrapMethods: [],
+          sessionMethods: ["browser-session-cookie"],
+          sessionCookieName: "config-test-session",
+        }),
+    }),
+  );
+  return yield* RpcServer.makeNoSerialization(
+    RpcGroup.make(WsSubscribeServerConfigRpc, WsServerRefreshProvidersRpc),
+    {
+      ...WS_RPC_SERVER_OPTIONS,
+      onFromServer: (response) =>
+        response._tag === "Chunk"
+          ? Effect.forEach(response.values, (value) => Queue.offer(responses, value), {
+              discard: true,
+            })
+          : response._tag === "Exit" && response.exit._tag === "Success"
+            ? Queue.offer(responses, response.exit.value)
+            : Effect.void,
+    },
+  ).pipe(
+    Effect.provide(
+      layerWsRpc(
+        {
+          sessionId: AuthSessionId.make("config-test"),
+          subject: "config-test",
+          method: "browser-session-cookie",
+          scopes: [],
+        },
+        {},
+        {},
+        yield* PreviewAutomationBroker.PreviewAutomationBroker,
+        yield* ServerBrowser.ServerBrowser,
+      ).pipe(Layer.provide(configRpcServices)),
+    ),
+  );
+});
+
+const layerConfigRpcTest = Layer.mergeAll(
+  Layer.fresh(layerConfigSources),
+  Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
+  Layer.mock(ServerBrowser.ServerBrowser)({}),
+);
+
+it.effect("a provider change made as a client's provider stream starts reaches the client", () =>
+  Effect.gen(function* () {
+    // A change published right after the stream reads the providers must still reach the client.
+    const checking: ServerProvider = {
+      instanceId: ProviderInstanceId.make("omp"),
+      driver: ProviderDriverKind.make("omp"),
+      enabled: true,
+      installed: true,
+      version: null,
+      status: "warning",
+      message: "Checking the OMP sidecar...",
+      auth: { status: "unknown" },
+      checkedAt: "2026-10-26T00:00:00.000Z",
+      models: [],
+      slashCommands: [],
+      skills: [],
+    };
+    const ready: ServerProvider = {
+      ...checking,
+      version: "18.12.6",
+      status: "ready",
+      message: "Running the OMP binary at /opt/omp.",
+      checkedAt: "2026-10-26T00:00:02.000Z",
+    };
+    const providersRef = yield* Ref.make<ReadonlyArray<ServerProvider>>([checking]);
+    const changes = yield* PubSub.unbounded<ReadonlyArray<ServerProvider>>();
+    const reads = yield* Ref.make(0);
+    const changePulled = yield* Deferred.make<void>();
+    const responses = yield* Queue.unbounded<unknown>();
+    const server = yield* makeConfigRpcServer(
+      {
+        // The first read is the config snapshot, the second seeds the live provider stream; the
+        // probe finishes right after that one.
+        getProviders: Effect.gen(function* () {
+          const providers = yield* Ref.get(providersRef);
+          if ((yield* Ref.updateAndGet(reads, (count) => count + 1)) === 2) {
+            yield* Ref.set(providersRef, [ready]);
+            yield* PubSub.publish(changes, [ready]);
+          }
+          return providers;
+        }),
+        // The old path (`streamChanges`) and the new one signal when they deliver the change.
+        streamChanges: Stream.fromPubSub(changes).pipe(
+          Stream.tap(() => Deferred.succeed(changePulled, undefined)),
+        ),
+        subscribeChanges: PubSub.subscribe(changes).pipe(
+          Effect.map((subscription) =>
+            Stream.fromSubscription(subscription).pipe(
+              Stream.tap(() => Deferred.succeed(changePulled, undefined)),
+            ),
+          ),
+        ),
+      },
+      responses,
+    );
+    const configRequest = RpcMessage.RequestId("config");
+    yield* server.write(0, {
+      _tag: "Request",
+      id: configRequest,
+      tag: WS_METHODS.subscribeServerConfig,
+      payload: {},
+      headers: Headers.empty,
+    });
+    const snapshot = (yield* Queue.take(responses)) as ServerConfigStreamEvent;
+    if (snapshot.type !== "snapshot") return yield* Effect.die("Missing initial snapshot");
+    assert.equal(snapshot.config.providers[0]?.status, "warning");
+    yield* server.write(0, { _tag: "Ack", requestId: configRequest });
+
+    // A lost change never arrives; fail fast instead of at the test timeout.
+    yield* TestClock.withLive(Deferred.await(changePulled).pipe(Effect.timeout("5 seconds")));
+    yield* TestClock.adjust("1 second");
+    const update = (yield* Queue.take(responses)) as ServerConfigStreamEvent;
+    if (update.type !== "providerStatuses") return yield* Effect.die("Expected provider update");
+    assert.equal(update.payload.providers[0]?.status, "ready");
+    yield* server.write(0, { _tag: "Interrupt", requestId: configRequest, interruptors: [] });
+  }).pipe(Effect.provide(layerConfigRpcTest), Effect.scoped),
+);
+
 it.effect("on-demand clients get provider config without workspace snapshots", () =>
   Effect.gen(function* () {
     const instanceId = ProviderInstanceId.make("claudeAgent");
@@ -670,78 +828,15 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
     const providerChanges = yield* Queue.unbounded<ReadonlyArray<ServerProvider>>();
     const pulled = yield* Queue.unbounded<void>();
     const responses = yield* Queue.unbounded<unknown>();
-    const configRpcServices = Layer.mergeAll(
-      layerUnusedConfigRpcServices,
-      Layer.mock(ExternalLauncher.ExternalLauncher)({
-        resolveAvailableEditors: () => Effect.succeed([]),
-        resolveFileManagerRevealKind: () => Effect.succeed(undefined),
-      }),
-      Layer.mock(ProviderRegistry.ProviderRegistry)({
+    const server = yield* makeConfigRpcServer(
+      {
         getProviders: Effect.succeed([provider]),
-        streamChanges: Stream.fromQueue(providerChanges).pipe(
-          Stream.tap(() => Queue.offer(pulled, undefined)),
+        subscribeChanges: Effect.succeed(
+          Stream.fromQueue(providerChanges).pipe(Stream.tap(() => Queue.offer(pulled, undefined))),
         ),
         refreshWorkspaceSnapshot: () => Effect.succeed([provider]),
-      }),
-      Layer.mock(UsageLimitSources.UsageLimitSources)({
-        current: Effect.succeed([]),
-        streamChanges: Stream.make([]),
-      }),
-      Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({
-        resolveTargets: () => Effect.succeed([]),
-      }),
-      Layer.mock(DirectEndpoints.DirectEndpoints)({ resolve: () => Effect.succeed([]) }),
-      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
-        scratchRoot: Effect.succeedNone,
-        namedProjectsRoot: process.cwd(),
-      }),
-      Layer.mock(ServerEnvironment.ServerEnvironment)({
-        getDescriptor: Effect.succeed({
-          environmentId: EnvironmentId.make("config-test"),
-          label: "Config test",
-          platform: { os: "linux", arch: "x64" },
-          serverVersion: "0.0.0",
-          capabilities: { repositoryIdentity: false },
-        }),
-      }),
-      Layer.mock(EnvironmentAuth.EnvironmentAuth)({
-        getDescriptor: () =>
-          Effect.succeed({
-            policy: "loopback-browser",
-            bootstrapMethods: [],
-            sessionMethods: ["browser-session-cookie"],
-            sessionCookieName: "config-test-session",
-          }),
-      }),
-    );
-    const server = yield* RpcServer.makeNoSerialization(
-      RpcGroup.make(WsSubscribeServerConfigRpc, WsServerRefreshProvidersRpc),
-      {
-        ...WS_RPC_SERVER_OPTIONS,
-        onFromServer: (response) =>
-          response._tag === "Chunk"
-            ? Effect.forEach(response.values, (value) => Queue.offer(responses, value), {
-                discard: true,
-              })
-            : response._tag === "Exit" && response.exit._tag === "Success"
-              ? Queue.offer(responses, response.exit.value)
-              : Effect.void,
       },
-    ).pipe(
-      Effect.provide(
-        layerWsRpc(
-          {
-            sessionId: AuthSessionId.make("config-test"),
-            subject: "config-test",
-            method: "browser-session-cookie",
-            scopes: [],
-          },
-          {},
-          {},
-          yield* PreviewAutomationBroker.PreviewAutomationBroker,
-          yield* ServerBrowser.ServerBrowser,
-        ).pipe(Layer.provide(configRpcServices)),
-      ),
+      responses,
     );
     const configRequest = RpcMessage.RequestId("config");
     yield* server.write(0, {
@@ -785,16 +880,7 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
       [[[snapshotFor("/b", "2026-10-25T00:00:00.000Z")], []]],
     );
     yield* server.write(0, { _tag: "Interrupt", requestId: configRequest, interruptors: [] });
-  }).pipe(
-    Effect.provide(
-      Layer.mergeAll(
-        Layer.fresh(layerConfigSources),
-        Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
-        Layer.mock(ServerBrowser.ServerBrowser)({}),
-      ),
-    ),
-    Effect.scoped,
-  ),
+  }).pipe(Effect.provide(layerConfigRpcTest), Effect.scoped),
 );
 
 // Compaction keeps the oldest and newest event per message, so a cursor older
