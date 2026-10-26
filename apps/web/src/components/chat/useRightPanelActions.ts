@@ -158,6 +158,14 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     if (activeThreadRef) useRightPanelStore.getState().toggle(activeThreadRef, "agents");
   };
   const onToggleAgentsStable = useStableCallback(onToggleAgents);
+  const onToggleGoal = () => {
+    if (activeThreadRef) useRightPanelStore.getState().toggle(activeThreadRef, "goal");
+  };
+  const onToggleGoalStable = useStableCallback(onToggleGoal);
+  const onOpenGoal = () => {
+    if (activeThreadRef) useRightPanelStore.getState().open(activeThreadRef, "goal");
+  };
+  const onOpenGoalStable = useStableCallback(onOpenGoal);
   const openFileSurface = (relativePath: string) => {
     if (!activeThreadRef || !activeProject) return;
     useRightPanelStore.getState().openFile(activeThreadRef, relativePath);
@@ -315,6 +323,8 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     activateRightPanelSurfaceStable,
     addDeviceSurfaceStable,
     onToggleAgentsStable,
+    onToggleGoalStable,
+    onOpenGoalStable,
     addDiffSurfaceStable,
     addFilesSurfaceStable,
     addPullRequestSurfaceStable,

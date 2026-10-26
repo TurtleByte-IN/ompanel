@@ -19,6 +19,10 @@
       "types": "./src/configForm.ts",
       "import": "./src/configForm.ts"
     },
+    "./composer": {
+      "types": "./src/composer.ts",
+      "import": "./src/composer.ts"
+    },
     "./settingsPages": {
       "types": "./src/settingsPages.ts",
       "import": "./src/settingsPages.ts"

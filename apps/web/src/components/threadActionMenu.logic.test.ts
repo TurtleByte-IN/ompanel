@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildThreadActionMenuItems, type ThreadActionMenuState } from "./threadActionMenu.logic";
+import {
+  buildThreadActionMenuItems,
+  threadActionRequiresOperate,
+  type ThreadActionMenuState,
+} from "./threadActionMenu.logic";
 
 const baseState: ThreadActionMenuState = {
   canOperate: true,
@@ -70,5 +74,34 @@ describe("buildThreadActionMenuItems", () => {
       (item) => item.id === "archive",
     );
     expect(archiveItem?.disabled).toBe(true);
+  });
+});
+
+describe("the OMP section", () => {
+  const ompSection = (state: ThreadActionMenuState) =>
+    buildThreadActionMenuItems(state).find((item) => item.id === "omp");
+
+  it("appears only on OMP threads", () => {
+    expect(ompSection(baseState)).toBeUndefined();
+    expect(
+      ompSection({ ...baseState, isOmpThread: true })?.children?.map((item) => item.id),
+    ).toEqual([
+      "omp-export-html",
+      "omp-share-gist",
+      "omp-share-live",
+      "omp-stop-live",
+      "omp-branch-tree",
+    ]);
+  });
+
+  it("keeps reading the thread for read-only clients and disables sharing it", () => {
+    const section = ompSection({ ...baseState, canOperate: false, isOmpThread: true });
+    expect(section?.disabled).toBeUndefined();
+    expect(
+      section?.children?.filter((item) => item.disabled === true).map((item) => item.id),
+    ).toEqual(["omp-share-gist", "omp-share-live", "omp-stop-live"]);
+    expect(threadActionRequiresOperate("omp-export-html")).toBe(false);
+    expect(threadActionRequiresOperate("omp-branch-tree")).toBe(false);
+    expect(threadActionRequiresOperate("omp-share-live")).toBe(true);
   });
 });

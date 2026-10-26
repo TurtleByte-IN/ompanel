@@ -124,6 +124,12 @@ export interface OmpRpcRequestOptions {
    * whose output frames (`command_output`, `prompt_result`) must be ordered against the reply.
    */
   readonly echoResponse?: boolean;
+  /**
+   * A response arriving after the request gave up (timeout, interrupt) is dropped instead of
+   * reaching `frames`, and so the mapper and the journal. For answers that carry capabilities,
+   * such as a collab room's links.
+   */
+  readonly dropLateResponse?: boolean;
 }
 
 export interface OmpRpcExit {
@@ -256,6 +262,8 @@ export const startOmpRpcProcess = Effect.fn("startOmpRpcProcess")(function* (
 
   const frames = yield* Queue.unbounded<RpcServerFrame, OmpRpcError | Cause.Done>();
   const pending = new Map<string, PendingRequest>();
+  /** Requests that gave up with `dropLateResponse`; their answers never reach `frames`. */
+  const abandoned = new Set<string>();
   const ready = yield* Deferred.make<ReadyEvent, OmpRpcError>();
   const transportDown = yield* Deferred.make<never, OmpRpcError>();
   let protocolV2 = false;
@@ -289,6 +297,7 @@ export const startOmpRpcProcess = Effect.fn("startOmpRpcProcess")(function* (
       return;
     }
     if (frame["type"] === "response" && typeof frame["id"] === "string") {
+      if (abandoned.delete(frame["id"])) return;
       const response = frame as unknown as RpcResponse;
       const request = pending.get(response.id ?? "");
       if (request !== undefined) {
@@ -428,7 +437,9 @@ export const startOmpRpcProcess = Effect.fn("startOmpRpcProcess")(function* (
     const id = `ompanel-${nextRequestId++}`;
     const deferred = yield* Deferred.make<unknown, OmpRpcError | OmpRpcCommandError>();
     pending.set(id, { command, deferred, echoResponse: requestOptions?.echoResponse === true });
-    const forget = Effect.sync(() => pending.delete(id));
+    const forget = Effect.sync(() => {
+      if (pending.delete(id) && requestOptions?.dropLateResponse === true) abandoned.add(id);
+    });
     yield* write({ ...params, id, type: command }).pipe(Effect.tapError(() => forget));
     const timeoutMs =
       requestOptions?.timeoutMs === undefined ? OMP_REQUEST_TIMEOUT_MS : requestOptions.timeoutMs;

@@ -2388,6 +2388,8 @@ export default function ChatView(props: ChatViewProps) {
     onOpenTurnDiffStable,
     openChangesFromThreadPanelStable,
     onToggleAgentsStable,
+    onToggleGoalStable,
+    onOpenGoalStable,
     openFileSurfaceStable,
     toggleRightPanelMaximizedStable,
     toggleRightPanelStable,
@@ -2421,6 +2423,8 @@ export default function ChatView(props: ChatViewProps) {
   });
   const pullRequestSurfaceAvailable = supportsPullRequests && pullRequestPanelTarget !== null;
   const nowMinute = useNowMinute();
+  // OMP threads run `/goal …` over RPC: the goal chip, panel and banner's Open act on it.
+  const isOmpThread = isServerThread && selectedProvider === "omp";
   const {
     acknowledgeActiveThreadWoke,
     activeBranchMismatchKey,
@@ -2470,7 +2474,21 @@ export default function ChatView(props: ChatViewProps) {
     scheduleComposerFocus,
     scrollToEnd,
     persistThreadSettingsForNextTurn,
+    onOpenGoal: isOmpThread ? onOpenGoalStable : null,
   });
+  const activeGoal = activeThreadShell?.goal ?? null;
+  const sendGoalCommand = (text: string, failureMessage: string) => {
+    void sendStandaloneCommand(text, failureMessage);
+  };
+  const sendGoalCommandStable = useStableCallback(sendGoalCommand);
+  const goalChip = isOmpThread
+    ? {
+        goal: activeGoal,
+        working: isWorking,
+        open: activeRightPanelKind === "goal",
+        onToggle: onToggleGoalStable,
+      }
+    : null;
   const activeThreadHasCompactableConversation = serverVisibleTurnItems.some(
     ({ item }) =>
       item.type === "user_message" &&
@@ -3128,6 +3146,12 @@ export default function ChatView(props: ChatViewProps) {
         onOpenFile: openFileSurfaceStable,
         onPendingChange: handleFilePendingChangeStable,
       }}
+      goal={{
+        goal: activeGoal,
+        working: isWorking,
+        disabled: !isOmpThread || !canOperateThread || isSendBusy,
+        onSendCommand: sendGoalCommandStable,
+      }}
     />
   ) : null;
   const panelToggleControlProps = {
@@ -3682,6 +3706,7 @@ export default function ChatView(props: ChatViewProps) {
                               setThreadError={setThreadError}
                               onExpandImage={onExpandTimelineImageStable}
                               onFileOpen={openFileAttachmentStable}
+                              goalChip={goalChip}
                               editingQueuedAttachments={queuedRunEdit.editingAttachments}
                               onRemoveEditingQueuedAttachment={
                                 queuedRunEdit.removeEditingAttachment

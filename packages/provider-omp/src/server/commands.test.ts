@@ -83,12 +83,22 @@ const target = (cwd: string) =>
   });
 
 describe("OMP command mapping", () => {
-  it("lists every command but skill ones, with non-empty descriptions and hints", () => {
+  it("lists every command but skill ones, with non-empty descriptions and hints, then /goal", () => {
     assert.deepStrictEqual(ompSlashCommands(BUILTINS), [
       { name: "compact", description: "Compact the context", input: { hint: "focus" } },
       { name: "fresh", description: "Start a fresh session" },
       { name: "deploy" },
+      {
+        name: "goal",
+        description: "Set, show, pause, resume or drop this thread's goal",
+        input: { hint: "[objective | show | pause | resume | drop]" },
+      },
     ]);
+  });
+
+  it("keeps OMP's own /goal entry when it lists one", () => {
+    const commands = ompSlashCommands([{ name: "goal", source: "builtin", description: "Goal" }]);
+    assert.deepStrictEqual(commands, [{ name: "goal", description: "Goal" }]);
   });
 
   it("maps skills to composer skills; hidden ones are user-only", () => {
@@ -133,7 +143,7 @@ describe("OmpCommandCatalog", () => {
       const first = yield* catalog.forCwd("/repo");
       assert.deepStrictEqual(
         first.slashCommands.map((command) => command.name),
-        ["compact", "fresh", "deploy"],
+        ["compact", "fresh", "deploy", "goal"],
       );
       assert.deepStrictEqual(
         first.skills.map((skill) => skill.name),
@@ -209,7 +219,7 @@ describe("OmpCommandCatalog", () => {
       const latest = published.at(-1)?.find((entry) => entry.cwd === "/repo");
       assert.deepStrictEqual(
         latest?.slashCommands.map((command) => command.name),
-        ["compact", "fresh", "deploy", "review"],
+        ["compact", "fresh", "deploy", "review", "goal"],
       );
       assert.deepStrictEqual(
         latest?.skills.map((skill) => skill.name),

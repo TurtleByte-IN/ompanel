@@ -1,6 +1,7 @@
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { requestCustomSnooze } from "../components/CustomSnoozeDialog";
 import { openGuestShareDialog } from "../components/chat/guestShareDialogState";
+import { readOmpThreadInstanceId, runOmpThreadMenuAction } from "../components/chat/OmpThreadMenu";
 import {
   type AtomCommandResult,
   isAtomCommandInterrupted,
@@ -144,6 +145,7 @@ export function useThreadActionMenu(input: {
         supports,
         snoozePresets,
         canShareWithGuest,
+        isOmpThread: readOmpThreadInstanceId(threadRef) !== null,
       });
       const clicked = await settlePromise(() => api.contextMenu.show(items, position));
       if (clicked._tag === "Failure" || clicked.value === null) return;
@@ -248,6 +250,14 @@ export function useThreadActionMenu(input: {
           return;
         case "share-guest":
           openGuestShareDialog(threadRef);
+          return;
+        case "omp":
+        case "omp-export-html":
+        case "omp-share-gist":
+        case "omp-share-live":
+        case "omp-stop-live":
+        case "omp-branch-tree":
+          await runOmpThreadMenuAction(action, threadRef);
           return;
         case "copy-path": {
           const workspacePath = thread.worktreePath ?? projectCwd;

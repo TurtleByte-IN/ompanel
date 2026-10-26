@@ -34,11 +34,15 @@ import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import type {
+  Goal,
+  GoalResult,
   ImageContent,
   RpcServerFrame,
   SessionState,
 } from "../../contract/src/wire.generated.ts";
+import { type OmpGoalCommand, parseOmpGoalCommand } from "../composer.ts";
 import type { OmpCommandHooks } from "./commands.ts";
+import { OMP_GOAL_BUDGET_REPLY, ompGoalReply } from "./goal.ts";
 import { makeOmpHostBridge } from "./hostTools.ts";
 import {
   isOmpRunYield,
@@ -98,6 +102,16 @@ import {
   type OmpDialogRequest,
 } from "./uiRequests.ts";
 import { OMP_REVIVE_CONTRACT, ompSubagentControls, ompTranscriptPage } from "./subagents.ts";
+import {
+  ompContractLabel,
+  ompErrorClass,
+  ompErrorsTotal,
+  ompFramesDroppedTotal,
+  ompSessionsTotal,
+  ompTurnsTotal,
+  recordOmpMetric,
+} from "./telemetry.ts";
+import { type OmpSetVibeModeResult, ompVibeModeAvailable } from "./vibe.ts";
 
 /** Streamed text is held this long so a burst of deltas becomes one update. */
 const STREAM_FLUSH = Duration.millis(50);
@@ -236,6 +250,11 @@ export interface OmpAdapterOptions {
   /** `contract.version` from `omp.lock`. */
   readonly expectedContractVersion: string;
   readonly readyTimeoutMs?: number;
+  /**
+   * `ompVersion` on this instance's metrics (`telemetry.ts`): the pinned tag for a verified
+   * sidecar, `custom` for a user-supplied binary. Defaults to `unknown`.
+   */
+  readonly ompVersion?: string;
   /** This instance's running thread sessions, shared with the settings engine. */
   readonly threadSessions: OmpThreadSessions;
   /** Where the instance's `omp` keeps its session files (`resolveOmpSessionsLocation`). */
@@ -335,7 +354,18 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
         cause,
       });
     const cwd = input.runtimePolicy.cwd ?? options.defaultCwd;
-    const binaryPath = yield* options.resolveBinary.pipe(Effect.mapError(openError));
+    const ompVersion = options.ompVersion ?? "unknown";
+    const recordStartFailure = (error: unknown) =>
+      recordOmpMetric(ompSessionsTotal, {
+        ompVersion,
+        ompContract: "unknown",
+        outcome: "failed",
+        errorClass: ompErrorClass(error),
+      });
+    const binaryPath = yield* options.resolveBinary.pipe(
+      Effect.tapError(recordStartFailure),
+      Effect.mapError(openError),
+    );
     // The role chip is read at startup, so the overlay must hold it before the process starts.
     yield* syncRoleOverlay(input.threadId, readOmpTraitSelection(input.modelSelection).role).pipe(
       Effect.mapError(openError),
@@ -356,8 +386,12 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
+      Effect.tapError(recordStartFailure),
       Effect.mapError(openError),
     );
+    // Version labels only: never content, paths or secrets (PRD §9, telemetry.ts).
+    const metricBase = { ompVersion, ompContract: ompContractLabel(process.contractVersion) };
+    yield* recordOmpMetric(ompSessionsTotal, { ...metricBase, outcome: "started" });
 
     const scope = yield* Effect.scope;
     // The journal (journal.ts, docs/omp/journal.md). A run the previous process saw start while
@@ -535,6 +569,11 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
 
     const finalize = Effect.fnUntraced(function* (outcome: OmpTurnOutcome, refresh: boolean) {
       autonomousTurn = false;
+      yield* recordOmpMetric(ompTurnsTotal, {
+        ...metricBase,
+        outcome: outcome.status,
+        ...(outcome.status === "failed" ? { errorClass: outcome.failure.class } : {}),
+      });
       // Usage and todos live in the session, not in `prompt_result`: read them once per turn.
       const read = <A, E>(effect: Effect.Effect<A, E>) =>
         refresh ? effect.pipe(Effect.option) : Effect.succeed(Option.none<A>());
@@ -585,6 +624,10 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       if (opened === null) {
         // Nobody can answer a dialog with no id or no choices: close it so OMP moves on.
         yield* Effect.logWarning("omp dialog request dropped", { method: frame.method });
+        yield* recordOmpMetric(ompFramesDroppedTotal, {
+          ...metricBase,
+          reason: "dialog_unanswerable",
+        });
         if (typeof frame.id === "string") {
           yield* process
             .send({ type: "extension_ui_response", id: frame.id, cancelled: true })
@@ -611,6 +654,9 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
     const mapFrame = Effect.fnUntraced(function* (frame: { readonly type: string }) {
       const result = mapper.handleFrame(frame, yield* DateTime.now);
       yield* emit(result.events);
+      if (result.dropped !== null) {
+        yield* recordOmpMetric(ompFramesDroppedTotal, { ...metricBase, reason: result.dropped });
+      }
       if (result.streaming && !flushScheduled) {
         flushScheduled = true;
         yield* scheduleFlush;
@@ -681,6 +727,10 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       if (isOmpDialogRequest(frame) || isOmpCancelRequest(frame)) {
         return yield* handleDialogFrame(frame);
       }
+      // Only the fact: the extension's path and message stay out of telemetry.
+      if (frame.type === "extension_error") {
+        yield* recordOmpMetric(ompErrorsTotal, { ...metricBase, errorClass: "extension" });
+      }
       if (frame.type === "subagent_lifecycle" || frame.type === "subagent_progress") {
         yield* emit(subagents.handleFrame(frame, mapper.subagentScope, yield* DateTime.now));
         return;
@@ -689,6 +739,11 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
         if (options.commands !== undefined) {
           yield* options.commands.onAvailableCommands(cwd, frame.commands);
         }
+        return;
+      }
+      // Goal mode is session state, not turn output: it changes inside and between turns.
+      if (frame.type === "goal_updated") {
+        yield* emit(mapper.applyGoal(frame.goal ?? null, yield* DateTime.now));
         return;
       }
       if (yield* hostBridge.handleFrame(frame)) return;
@@ -733,15 +788,21 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       yield* Queue.end(events);
     });
     // Frames are drained so the process never blocks on a full pipe. Only frame types are
-    // logged, never content.
+    // logged, never content. Collab room frames (`collab_*`) change nothing the thread shows and
+    // a room's links are capabilities, so they never reach the mapper or the journal.
     yield* process.frames.pipe(
       Stream.runForEach((frame) =>
         Effect.logDebug("omp frame", { type: frame.type }).pipe(
-          Effect.andThen(exclusive(handleFrame(frame))),
+          Effect.andThen(
+            String(frame.type).startsWith("collab_") ? Effect.void : exclusive(handleFrame(frame)),
+          ),
         ),
       ),
       Effect.matchEffect({
-        onFailure: (error) => exclusive(settle("error", error.message)),
+        onFailure: (error) =>
+          recordOmpMetric(ompErrorsTotal, { ...metricBase, errorClass: ompErrorClass(error) }).pipe(
+            Effect.andThen(exclusive(settle("error", error.message))),
+          ),
         onSuccess: () => exclusive(settle("stopped", null)),
       }),
       Effect.forkScoped,
@@ -938,6 +999,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       advisor?: boolean;
       prewalk?: boolean;
       computer?: boolean;
+      vibe?: boolean;
     } = {};
     const selectionError = (command: string) => (error: OmpRpcRequestError) =>
       protocolError(
@@ -1029,6 +1091,39 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
           Effect.catch(traitRefused("computer")),
         );
       }
+      // `set_vibe_mode` is newer than the vendored contract (OMP_VIBE_CONTRACT); older sidecars
+      // run vibe mode only in their TUI, and the composer does not offer the trait for them.
+      if (
+        traits.vibe !== undefined &&
+        traits.vibe !== applied.vibe &&
+        ompVibeModeAvailable(process.contractVersion)
+      ) {
+        const enabled = traits.vibe;
+        const request = process.request as unknown as (
+          command: "set_vibe_mode",
+          params: { readonly enabled: boolean },
+          options: { readonly timeoutMs: number },
+        ) => Effect.Effect<OmpSetVibeModeResult, OmpRpcRequestError>;
+        yield* request(
+          "set_vibe_mode",
+          { enabled },
+          { timeoutMs: SELECTION_REQUEST_TIMEOUT_MS },
+        ).pipe(
+          Effect.tap((result) =>
+            Effect.gen(function* () {
+              applied.vibe = result.enabled;
+              if (result.enabled) return;
+              // Leaving vibe mode kills every worker; a killed worker may send no final frame.
+              const now = yield* DateTime.now;
+              for (const id of subagents.liveVibeWorkerIds()) {
+                const ended = { type: "subagent_lifecycle", payload: { id, status: "aborted" } };
+                yield* emit(subagents.handleFrame(ended, mapper.subagentScope, now));
+              }
+            }),
+          ),
+          Effect.catch(traitRefused("vibe")),
+        );
+      }
     });
 
     /**
@@ -1075,6 +1170,85 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
     /** The run and attempt of the last turn, to tell a restarted attempt from a new run. */
     let lastTurn: { readonly runId: string; readonly attemptId: string } | null = null;
     let appliedSessionName: string | null = null;
+
+    /**
+     * A `/goal` command other than setting a goal, run over RPC: OMP's own `/goal` is TUI-only.
+     * The turn shows OMP's answer and ends without a prompt.
+     */
+    const runGoalCommand = Effect.fnUntraced(function* (
+      turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
+      command: Exclude<OmpGoalCommand, { readonly op: "create" }>,
+    ) {
+      const providerTurnId = yield* exclusive(
+        Effect.gen(function* () {
+          if (mapper.hasActiveTurn) {
+            return yield* protocolError("OMP turn ownership changed before it could start");
+          }
+          if (sessionChanging) {
+            return yield* protocolError(
+              "OMP is rewinding or forking this session; start the turn once it is done",
+              "previous_turn_active",
+            );
+          }
+          turnStartedAt = DateTime.toEpochMillis(yield* DateTime.now);
+          yield* emit(mapper.startTurn(turnInput, yield* DateTime.now));
+          return mapper.activeProviderTurnId;
+        }),
+      );
+      lastTurn = { runId: turnInput.runId, attemptId: turnInput.attemptId };
+      // OMP forgets a completed goal the thread still shows (`ompStateGoal`): show and drop it here.
+      const shown = mapper.providerThread?.goal ?? null;
+      const completed = shown?.status === "complete" ? shown : null;
+      const answer:
+        | { readonly text: string; readonly goal?: Goal | null }
+        | { readonly error: string } =
+        command.op === "budget"
+          ? { text: OMP_GOAL_BUDGET_REPLY }
+          : command.op === "invalid"
+            ? { error: command.reason }
+            : completed !== null && command.op === "get"
+              ? { text: `Goal complete: ${completed.objective}` }
+              : completed !== null && command.op === "drop"
+                ? { text: `Goal dropped: ${completed.objective}`, goal: null }
+                : yield* process
+                    .request(
+                      "goal",
+                      { op: command.op },
+                      { timeoutMs: SELECTION_REQUEST_TIMEOUT_MS },
+                    )
+                    .pipe(
+                      Effect.map((result: GoalResult) => ({
+                        text: ompGoalReply(command.op, result),
+                        ...(command.op === "get" ? {} : { goal: result.goal }),
+                      })),
+                      Effect.catch((error: OmpRpcRequestError) =>
+                        Effect.succeed({
+                          error: error._tag === "OmpRpcCommandError" ? error.detail : error.message,
+                        }),
+                      ),
+                    );
+      yield* exclusive(
+        Effect.gen(function* () {
+          if (mapper.activeProviderTurnId !== providerTurnId) return;
+          if ("error" in answer) {
+            return yield* finalize(
+              {
+                status: "failed",
+                failure: makeProviderFailure({ message: answer.error, class: "provider_error" }),
+              },
+              true,
+            );
+          }
+          const now = yield* DateTime.now;
+          if (answer.goal !== undefined) yield* emit(mapper.applyGoal(answer.goal, now));
+          // Shown as OMP shows a builtin command's output (`command_output`).
+          const output = { type: "command_output", text: answer.text };
+          yield* emit(mapper.handleFrame(output, now).events);
+          yield* finalize({ status: "completed" }, true);
+        }),
+      );
+    });
+
     const startTurn = Effect.fnUntraced(function* (
       turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
     ) {
@@ -1097,12 +1271,22 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       // T3 dispatches a continuation for a run OMP started on its own (`offerWake`).
       const isContinuation =
         turnInput.message.createdBy === "agent" && turnInput.message.creationSource === "provider";
+      // OMP's `/goal` runs only in its TUI, so Ompanel runs it over RPC (docs/omp/composer.md).
+      const goalCommand =
+        isContinuation || turnInput.message.attachments.length > 0
+          ? null
+          : parseOmpGoalCommand(turnInput.message.text);
+      if (goalCommand !== null && goalCommand.op !== "create") {
+        return yield* runGoalCommand(turnInput, goalCommand);
+      }
       yield* applyApprovalMode(turnInput.runtimePolicy);
+      // A new goal's objective is its first prompt, as OMP's own `/goal <objective>` sends it.
+      const messageText = goalCommand === null ? turnInput.message.text : goalCommand.objective;
       // OMP expands a skill only as `/skill:<name>`; the composer writes `$<name>`.
       const promptText =
         options.commands === undefined
-          ? turnInput.message.text
-          : yield* options.commands.resolvePrompt(cwd, turnInput.message.text);
+          ? messageText
+          : yield* options.commands.resolvePrompt(cwd, messageText);
       yield* applySelection(turnInput.threadId, turnInput.modelSelection);
       // T3 names the thread; OMP keeps it as a user-set title, which its own titling respects.
       const title = turnInput.appThread.title;
@@ -1191,11 +1375,47 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       // The reply is echoed onto the frame stream, behind any `command_output` the prompt
       // produced, and settles the turn there. A prompt that never reached OMP settles here.
       const requestOptions = { timeoutMs: null, echoResponse: true } as const;
-      yield* (
-        restart
-          ? process.request("abort_and_prompt", payload, requestOptions)
-          : process.request("prompt", payload, requestOptions)
-      ).pipe(
+      const sent: Effect.Effect<unknown, OmpRpcRequestError> = restart
+        ? process.request("abort_and_prompt", payload, requestOptions)
+        : process.request("prompt", payload, requestOptions);
+      // The goal starts once OMP runs its objective: created first, an `rpc` goal continuation
+      // could take the idle session before the objective arrives. A refusal (goal mode off, a
+      // paused goal) is noted in the turn; the objective still runs as a prompt.
+      const goalCreated: Effect.Effect<void> =
+        goalCommand === null
+          ? Effect.void
+          : process
+              .request(
+                "goal",
+                {
+                  op: "create",
+                  objective: goalCommand.objective,
+                  ...(goalCommand.tokenBudget === undefined
+                    ? {}
+                    : { token_budget: goalCommand.tokenBudget }),
+                },
+                { timeoutMs: SELECTION_REQUEST_TIMEOUT_MS },
+              )
+              .pipe(
+                Effect.asVoid,
+                Effect.catch((error: OmpRpcRequestError) =>
+                  exclusive(
+                    Effect.gen(function* () {
+                      if (mapper.activeProviderTurnId !== providerTurnId) return;
+                      const detail =
+                        error._tag === "OmpRpcCommandError" ? error.detail : error.message;
+                      const notice = {
+                        type: "notice",
+                        source: "Goal",
+                        message: `OMP did not set the goal: ${detail}`,
+                      };
+                      yield* emit(mapper.handleFrame(notice, yield* DateTime.now).events);
+                    }),
+                  ),
+                ),
+              );
+      yield* sent.pipe(
+        Effect.andThen(() => goalCreated),
         Effect.catchTags({
           OmpRpcError: (error) =>
             exclusive(
@@ -1251,6 +1471,15 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       steerInput: ProviderAdapter.ProviderAdapterV2SteerInput,
     ) {
       const providerTurnId = steerInput.providerTurnId;
+      // A goal command is an RPC action, never text for the model (`runGoalCommand`).
+      if (
+        steerInput.message.attachments.length === 0 &&
+        parseOmpGoalCommand(steerInput.message.text) !== null
+      ) {
+        return yield* protocolError(
+          "Goal commands run as their own turn. Send it again once this turn ends.",
+        );
+      }
       const payload = yield* promptPayload(steerInput.message.text, steerInput.message.attachments);
       const followUp = yield* exclusive(
         Effect.gen(function* () {

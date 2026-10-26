@@ -29,7 +29,16 @@ function cliCommand() {
   return ["config", "skill", "plugin", "agents"].includes(first) ? `${first} ${second}` : first;
 }
 
-log({ event: "start", pid: process.pid, argv, cwd: process.cwd() });
+/** `--export <session> <out>` writes the page OMP would render to `<out>`. */
+function writeExport(output) {
+  const outPath = argv[argv.indexOf("--export") + 2];
+  if (output.html !== undefined && outPath !== undefined)
+    NodeFS.writeFileSync(outPath, output.html);
+}
+
+// The `PI_CONFIG_FILES` overlay a command ran with, so tests see the settings it forced.
+const overlay = env.PI_CONFIG_FILES ? NodeFS.readFileSync(env.PI_CONFIG_FILES, "utf8") : undefined;
+log({ event: "start", pid: process.pid, argv, cwd: process.cwd(), overlay });
 
 if (!argv.includes("--mode")) {
   const command = cliCommand();
@@ -42,6 +51,7 @@ if (!argv.includes("--mode")) {
   } else {
     if (output.stderr !== undefined) process.stderr.write(output.stderr);
     if (output.stdout !== undefined) process.stdout.write(output.stdout);
+    if (command === "--export" && (output.exitCode ?? 0) === 0) writeExport(output);
     process.exitCode = output.exitCode ?? 0;
   }
 } else {

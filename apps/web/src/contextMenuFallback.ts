@@ -116,6 +116,34 @@ const ICON_PATHS: Record<string, ReadonlyArray<{ tag: string; attrs: Record<stri
     { tag: "line", attrs: { x1: "19", x2: "19", y1: "8", y2: "14" } },
     { tag: "line", attrs: { x1: "22", x2: "16", y1: "11", y2: "11" } },
   ],
+  "file-down": [
+    { tag: "path", attrs: { d: "M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" } },
+    { tag: "path", attrs: { d: "M14 2v4a2 2 0 0 0 2 2h4" } },
+    { tag: "path", attrs: { d: "M12 18v-6" } },
+    { tag: "path", attrs: { d: "m9 15 3 3 3-3" } },
+  ],
+  "share-2": [
+    { tag: "circle", attrs: { cx: "18", cy: "5", r: "3" } },
+    { tag: "circle", attrs: { cx: "6", cy: "12", r: "3" } },
+    { tag: "circle", attrs: { cx: "18", cy: "19", r: "3" } },
+    { tag: "line", attrs: { x1: "8.59", x2: "15.42", y1: "13.51", y2: "17.49" } },
+    { tag: "line", attrs: { x1: "15.41", x2: "8.59", y1: "6.51", y2: "10.49" } },
+  ],
+  radio: [
+    { tag: "path", attrs: { d: "M4.9 19.1C1 15.2 1 8.8 4.9 4.9" } },
+    { tag: "path", attrs: { d: "M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5" } },
+    { tag: "circle", attrs: { cx: "12", cy: "12", r: "2" } },
+    { tag: "path", attrs: { d: "M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5" } },
+    { tag: "path", attrs: { d: "M19.1 4.9C23 8.8 23 15.1 19.1 19" } },
+  ],
+  square: [{ tag: "rect", attrs: { width: "18", height: "18", x: "3", y: "3", rx: "2" } }],
+  "git-fork": [
+    { tag: "circle", attrs: { cx: "12", cy: "18", r: "3" } },
+    { tag: "circle", attrs: { cx: "6", cy: "6", r: "3" } },
+    { tag: "circle", attrs: { cx: "18", cy: "6", r: "3" } },
+    { tag: "path", attrs: { d: "M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9" } },
+    { tag: "path", attrs: { d: "M12 12v3" } },
+  ],
   "folder-tree": [
     {
       tag: "path",

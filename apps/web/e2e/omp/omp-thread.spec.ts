@@ -199,3 +199,121 @@ test("stops a running turn", async () => {
   expect(threadProcesses().map((entry) => entry.pid)).toEqual(before);
   await screenshot("08c-after-stop");
 });
+
+/** The RPC contract of the sidecar `omp.lock` pins, which the stack's omp speaks. */
+const PINNED_CONTRACT: string = JSON.parse(
+  NodeFS.readFileSync(
+    new URL("../../../../packages/provider-omp/omp.lock", import.meta.url),
+    "utf8",
+  ),
+).contract.version;
+
+/** Picks `label` in the OMP section of the thread's menu (the title button opens it). */
+const pickOmpMenuItem = async (label: string) => {
+  const { page } = suite.current();
+  await page.locator("[data-thread-title-chevron]").click();
+  await page.locator("div[data-level] button", { hasText: /^OMP$/ }).click();
+  await page.locator("div[data-level] button", { hasText: new RegExp(`^${label}$`) }).click();
+};
+
+test("exports the thread as HTML from the thread menu", async () => {
+  const { page, screenshot } = suite.current();
+  const download = page.waitForEvent("download");
+  await pickOmpMenuItem("Export HTML");
+  const file = await download;
+  expect(file.suggestedFilename()).toMatch(/^omp-session-[\w-]+\.html$/);
+  const saved = NodePath.join(ARTIFACTS, file.suggestedFilename());
+  await file.saveAs(saved);
+  const html = NodeFS.readFileSync(saved, "utf8");
+  expect(html).toMatch(/^<!DOCTYPE html>/i);
+  // OMP's page bundles its own viewer script, so a real export is never a small stub.
+  expect(html).toContain("<title");
+  expect(html.length).toBeGreaterThan(10_000);
+  await screenshot("09-exported-html");
+});
+
+test("shows the session's branch tree from the thread menu", async () => {
+  const { page, screenshot } = suite.current();
+  await pickOmpMenuItem("Branch tree");
+  const dialog = page.locator("[data-omp-branch-tree-dialog]");
+  const rows = dialog.locator("[data-entry-id]");
+  await expect(rows.first()).toBeVisible();
+  // The rewind moved the session onto a file that keeps the first exchange: one path to the leaf.
+  await expect(dialog.locator("[data-active-path]", { hasText: "hello from G1" })).toBeVisible();
+  await expect(dialog.locator("[data-active-path]", { hasText: "after stop" })).toBeVisible();
+  await expect(dialog.getByText("current")).toBeVisible();
+  await expect(dialog.getByText("g1-full-access")).toHaveCount(0);
+  await screenshot("10-branch-tree");
+  await dialog.getByRole("button", { name: "Done" }).click();
+  await expect(dialog).toHaveCount(0);
+});
+
+test("opens Share live with the pairing warning, gated on the collab RPC", async () => {
+  const [major = 0, minor = 0] = PINNED_CONTRACT.split(".").map(Number);
+  const hasCollab = major > 1 || minor >= 7;
+  const { page, screenshot } = suite.current();
+  await pickOmpMenuItem("Share live…");
+  const dialog = page.locator("[data-omp-share-live-dialog]");
+  await expect(dialog.getByText("This link bypasses T3 pairing")).toBeVisible();
+  const start = dialog.getByRole("button", { name: "Start sharing" });
+  if (hasCollab) {
+    await expect(start).toBeEnabled();
+  } else {
+    await expect(dialog.getByText(/needs OMP RPC contract 1\.7\.0/)).toBeVisible();
+    await expect(start).toBeDisabled();
+  }
+  await screenshot("11-share-live-dialog");
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+});
+
+// PRD §9: what a collector receives about OMP is driver kind, version, error class and frame
+// drops; never a prompt, reply, path or secret (`packages/provider-omp/src/server/telemetry.ts`).
+const OMP_METRIC_KEYS = [
+  "provider",
+  "ompVersion",
+  "ompContract",
+  "outcome",
+  "errorClass",
+  "reason",
+];
+
+test("exports OMP driver metrics without turn content", async () => {
+  const { stack } = suite.current();
+  const ompPoints = () =>
+    stack.metrics.points().filter((point) => point.name.startsWith("t3_omp_"));
+  const ended = (outcome: string) =>
+    ompPoints().some(
+      (point) => point.name === "t3_omp_turns_total" && point.attributes.outcome === outcome,
+    );
+  await expect
+    .poll(() => ended("completed") && ended("interrupted"), { timeout: 30_000 })
+    .toBe(true);
+  const points = ompPoints();
+  expect(
+    points.some(
+      (point) => point.name === "t3_omp_sessions_total" && point.attributes.outcome === "started",
+    ),
+  ).toBe(true);
+  const forbidden = [
+    "hello from G1",
+    "g1-supervised",
+    "g1-stop",
+    STREAMED_PARAGRAPHS[0],
+    stack.workspace,
+    stack.home,
+  ];
+  for (const point of points) {
+    expect(point.attributes.provider).toBe("omp");
+    for (const [key, value] of Object.entries(point.attributes)) {
+      expect(OMP_METRIC_KEYS, `${point.name} label ${key}`).toContain(key);
+      for (const text of forbidden) expect(value).not.toContain(text);
+    }
+  }
+  // The labels exactly as exported, for the gate's evidence.
+  NodeFS.mkdirSync(ARTIFACTS, { recursive: true });
+  NodeFS.writeFileSync(
+    NodePath.join(ARTIFACTS, "omp-metrics.json"),
+    `${JSON.stringify(points, null, 2)}\n`,
+  );
+});

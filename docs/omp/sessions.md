@@ -186,4 +186,5 @@ and rewind payloads reduce the session tree to user and assistant messages,
 branch summaries and compactions: flat `nodes` (parents first, each with the
 nearest kept ancestor as `parentId`, a preview and OMP's label), the `leafId`
 and the `activePath` from the root to it. A rewind's earlier branch lives in
-the parent file (`parentSession` in the header), not in this tree.
+the parent file (`parentSession` in the header), not in this tree. The thread
+menu's Branch tree draws this tree ([thread-menu.md](thread-menu.md)).

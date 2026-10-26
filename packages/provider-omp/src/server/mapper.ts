@@ -34,11 +34,13 @@ import * as DateTime from "effect/DateTime";
 import type {
   AssistantMessageEvent,
   ContextUsage,
+  Goal,
   SessionState,
   SessionStats,
   TodoPhase,
   Usage,
 } from "../../contract/src/wire.generated.ts";
+import { ompProviderGoal, ompStateGoal } from "./goal.ts";
 import {
   advisorNotice,
   cardOutput,
@@ -48,6 +50,7 @@ import {
   ttsrNotice,
 } from "./ompCards.ts";
 import type { OmpSubagentScope } from "./subagents.ts";
+import type { OmpFrameDropReason } from "./telemetry.ts";
 import { OMP_HOST_TERMINAL_TOOL } from "./hostTools.ts";
 import { OmpAnsi } from "./ompAnsi.ts";
 
@@ -98,7 +101,34 @@ export interface OmpFrameResult {
   readonly settled: OmpTurnOutcome | null;
   /** A held turn may be over: ask OMP (`get_state` with its reply echoed) whether it is idle. */
   readonly confirmIdle: boolean;
+  /** The frame reached nothing, and why (`t3_omp_frames_dropped_total`). */
+  readonly dropped: OmpFrameDropReason | null;
 }
+
+/** Frames that only mean something inside a turn; outside one they are dropped. */
+const TURN_SCOPED_FRAME_TYPES: Readonly<Record<string, true>> = {
+  prompt_result: true,
+  message_start: true,
+  message_update: true,
+  message_end: true,
+  auto_compaction_start: true,
+  manual_compaction_start: true,
+  auto_compaction_end: true,
+  manual_compaction_end: true,
+  ttsr_triggered: true,
+  retry_fallback_applied: true,
+  tool_execution_start: true,
+  tool_execution_update: true,
+  tool_execution_end: true,
+  notice: true,
+  command_output: true,
+};
+/** `extension_ui_request` methods the mapper turns into cards on the active turn. */
+const TURN_SCOPED_UI_METHODS: Readonly<Record<string, true>> = {
+  notify: true,
+  open_url: true,
+  set_editor_text: true,
+};
 
 /** Where a runtime request OMP raised belongs: the active turn, or only the thread. */
 export interface OmpRequestPlacement {
@@ -619,6 +649,8 @@ export class OmpThreadMapper {
             nativeThreadRef: providerRef(state.sessionId),
             nativeMetadata,
             ...(contextUsage === undefined ? {} : { contextUsage }),
+            // A contract without `get_state.goal` leaves the recorded goal alone.
+            ...(state.goal === undefined ? {} : { goal: ompStateGoal(state.goal, existing.goal) }),
             status: "idle",
             updatedAt: now,
           }
@@ -642,7 +674,7 @@ export class OmpThreadMapper {
             pendingBackgroundTasks: [],
             contextUsage: contextUsage ?? null,
             nativeMetadata,
-            goal: null,
+            goal: ompProviderGoal(state.goal?.goal),
             createdAt: now,
             updatedAt: now,
           };
@@ -655,6 +687,22 @@ export class OmpThreadMapper {
       providerThread,
       events: [{ type: "provider_thread.updated", driver: OMP_PROVIDER, providerThread }],
     };
+  }
+
+  /** OMP's goal changed (`goal_updated`); the thread shows it whether or not a turn runs. */
+  applyGoal(goal: Goal | null, now: DateTime.Utc): Array<Event> {
+    const thread = this.#thread;
+    if (thread === null) return [];
+    const next = ompProviderGoal(goal);
+    if (JSON.stringify(next) === JSON.stringify(thread.providerThread.goal ?? null)) return [];
+    thread.providerThread = { ...thread.providerThread, goal: next, updatedAt: now };
+    return [
+      {
+        type: "provider_thread.updated",
+        driver: OMP_PROVIDER,
+        providerThread: thread.providerThread,
+      },
+    ];
   }
 
   startTurn(input: ProviderAdapter.ProviderAdapterV2TurnInput, now: DateTime.Utc): Array<Event> {
@@ -700,6 +748,8 @@ export class OmpThreadMapper {
       ...input.providerThread,
       nativeThreadRef: thread.providerThread.nativeThreadRef,
       nativeMetadata: thread.providerThread.nativeMetadata,
+      // The live session's goal: a `/goal` turn sets it before the turn starts.
+      goal: thread.providerThread.goal ?? null,
       status: "active",
       firstRunOrdinal: input.providerThread.firstRunOrdinal ?? input.runOrdinal,
       lastRunOrdinal: input.runOrdinal,
@@ -1006,10 +1056,20 @@ export class OmpThreadMapper {
         // `setStatus`, `setWidget` and `setTitle` style OMP's own TUI (footer, widgets, terminal
         // title); T has no such surface and keeps its own thread title. Dialogs are the adapter's.
         break;
+      case "rpc_frame_error":
+        // OMP dropped an event too large for the transport; only the fact is kept.
+        return { events, streaming, settled, confirmIdle, dropped: "sidecar_oversize" };
       default:
         break;
     }
-    return { events, streaming, settled, confirmIdle };
+    const method = f["method"];
+    const outOfTurn =
+      turn === null &&
+      (Object.hasOwn(TURN_SCOPED_FRAME_TYPES, frame.type) ||
+        (frame.type === "extension_ui_request" &&
+          typeof method === "string" &&
+          Object.hasOwn(TURN_SCOPED_UI_METHODS, method)));
+    return { events, streaming, settled, confirmIdle, dropped: outOfTurn ? "out_of_turn" : null };
   }
 
   /** Emits held text of streaming items. */
@@ -1082,6 +1142,9 @@ export class OmpThreadMapper {
       ...thread.providerThread,
       status: "idle",
       ...(contextUsage === undefined ? {} : { contextUsage }),
+      ...(refresh.state?.goal === undefined
+        ? {}
+        : { goal: ompStateGoal(refresh.state.goal, thread.providerThread.goal) }),
       updatedAt: now,
     };
     events.push({

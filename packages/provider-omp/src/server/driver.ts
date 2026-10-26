@@ -47,9 +47,11 @@ import { OMP_BUNDLED_SIDECAR_ENV } from "./sidecar.ts";
 import { makeOmpSidecarProvisioner } from "./sidecarInstall.ts";
 import { buildInitialOmpProviderSnapshot, ompProviderSnapshot } from "./status.ts";
 import { makeOmpTextGeneration } from "./textGeneration.ts";
+import { ompLockVersionLabel } from "./telemetry.ts";
 import { ompUsageReader, type OmpUsageReaderEnv } from "./usage.ts";
 import { makeOmpUsageController } from "./usageController.ts";
 import { makeOmpPluginsController } from "./pluginsController.ts";
+import { makeOmpThreadMenuController } from "./threadMenuController.ts";
 
 const DRIVER_KIND = ProviderDriverKind.make("omp");
 const decodeOmpSettings = Schema.decodeSync(OmpSettings);
@@ -217,6 +219,9 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv, OmpUsageReader
       dirs: stateDirs,
       pidfiles,
       expectedContractVersion: OMP_LOCK.contract.version,
+      // An override path is the only binary not hash-checked against `omp.lock`.
+      ompVersion:
+        effectiveConfig.binaryPath.trim().length > 0 ? "custom" : ompLockVersionLabel(OMP_LOCK),
       threadSessions,
       sessions: sessionsLocation,
       commands: catalog,
@@ -321,6 +326,19 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv, OmpUsageReader
         globalCwd: stateDirs.launcher,
         sessions: threadSessions,
         invalidateCatalog: catalog.invalidate,
+      }),
+      ompThreadMenu: makeOmpThreadMenuController({
+        control,
+        target: controlTarget,
+        globalCwd: stateDirs.launcher,
+        exportsDir: path.join(stateDirs.launcher, "exports"),
+        threadsDir: stateDirs.threads,
+        sessionsLocation,
+        sessions: threadSessions,
+        contractVersion: OMP_LOCK.contract.version,
+        ompVersion: ompLockVersionLabel(OMP_LOCK),
+        fileSystem,
+        path,
       }),
     } satisfies ProviderInstance;
   }),

@@ -35,6 +35,7 @@ import {
   Files,
   Globe2,
   Plus,
+  TargetIcon,
   TerminalSquare,
 } from "lucide-react";
 import { Volume2, VolumeOff } from "lucide";
@@ -558,6 +559,8 @@ function surfaceTitle(
       return surface.title ?? surface.target?.name ?? "Device";
     case "agents":
       return "Agents";
+    case "goal":
+      return "Goal";
     case "preview": {
       const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
       if (!snapshot || snapshot.navStatus._tag === "Idle") return "Browser";
@@ -656,6 +659,8 @@ function SurfaceIcon({
       );
     case "agents":
       return <BotIcon className="size-3 shrink-0" />;
+    case "goal":
+      return <TargetIcon className="size-3 shrink-0" />;
   }
 }
 

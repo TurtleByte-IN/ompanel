@@ -47,6 +47,16 @@ export type ComposerProviderState = {
   modelPickerIconClassName?: string;
 };
 
+/** The composer's look while a prompt asks for ultrathink. */
+export const ULTRATHINK_COMPOSER_CLASSES = {
+  composerFrameClassName: "ultrathink-frame",
+  composerSurfaceClassName: "shadow-[0_0_0_1px_rgba(255,255,255,0.07)_inset]",
+  modelPickerIconClassName: "ultrathink-chroma",
+} as const satisfies Pick<
+  ComposerProviderState,
+  "composerFrameClassName" | "composerSurfaceClassName" | "modelPickerIconClassName"
+>;
+
 type TraitsRenderInput = {
   provider: ProviderDriverKind;
   instanceId?: ProviderInstanceId;
@@ -150,13 +160,7 @@ export function getComposerProviderState(input: ComposerProviderStateInput): Com
       descriptors,
       selections,
     ),
-    ...(ultrathinkActive
-      ? {
-          composerFrameClassName: "ultrathink-frame",
-          composerSurfaceClassName: "shadow-[0_0_0_1px_rgba(255,255,255,0.07)_inset]",
-          modelPickerIconClassName: "ultrathink-chroma",
-        }
-      : {}),
+    ...(ultrathinkActive ? ULTRATHINK_COMPOSER_CLASSES : {}),
   };
 }
 

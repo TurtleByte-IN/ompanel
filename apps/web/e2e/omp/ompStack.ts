@@ -10,6 +10,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { type FakeSignInVendor, startFakeSignInVendor, writeFakeSignInOmp } from "./fakeSignIn.ts";
+import { type OtlpMetricsReceiver, startOtlpMetricsReceiver } from "./otlpMetrics.ts";
 import { type ScriptedModel, startScriptedModel } from "./scriptedModel.ts";
 
 const REPO_ROOT = NodePath.resolve(import.meta.dirname, "..", "..", "..", "..");
@@ -44,6 +45,8 @@ export interface OmpStack {
   /** The throwaway `HOME`: OMP's agent directory is `<home>/.omp/agent`. */
   readonly home: string;
   readonly model: ScriptedModel;
+  /** The server's OTLP metric exports, as a collector would receive them. */
+  readonly metrics: OtlpMetricsReceiver;
   /** Live `omp` session processes, from the server's pidfiles. */
   readonly ompProcesses: () => ReadonlyArray<OmpProcess>;
   readonly git: (...args: ReadonlyArray<string>) => string;
@@ -162,6 +165,7 @@ export const startOmpStack = async (options: OmpStackOptions = {}): Promise<OmpS
   git("commit", "-q", "-m", "Initial commit");
 
   const model = await startScriptedModel(agentDir);
+  const metrics = await startOtlpMetricsReceiver();
   const port = await freePort();
   const logPath = NodePath.join(root, "server.log");
   const log = NodeFS.openSync(logPath, "a");
@@ -177,6 +181,9 @@ export const startOmpStack = async (options: OmpStackOptions = {}): Promise<OmpS
       OMPANEL_NO_BROWSER: "1",
       OMPANEL_TELEMETRY_ENABLED: "false",
       OMPANEL_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "1",
+      OMPANEL_OTLP_METRICS_URL: metrics.url,
+      OMPANEL_OTLP_PROTOCOL: "http/json",
+      OMPANEL_OTLP_EXPORT_INTERVAL_MS: "1000",
       PI_NO_PTY: "1",
       ...secretEnvironment,
     },
@@ -218,6 +225,7 @@ export const startOmpStack = async (options: OmpStackOptions = {}): Promise<OmpS
     workspace,
     home,
     model,
+    metrics,
     ompProcesses,
     git,
     omp,
@@ -240,6 +248,7 @@ export const startOmpStack = async (options: OmpStackOptions = {}): Promise<OmpS
       }
       NodeFS.closeSync(log);
       await model.close();
+      await metrics.close();
       await vendor?.close();
       NodeFS.rmSync(root, { recursive: true, force: true });
     },

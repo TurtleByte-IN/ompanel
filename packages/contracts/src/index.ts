@@ -7,6 +7,7 @@ export * from "./acpRegistry.ts";
 export * from "./ompSettings.ts";
 export * from "./ompAccounts.ts";
 export * from "./ompSessions.ts";
+export * from "./ompThreadMenu.ts";
 export * from "./ompAgentFiles.ts";
 export * from "./ompUsage.ts";
 export * from "./ompPlugins.ts";
