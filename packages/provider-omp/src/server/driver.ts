@@ -29,6 +29,7 @@ import { OMP_LOCK } from "../ompLock.ts";
 import { OmpSettings } from "../settings.ts";
 import { makeOmpAdapter } from "./adapter.ts";
 import { makeOmpAccountsController } from "./accountsController.ts";
+import { makeOmpAgentFilesController } from "./agentFiles.ts";
 import { makeOmpControlService } from "./control.ts";
 import { makeOmpPidfiles } from "./pidfiles.ts";
 import {
@@ -262,6 +263,11 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
           Effect.provideService(Path.Path, path),
         ),
       },
+      ompAgentFiles: makeOmpAgentFilesController({
+        control,
+        target: controlTarget,
+        globalCwd: stateDirs.launcher,
+      }),
     } satisfies ProviderInstance;
   }),
 };

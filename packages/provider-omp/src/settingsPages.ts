@@ -20,7 +20,13 @@ export const OMP_MODEL_ROLES: ReadonlyArray<{ readonly role: string; readonly la
   { role: "judge", label: "Judge" },
 ];
 
-export type OmpSettingsPageId = "models" | "routing" | "thinking";
+export type OmpSettingsPageId =
+  | "models"
+  | "routing"
+  | "thinking"
+  | "advisor"
+  | "sampling"
+  | "approvals";
 
 export interface OmpSettingsPage {
   readonly id: OmpSettingsPageId;
@@ -73,7 +79,64 @@ export const OMP_SETTINGS_PAGES: Readonly<Record<OmpSettingsPageId, OmpSettingsP
       "providers.autoThinkingMaxEffort",
     ],
   },
+  advisor: {
+    id: "advisor",
+    title: "Advisor & Agents",
+    description:
+      "The advisor that reviews the agent's work, which subagents get one, and the files in OMP's agent directory that configure advisors and custom agents.",
+    keys: ["advisor.", "task.agentAdvisor"],
+  },
+  sampling: {
+    id: "sampling",
+    title: "Sampling",
+    description:
+      "Advanced sampling and service options sent with every request. -1 leaves a sampling value to the provider.",
+    keys: [
+      "temperature",
+      "topP",
+      "topK",
+      "minP",
+      "presencePenalty",
+      "repetitionPenalty",
+      "textVerbosity",
+      "personality",
+      "tier.",
+    ],
+  },
+  approvals: {
+    id: "approvals",
+    title: "Approvals & Tools",
+    description:
+      "Which tool calls OMP runs without asking, per-tool and bash approval rules, and how tools are offered to the model.",
+    keys: [
+      "tools.approvalMode",
+      "tools.approval",
+      "bash.patterns",
+      "bashInterceptor.",
+      "tools.intentTracing",
+      "tools.xdev",
+      "tools.xdevDocs",
+      "tools.xdevInlineDevices",
+    ],
+  },
 };
+
+/** OMP's approval modes (`tools/approval.ts` `APPROVAL_MODES`), with OMP's labels. */
+export const OMP_APPROVAL_MODES: ReadonlyArray<{
+  readonly mode: "always-ask" | "always-ask-cached" | "write" | "yolo";
+  readonly label: string;
+  /** The Ompanel permission mode whose threads launch with this mode, if any. */
+  readonly ompanelMode: string | undefined;
+}> = [
+  { mode: "always-ask", label: "Always ask", ompanelMode: "Supervised" },
+  { mode: "always-ask-cached", label: "Ask and remember", ompanelMode: undefined },
+  { mode: "write", label: "Write", ompanelMode: "Auto-accept edits" },
+  { mode: "yolo", label: "Yolo", ompanelMode: "Full access" },
+];
+
+/** Values of a `tools.approval` rule and a `bash.patterns` rule (`ApprovalPolicy` in OMP). */
+export const OMP_APPROVAL_POLICIES = ["allow", "prompt", "deny"] as const;
+export type OmpApprovalPolicy = (typeof OMP_APPROVAL_POLICIES)[number];
 
 /**
  * Arrays OMP lets hold path-scoped entries (`pathScoped` in `config/model-settings.ts`).

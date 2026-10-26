@@ -29,6 +29,9 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.serverAnswerOmpSignIn]: AuthProvidersManageScope,
   [WS_METHODS.serverCancelOmpSignIn]: AuthProvidersManageScope,
   [WS_METHODS.serverOmpSignOut]: AuthProvidersManageScope,
+  // Custom agents and the advisor roster are files of the provider install's agent directory.
+  [WS_METHODS.serverWriteOmpAgentFile]: AuthProvidersManageScope,
+  [WS_METHODS.serverDeleteOmpAgentFile]: AuthProvidersManageScope,
   [WS_METHODS.pullRequestsRunAction]: AuthSourceControlWriteScope,
   [WS_METHODS.pullRequestsUpdate]: AuthSourceControlWriteScope,
   [WS_METHODS.pullRequestsComment]: AuthSourceControlWriteScope,

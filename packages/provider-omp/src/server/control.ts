@@ -109,7 +109,8 @@ export type OmpControlOperation =
   | "logout"
   | "config_list"
   | "config_set"
-  | "config_reset";
+  | "config_reset"
+  | "config_path";
 
 /** Carries no process output: stderr and stdout may contain credentials. */
 export class OmpControlError extends Schema.TaggedError<OmpControlError>()("OmpControlError", {
@@ -124,6 +125,7 @@ export class OmpControlError extends Schema.TaggedError<OmpControlError>()("OmpC
     "config_list",
     "config_set",
     "config_reset",
+    "config_path",
   ]),
   reason: Schema.Literals([
     "missing",
@@ -329,6 +331,11 @@ export interface OmpControlService {
     target: OmpControlTarget,
     input: { readonly key: string; readonly scope: OmpConfigScope },
   ) => Effect.Effect<OmpConfigResetResult, OmpControlError>;
+  /**
+   * `omp [--profile p] config path` (10 s): the agent directory of the target's profile and
+   * environment (`PI_CODING_AGENT_DIR`, `OMP_PROFILE`), the one line it prints.
+   */
+  readonly configPath: (target: OmpControlTarget) => Effect.Effect<string, OmpControlError>;
 }
 
 export interface OmpControlServiceOptions {
@@ -513,6 +520,27 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
       ["reset", "--scope", input.scope, "--cwd", target.cwd, "--json", "--", input.key],
       decodeConfigResetResult,
     );
+  });
+
+  const configPath = Effect.fn("OmpControl.configPath")(function* (target: OmpControlTarget) {
+    const output = yield* collect("config_path", "config", target, [
+      ...profileArgs(target.profile),
+      "config",
+      "path",
+    ]);
+    if (output.code !== 0) {
+      return yield* new OmpControlError({
+        operation: "config_path",
+        reason: "exit",
+        exitCode: output.code,
+      });
+    }
+    // One line, the directory; extra lines are not trusted. The caller checks it is absolute.
+    const dir = output.stdout.trim();
+    if (dir === "" || dir.includes("\n")) {
+      return yield* new OmpControlError({ operation: "config_path", reason: "invalid" });
+    }
+    return dir;
   });
 
   /** Starts `omp --mode rpc`, waits for `ready`, and hands the session to `use`. */
@@ -860,5 +888,6 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
     configList,
     configSet,
     configReset,
+    configPath,
   } satisfies OmpControlService;
 });
