@@ -3865,30 +3865,39 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         liveSessions,
         (session) =>
           Effect.gen(function* () {
-            yield* emit(
-              events,
-              command,
-            )({
-              type: "provider-session.detached",
-              threadId: command.threadId,
-              driver: session.driver,
-              providerInstanceId: session.providerInstanceId,
-              occurredAt: now,
-              payload: {
-                providerSessionId: session.id,
-                detachedAt: now,
-                reason:
-                  command.type === "thread.archive"
-                    ? "Thread archived."
-                    : command.type === "thread.settle"
-                      ? "Thread settled."
-                      : command.type === "thread.metadata.update"
-                        ? "Workspace changed."
-                        : command.type === "thread.runtime-mode.set"
-                          ? "Runtime mode changed."
-                          : "Provider or model selection changed.",
-              },
-            });
+            // A turn running in the old workspace finishes there: `/wt` binds the thread from
+            // inside the turn that asked for the worktree (ompanel#132). A session serving only
+            // this thread stays its session until released, which records it stopped; so archive,
+            // delete and a tighter mode still reach it.
+            const drain =
+              command.type === "thread.metadata.update" &&
+              !session.capabilities.sessions.supportsMultipleProviderThreadsPerSession;
+            if (!drain) {
+              yield* emit(
+                events,
+                command,
+              )({
+                type: "provider-session.detached",
+                threadId: command.threadId,
+                driver: session.driver,
+                providerInstanceId: session.providerInstanceId,
+                occurredAt: now,
+                payload: {
+                  providerSessionId: session.id,
+                  detachedAt: now,
+                  reason:
+                    command.type === "thread.archive"
+                      ? "Thread archived."
+                      : command.type === "thread.settle"
+                        ? "Thread settled."
+                        : command.type === "thread.metadata.update"
+                          ? "Workspace changed."
+                          : command.type === "thread.runtime-mode.set"
+                            ? "Runtime mode changed."
+                            : "Provider or model selection changed.",
+                },
+              });
+            }
             const pendingEffect = {
               id: `effect:${command.commandId}:provider-session.detach:${session.id}`,
               commandId: command.commandId,
@@ -3908,6 +3917,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                           : "Provider or model selection changed.",
                 // Terminal detaches revoke MCP credentials; reattachments need other detach reasons to preserve them.
                 ...(command.type === "thread.archive" ? { revokeMcpCredential: true } : {}),
+                ...(drain ? { drain: true } : {}),
               },
             } satisfies PendingOrchestrationEffectV2;
             yield* Ref.update(effects, (existing) => [...existing, pendingEffect]);

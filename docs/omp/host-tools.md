@@ -97,10 +97,18 @@ The session turns on `set_host_cwd_change`. After that, OMP sends a
   session there. Then the thread is bound to the worktree: its metadata is
   updated, the project's setup script runs, and the agent terminal is closed
   so the next command opens in the worktree.
-- Changing a thread's workspace detaches its provider session. OMP finishes
-  the move while it drains, then exits. The next message starts OMP in the
+- Changing a thread's workspace detaches its provider session. A turn still
+  running finishes first; this is the `/wt` turn itself, which binds the
+  thread before OMP has replied, so it completes normally. Until then the
+  session stays the thread's: archiving or deleting the thread, or a stricter
+  permission mode, still ends that turn at once (archive and delete revoke its
+  T3 MCP credential). Then the session is released and OMP exits; so does a
+  turn that fails to start, and if OMP exits or crashes first, the thread's
+  background jobs are cleared with it. The next message starts OMP in the
   worktree, which reopens the same OMP session from the worktree's bucket
-  ([sessions.md](./sessions.md#reopening-a-thread)).
+  ([sessions.md](./sessions.md#reopening-a-thread)). OMP writes a session file
+  only once it has a reply, so after a `/wt` sent as a thread's first message
+  there is nothing to reopen and the next message starts a fresh session.
 - `/move <path>` (`reason: "move"`) is refused: a T3 thread stays in its project
   or worktree. To work in another directory, start a new thread there.
 - A worktree that cannot be created (not a git repository, detached HEAD, the

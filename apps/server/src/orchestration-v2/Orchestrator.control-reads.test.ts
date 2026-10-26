@@ -502,6 +502,19 @@ it.effect(
         (yield* projections.getThreadProviderContext(threadId)).providerSessions,
         [],
       );
+      // A session shared by provider threads (Codex) is detached as before, without draining.
+      assert.deepEqual(
+        (yield* outbox.listByCommandId(CommandId.make("workspace-control"))).map(
+          (effect) => effect.request,
+        ),
+        [
+          {
+            type: "provider-session.detach",
+            providerSessionId: sessionId,
+            detail: "Workspace changed.",
+          },
+        ],
+      );
       yield* sql`INSERT INTO orchestration_v2_projection_turn_items
         (turn_item_id, thread_id, run_id, node_id, provider_thread_id, provider_turn_id,
           type, status, ordinal, updated_at, payload_json)

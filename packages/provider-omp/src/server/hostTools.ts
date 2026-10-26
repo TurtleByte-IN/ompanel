@@ -308,8 +308,8 @@ export const makeOmpHostBridge = Effect.fn("makeOmpHostBridge")(function* (
       return yield* answerCwdChange(request, { accepted: false, error: created.failure.message });
     }
     const worktree = created.success;
-    // Answer first: binding the thread detaches this session, and OMP finishes moving its
-    // session into the worktree while it drains before exiting.
+    // Answer first: binding the thread detaches this session once this turn has ended, and OMP
+    // has moved its session into the worktree by then.
     yield* answerCwdChange(request, { accepted: true, cwd: worktree.path });
     cwd = worktree.path;
     yield* hostTools.bindThreadWorktree({ threadId, worktree }).pipe(
