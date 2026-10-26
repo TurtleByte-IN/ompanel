@@ -18,7 +18,9 @@ import * as ProviderInstanceRegistryMutator from "./ProviderInstanceRegistryMuta
 import * as ProviderOrchestrationAdapterInfrastructure from "./ProviderOrchestrationAdapterInfrastructure.ts";
 import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
 import * as ProviderHostLive from "./ProviderHostLive.ts";
+import * as ProviderHostToolsLive from "./ProviderHostToolsLive.ts";
 import type * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
+import type * as ProviderHostTools from "@t3tools/provider-core/server/ProviderHostTools";
 import type * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import type * as ServerConfig from "../config.ts";
 
@@ -28,6 +30,7 @@ type ProviderInstanceRegistryHydrationEnv =
       | ProviderOrchestrationAdapterInfrastructure.ProviderOrchestrationAdapterInfrastructure
       | AcpRegistrySupport.AcpRegistryCatalog
       | ProviderHost.ProviderHost
+      | ProviderHostTools.ProviderHostTools
     >
   | Settings.ServerSettingsService
   | BackgroundPolicy.BackgroundPolicy
@@ -114,6 +117,8 @@ export const layer: Layer.Layer<
       Layer.provide(ProviderOrchestrationAdapterInfrastructure.layer),
       Layer.provide(AcpRegistrySupport.layerFromHost),
       Layer.provide(ProviderHostLive.layer),
+      // Forwards to the implementation server.ts binds once the thread runtime exists.
+      Layer.provide(ProviderHostToolsLive.layer),
     );
 
     return layerSettingsWatcher(settingsChanges).pipe(Layer.provideMerge(layerMutable));
