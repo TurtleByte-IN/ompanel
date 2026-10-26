@@ -1024,19 +1024,14 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       appliedApprovalMode = wanted;
     });
 
-    /** The guarded overlay values (toolGuards.ts) this session last wrote, as JSON. */
-    let appliedToolGuard = JSON.stringify(
-      ompGuardedToolOverlay(
-        input.runtimePolicy.runtimeMode,
-        readOmpTraitSelection(input.modelSelection).computer,
-      ),
-    );
+    /** The guard state (toolGuards.ts) this session last wrote: restricted, or Full access with the trait. */
+    const openComputer = readOmpTraitSelection(input.modelSelection).computer;
+    let appliedToolGuard =
+      input.runtimePolicy.runtimeMode === "full-access" ? `full:${openComputer}` : "restricted";
     /**
-     * Holds the browser and computer-use preludes to the turn's permission mode and Computer Use
-     * trait before anything runs. Switching them off fails closed: a turn outside Full access
-     * never starts while the overlay may still enable them. OMP's overlay watcher applies the
-     * change within its debounce; until then both preludes run only through `eval`, which the
-     * approval mode applied just before already asks for.
+     * Holds the browser and computer-use preludes to the turn's mode and trait before anything
+     * runs; switching them off fails closed. Until OMP's watcher reloads the overlay, both run only
+     * through `eval`, which the approval mode applied just before already asks for.
      */
     const applyToolGuard = Effect.fnUntraced(function* (
       threadId: string,
@@ -1044,9 +1039,10 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       modelSelection: ProviderAdapter.ProviderAdapterV2TurnInput["modelSelection"],
     ) {
       const computer = readOmpTraitSelection(modelSelection).computer;
-      const wanted = JSON.stringify(ompGuardedToolOverlay(runtimePolicy.runtimeMode, computer));
-      if (wanted === appliedToolGuard) return;
       const restricted = runtimePolicy.runtimeMode !== "full-access";
+      const wanted = restricted ? "restricted" : `full:${computer}`;
+      if (wanted === appliedToolGuard) return;
+
       yield* syncToolGuard(threadId, runtimePolicy.runtimeMode, computer).pipe(
         Effect.tap(() => Effect.sync(() => (appliedToolGuard = wanted))),
         Effect.catch((error) =>

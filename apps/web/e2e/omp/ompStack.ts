@@ -67,12 +67,9 @@ export interface OmpStack {
   /** The server's output, pairing token redacted. */
   readonly serverLog: () => string;
   /**
-   * Stops the server and its `omp` processes, then reports every secret the run handled (the
-   * pairing token, `secretEnvironment` values, the fake vendor's OAuth codes and the tokens it
-   * issued for them) found where Ompanel records things: the server's output, its logs and
-   * traces (`<state>/logs`, flushed on shutdown) and OMP's per-thread state (`<state>/omp`:
-   * journals, overlays, exports), as `"<secret> in <file>"`. The pairing announcement the
-   * server prints on start is the one place the pairing link belongs (PRD §9).
+   * Stops the server and its `omp` processes, then lists each handled secret (pairing token,
+   * `secretEnvironment` values, fake-vendor OAuth codes) found in the server output (bar its
+   * pairing announcement), `<state>/logs` or `<state>/omp`, as `"<label> in <file>"` (PRD §9).
    */
   readonly stop: () => Promise<{ readonly leakedSecrets: ReadonlyArray<string> }>;
 }

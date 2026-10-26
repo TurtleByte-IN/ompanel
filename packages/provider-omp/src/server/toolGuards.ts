@@ -1,12 +1,7 @@
 /**
- * The OMP capabilities that act outside the thread's workspace exist only in Full access (PRD §9,
- * §6): the browser eval prelude (`browser.enabled`, on by default in OMP) and the host-desktop
- * eval prelude (`computer.enabled`). See docs/omp/security.md.
- *
- * The thread's `--config` overlay outranks project and global config, so pinning both keys off
- * there holds whatever a settings write puts in config.yml. Only OMP's runtime layer outranks the
- * overlay, and its one writer a client reaches is the `/computer` slash command, which Ompanel
- * refuses ({@link ompRefusedSlashCommand}).
+ * Browser and computer-use preludes exist only in Full access (PRD §9, §6; docs/omp/security.md).
+ * The thread overlay outranks project and global config; only OMP's runtime layer outranks it,
+ * and `/computer`, its one client-reachable writer, is refused.
  */
 import type { RuntimeMode } from "@t3tools/contracts";
 
@@ -35,16 +30,9 @@ export interface OmpRefusedCommand {
 }
 
 /**
- * Why Ompanel will not send `text` to OMP as a prompt, or `undefined` when it may. OMP runs a
- * prompt starting with one of its built-in commands as that command (`parseSlashCommand`: the
- * name ends at the first whitespace or `:`), outside every Ompanel control:
- *
- * - `/computer on|off` sets a runtime override that outranks the overlay: `on` would outlive a
- *   later switch out of Full access, `off` would silently beat the trait. Computer use is the
- *   composer's Computer Use trait; only `/computer status` goes through.
- * - `/share` uploads the session to `share.serverUrl` (OMP's share server, or a host a cloned
- *   repo's config names) without the Share as gist dialog, its `gh` check or its blocked-host
- *   overlay (docs/omp/thread-menu.md).
+ * Why `text` must not reach OMP as a prompt (OMP would run it as a builtin), or `undefined`.
+ * `/computer on|off` sets a runtime override above the overlay; `/share` uploads past the Share
+ * as gist checks (docs/omp/security.md). Only `/computer status` goes through.
  */
 export const ompRefusedSlashCommand = (text: string): OmpRefusedCommand | undefined => {
   const trimmed = text.trimStart();
