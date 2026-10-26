@@ -37,17 +37,20 @@ layer("070_ShellAgentNotificationIndex", (it) => {
           ORDER BY item.updated_at DESC, item.turn_item_id DESC
           LIMIT 1
         `.pipe(Effect.map((rows) => rows.map((row) => row.id)));
+      // Unprepared: a cached EXPLAIN statement keeps the plan it was prepared with after DROP INDEX.
       const plan = () =>
-        sql<{ readonly detail: string }>`
-          EXPLAIN QUERY PLAN
-          SELECT item.payload_json
-          FROM orchestration_v2_projection_turn_items item
-          WHERE item.thread_id = 'thread-1'
-            AND item.type = 'notification'
-            AND json_extract(item.payload_json, '$.source.kind') = 'agent'
-          ORDER BY item.updated_at DESC, item.turn_item_id DESC
-          LIMIT 1
-        `.pipe(Effect.map((rows) => rows.map((row) => row.detail).join("\n")));
+        sql
+          .unsafe<{ readonly detail: string }>(
+            `EXPLAIN QUERY PLAN
+            SELECT item.payload_json
+            FROM orchestration_v2_projection_turn_items item
+            WHERE item.thread_id = 'thread-1'
+              AND item.type = 'notification'
+              AND json_extract(item.payload_json, '$.source.kind') = 'agent'
+            ORDER BY item.updated_at DESC, item.turn_item_id DESC
+            LIMIT 1`,
+          )
+          .unprepared.pipe(Effect.map((rows) => rows.map((row) => row.detail).join("\n")));
       const indexExists = () =>
         sql<{ readonly name: string }>`
           SELECT name FROM sqlite_master

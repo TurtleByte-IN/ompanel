@@ -5961,12 +5961,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ) AS has_actionable_proposed_plan,
               (
                 -- Served by orchestration_v2_projection_turn_items_agent_notification_idx.
-                SELECT item.payload_json
-                FROM orchestration_v2_projection_turn_items item
-                WHERE item.thread_id = t.thread_id
-                  AND item.type = 'notification'
-                  AND json_extract(item.payload_json, '$.source.kind') = 'agent'
-                ORDER BY item.updated_at DESC, item.turn_item_id DESC
+                SELECT agent_message.payload_json
+                FROM orchestration_v2_projection_turn_items agent_message
+                WHERE agent_message.thread_id = t.thread_id
+                  AND agent_message.type = 'notification'
+                  AND json_extract(agent_message.payload_json, '$.source.kind') = 'agent'
+                ORDER BY agent_message.updated_at DESC, agent_message.turn_item_id DESC
                 LIMIT 1
               ) AS latest_agent_notification_payload_json
             FROM orchestration_v2_projection_threads t
