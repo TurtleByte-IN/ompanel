@@ -4,7 +4,12 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import { ProviderInstanceId, ProviderSessionId, ThreadId } from "@t3tools/contracts";
+import {
+  ProviderInstanceId,
+  ProviderSessionId,
+  type RuntimeMode,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
@@ -14,7 +19,12 @@ import * as References from "effect/References";
 import * as Stream from "effect/Stream";
 
 import { makeOmpAdapter } from "./adapter.ts";
-import { OMP_EMPTY_OVERLAY, ompApprovalModeFor, ompSessionArgs } from "./launch.ts";
+import {
+  OMP_EMPTY_OVERLAY,
+  ompApprovalModeFor,
+  ompArgsApprovalMode,
+  ompSessionArgs,
+} from "./launch.ts";
 import { makeOmpPidfiles } from "./pidfiles.ts";
 import { ompStateDirs, startOmpSessionProcess } from "./session.ts";
 import {
@@ -101,6 +111,22 @@ describe("OMP launch arguments", () => {
         "/my work",
       ],
     );
+  });
+
+  it("reads the approval mode back only from an explicit, known --approval-mode", () => {
+    const args = ompSessionArgs({
+      approvalMode: "write",
+      profile: "",
+      overlayPath: "/o",
+      cwd: "/w",
+    });
+    assert.strictEqual(ompArgsApprovalMode(args), "write");
+    // Wrapped command lines keep omp's argv as a suffix.
+    assert.strictEqual(ompArgsApprovalMode(["--scope", "--", "/bin/omp", ...args]), "write");
+    assert.isUndefined(ompArgsApprovalMode(["--mode", "rpc-ui", "--cwd", "/w"]));
+    assert.isUndefined(ompArgsApprovalMode(["--mode", "rpc-ui", "--approval-mode"]));
+    assert.isUndefined(ompArgsApprovalMode(["--approval-mode", "constructor"]));
+    assert.isUndefined(ompArgsApprovalMode(["--approval-mode", "undefined"]));
   });
 });
 
@@ -223,14 +249,18 @@ posixOnly("OmpAdapter driven by the scripted fake omp", () => {
 });
 
 /** The thread process `openSession` starts, for the command side the adapter does not map yet. */
-const startSession = (state: FakeOmpState, vars: Record<string, string>) =>
+const startSession = (
+  state: FakeOmpState,
+  vars: Record<string, string>,
+  runtimeMode: RuntimeMode = "full-access",
+) =>
   Effect.gen(function* () {
     const path = yield* Path.Path;
     const dirs = ompStateDirs(path, NodePath.join(state.dir, "state"));
     return yield* startOmpSessionProcess({
       binaryPath: state.executable(),
       profile: "",
-      runtimeMode: "full-access",
+      runtimeMode,
       cwd: state.dir,
       threadId: "thread-1",
       environment: state.env(vars),
@@ -242,6 +272,21 @@ const startSession = (state: FakeOmpState, vars: Record<string, string>) =>
   });
 
 posixOnly("OMP thread process driven by the scripted fake omp", () => {
+  it.live("refuses to spawn omp when no approval mode can be derived (O-9)", () =>
+    Effect.gen(function* () {
+      const state = yield* makeFakeOmpState;
+      // A runtime mode this build does not know (e.g. a newer stored value) maps to nothing.
+      const error = yield* startSession(state, {}, "unknown-mode" as RuntimeMode).pipe(Effect.flip);
+      assert.strictEqual(error._tag, "OmpRpcError");
+      if (error._tag === "OmpRpcError") {
+        assert.strictEqual(error.reason, "spawn");
+        assert.include(error.detail, "--approval-mode");
+      }
+      // The fake omp writes argv.json first thing; it was never started.
+      assert.isFalse(NodeFS.existsSync(NodePath.join(state.dir, "argv.json")));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.live("streams a prompt turn and correlates its prompt_result", () =>
     Effect.gen(function* () {
       const state = yield* makeFakeOmpState;
