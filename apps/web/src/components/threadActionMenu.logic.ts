@@ -23,8 +23,18 @@ export type ThreadActionMenuId =
   | "copy-path"
   | "copy-branch"
   | "copy-thread-id"
+  | OmpThreadMenuActionId
   | "archive"
   | "delete";
+
+/** The OMP section of an OMP thread's menu (PRD FR-21; docs/omp/thread-menu.md). */
+export type OmpThreadMenuActionId =
+  | "omp"
+  | "omp-export-html"
+  | "omp-share-gist"
+  | "omp-share-live"
+  | "omp-stop-live"
+  | "omp-branch-tree";
 
 export type DraftActionMenuId =
   | "copy"
@@ -89,7 +99,16 @@ export interface ThreadActionMenuState {
   readonly snoozePresets: ReadonlyArray<SnoozePreset>;
   /** Guest links need their own grant, so the caller checks it instead of `canOperate`. */
   readonly canShareWithGuest?: boolean;
+  /** The thread runs on an OMP instance, so its menu has the OMP section. */
+  readonly isOmpThread?: boolean;
 }
+
+/** Reading the thread (export, branch tree) needs no operate grant; sharing it does. */
+const OMP_READ_ACTIONS: ReadonlyArray<ThreadActionMenuId> = [
+  "omp",
+  "omp-export-html",
+  "omp-branch-tree",
+];
 
 /** Local navigation, read markers, and copying remain available to read-only clients. */
 export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean {
@@ -102,6 +121,7 @@ export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean
     "copy-path",
     "copy-branch",
     "copy-thread-id",
+    ...OMP_READ_ACTIONS,
   ].includes(action);
 }
 
@@ -211,6 +231,42 @@ export function buildThreadActionMenuItems(
         { id: "copy-thread-id", label: "Thread ID", icon: "hash" },
       ],
     },
+    ...(state.isOmpThread
+      ? [
+          {
+            id: "omp" as const,
+            label: "OMP",
+            icon: "share-2",
+            children: [
+              { id: "omp-export-html" as const, label: "Export HTML", icon: "file-down" },
+              {
+                id: "omp-share-gist" as const,
+                label: "Share as gist…",
+                icon: "share-2",
+                disabled: !state.canOperate,
+              },
+              {
+                id: "omp-share-live" as const,
+                label: "Share live…",
+                icon: "radio",
+                disabled: !state.canOperate,
+              },
+              {
+                id: "omp-stop-live" as const,
+                label: "Stop sharing live",
+                icon: "square",
+                disabled: !state.canOperate,
+              },
+              {
+                id: "omp-branch-tree" as const,
+                label: "Branch tree",
+                icon: "git-fork",
+                separatorBefore: true,
+              },
+            ],
+          },
+        ]
+      : []),
     { id: "project-settings", label: "Project settings", icon: "settings" },
     {
       id: "archive",

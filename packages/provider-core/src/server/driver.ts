@@ -153,7 +153,7 @@ export interface ProviderOmpThreadMenuController {
   readonly stopCollab: (
     threadId: ThreadId,
   ) => Effect.Effect<OmpCollabStopResult, OmpThreadMenuOperationError>;
-  /** RPC `collab_status`; an idle thread or an older sidecar reports no room. */
+  /** RPC `collab_status`; an idle thread has no room, an older sidecar fails `needs_newer_omp`. */
   readonly collabStatus: (
     threadId: ThreadId,
   ) => Effect.Effect<OmpCollabStatus, OmpThreadMenuOperationError>;

@@ -23,9 +23,17 @@ import type {
 } from "../../../contract/src/wire.generated.ts";
 import type { OmpControlTarget } from "../control.ts";
 
-/** What a one-shot CLI command does: print and exit, or hang until a signal stops it. */
+/**
+ * What a one-shot CLI command does: print and exit, or hang until a signal stops it. `html` is
+ * the page `--export <session> <out>` writes to `<out>`.
+ */
 export type FakeOmpCliOutput =
-  | { readonly stdout?: string; readonly stderr?: string; readonly exitCode?: number }
+  | {
+      readonly stdout?: string;
+      readonly stderr?: string;
+      readonly exitCode?: number;
+      readonly html?: string;
+    }
   | { readonly hang: true };
 
 /**
@@ -68,7 +76,9 @@ export type FakeOmpCliCommand =
   | "stats"
   | "skill list"
   | "plugin list"
-  | "agents unpack";
+  | "agents unpack"
+  | "--export"
+  | "share";
 
 export interface FakeOmpControlScript {
   readonly cli?: Partial<Record<FakeOmpCliCommand, FakeOmpCliOutput>>;
@@ -373,11 +383,16 @@ export const makeFakeOmpControl = Effect.acquireRelease(
       workspace,
       /**
        * A target whose omp follows `script`: each `cli` command and `rpc` part given replaces
-       * the pinned default for it.
+       * the pinned default for it. `gh` puts a fake GitHub CLI on the PATH whose
+       * `gh auth status` succeeds (`ready`) or fails (`signed_out`), or leaves none (`missing`);
+       * either way the PATH then holds nothing else, so a real `gh` is never reached.
        */
       target: (
         script: FakeOmpControlScript = {},
-        options: { readonly profile?: string } = {},
+        options: {
+          readonly profile?: string;
+          readonly gh?: "ready" | "signed_out" | "missing";
+        } = {},
       ): OmpControlTarget => {
         const defaults = defaultScript(workspace);
         const file = NodePath.join(dir, `script-${scripts++}.json`);
@@ -388,11 +403,23 @@ export const makeFakeOmpControl = Effect.acquireRelease(
             rpc: { ...defaults.rpc, ...script.rpc },
           }),
         );
+        let path = "/usr/bin:/bin";
+        if (options.gh !== undefined) {
+          path = NodePath.join(dir, `gh-${options.gh}`);
+          NodeFS.mkdirSync(path, { recursive: true });
+          if (options.gh !== "missing") {
+            NodeFS.writeFileSync(
+              NodePath.join(path, "gh"),
+              `#!/bin/sh\nexit ${options.gh === "ready" ? 0 : 1}\n`,
+              { mode: 0o755 },
+            );
+          }
+        }
         return {
           binaryPath,
           profile: options.profile ?? "",
           environment: {
-            PATH: "/usr/bin:/bin",
+            PATH: path,
             FAKE_OMP_CONTROL_SCRIPT: file,
             FAKE_OMP_CONTROL_LOG: logFile,
           },

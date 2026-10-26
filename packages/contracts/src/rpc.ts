@@ -1072,44 +1072,41 @@ const OmpThreadMenuRpcError = Schema.Union([
   EnvironmentAuthorizationError,
 ]);
 
-export const WsServerExportOmpThreadHtmlRpc = Rpc.make(WS_METHODS.serverExportOmpThreadHtml, {
+const WsServerExportOmpThreadHtmlRpc = Rpc.make(WS_METHODS.serverExportOmpThreadHtml, {
   payload: OmpThreadMenuInput,
   success: OmpExportHtmlResult,
   error: OmpThreadMenuRpcError,
 });
 
-export const WsServerShareOmpThreadGistRpc = Rpc.make(WS_METHODS.serverShareOmpThreadGist, {
+const WsServerShareOmpThreadGistRpc = Rpc.make(WS_METHODS.serverShareOmpThreadGist, {
   payload: OmpThreadMenuInput,
   success: OmpShareGistResult,
   error: OmpThreadMenuRpcError,
 });
 
-export const WsServerStartOmpThreadCollabRpc = Rpc.make(WS_METHODS.serverStartOmpThreadCollab, {
+const WsServerStartOmpThreadCollabRpc = Rpc.make(WS_METHODS.serverStartOmpThreadCollab, {
   payload: OmpCollabStartInput,
   success: OmpCollabStatus,
   error: OmpThreadMenuRpcError,
 });
 
-export const WsServerStopOmpThreadCollabRpc = Rpc.make(WS_METHODS.serverStopOmpThreadCollab, {
+const WsServerStopOmpThreadCollabRpc = Rpc.make(WS_METHODS.serverStopOmpThreadCollab, {
   payload: OmpThreadMenuInput,
   success: OmpCollabStopResult,
   error: OmpThreadMenuRpcError,
 });
 
-export const WsServerGetOmpThreadCollabRpc = Rpc.make(WS_METHODS.serverGetOmpThreadCollab, {
+const WsServerGetOmpThreadCollabRpc = Rpc.make(WS_METHODS.serverGetOmpThreadCollab, {
   payload: OmpThreadMenuInput,
   success: OmpCollabStatus,
   error: OmpThreadMenuRpcError,
 });
 
-export const WsServerGetOmpThreadBranchTreeRpc = Rpc.make(
-  WS_METHODS.serverGetOmpThreadBranchTree,
-  {
-    payload: OmpThreadMenuInput,
-    success: OmpBranchTree,
-    error: OmpThreadMenuRpcError,
-  },
-);
+const WsServerGetOmpThreadBranchTreeRpc = Rpc.make(WS_METHODS.serverGetOmpThreadBranchTree, {
+  payload: OmpThreadMenuInput,
+  success: OmpBranchTree,
+  error: OmpThreadMenuRpcError,
+});
 
 const OmpAgentFilesRpcError = Schema.Union([
   OmpAgentFilesOperationError,

@@ -228,6 +228,30 @@ function userText(message) {
         .join("");
 }
 
+const escapeHtml = (text) =>
+  text.replace(
+    /[&<>"]/g,
+    (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[char],
+  );
+
+/** A stand-in for OMP's export page: the title and each message's text, in order. */
+function exportPage(session) {
+  const title = escapeHtml(session.title ?? "OMP session");
+  const messages = session.messages
+    .map((message) => {
+      const text =
+        message.role === "user"
+          ? userText(message)
+          : (message.content ?? [])
+              .filter((block) => block.type === "text")
+              .map((block) => block.text)
+              .join("");
+      return `<section data-role="${message.role}">${escapeHtml(text)}</section>`;
+    })
+    .join("\n");
+  return `<!doctype html>\n<html><head><meta charset="utf-8"><title>${title}</title></head>\n<body data-session-id="${session.id}">\n${messages}\n</body></html>\n`;
+}
+
 /** The store's answer to an unscripted command, or `undefined` when it does not handle it. */
 function storeResponse(command) {
   const ok = (data) => ({ success: true, ...(data === undefined ? {} : { data }) });
@@ -295,6 +319,15 @@ function storeResponse(command) {
       return store.fork(command.entryId)
         ? ok({ cancelled: false })
         : { success: false, error: `Invalid entry ID for forking: ${command.entryId}` };
+    case "export_html": {
+      // Like OMP: one self-contained page of the session, at `outputPath` when given.
+      const session = store.current;
+      const outputPath =
+        command.outputPath ?? NodePath.join(NodePath.dirname(session.file), `${session.id}.html`);
+      NodeFS.mkdirSync(NodePath.dirname(outputPath), { recursive: true });
+      NodeFS.writeFileSync(outputPath, exportPage(session));
+      return ok({ path: outputPath });
+    }
     default:
       return undefined;
   }
@@ -405,6 +438,44 @@ process.on("SIGTERM", () => {
 
 const contract = env.FAKE_OMP_CONTRACT ?? "1.0.0";
 const negotiateContract = env.FAKE_OMP_NEGOTIATE_CONTRACT ?? contract;
+
+/**
+ * One collab room, like OMP's RPC host (contract 1.7.0): the links carry FAKE_OMP_COLLAB_TOKEN,
+ * so a test can look for it anywhere it must not be; a view room's links carry no write token.
+ */
+const collabSupported = (() => {
+  const [major, minor] = contract.split(".").map(Number);
+  return major === 1 && minor >= 7;
+})();
+const collabToken = env.FAKE_OMP_COLLAB_TOKEN ?? "fake-collab-token";
+let collabRoom = null;
+function collabStatus() {
+  if (collabRoom === null) return { active: false, participants: [] };
+  const key = collabRoom.access === "control" ? `${collabToken}.write` : `${collabToken}.read`;
+  return {
+    active: true,
+    access: collabRoom.access,
+    link: `omp://join/fake-room#${key}`,
+    webLink: `https://my.omp.sh/#fake-room.${key}`,
+    relayConnected: true,
+    participants: [{ name: "host", role: "host" }],
+  };
+}
+function answerCollab(command) {
+  const respond = (data) =>
+    write({ id: command.id, type: "response", command: command.type, success: true, data });
+  if (command.type === "collab_status") return respond(collabStatus());
+  if (command.type === "collab_start") {
+    collabRoom = { access: command.access ?? "control" };
+    respond(collabStatus());
+    write({ type: "collab_state", active: true, participantCount: 1 });
+    return;
+  }
+  const stopped = collabRoom !== null;
+  collabRoom = null;
+  respond({ stopped });
+  if (stopped) write({ type: "collab_state", active: false, participantCount: 0 });
+}
 if (env.FAKE_OMP_FIRST_FRAME === "notice") write({ type: "notice", message: "too early" });
 write({
   type: "ready",
@@ -497,6 +568,22 @@ process.stdin.on("data", (text) => {
           success: true,
           data: { sessionId, sessionFile: `/fake/sessions/${sessionId}.jsonl` },
         });
+        break;
+      case "collab_start":
+      case "collab_status":
+      case "collab_stop":
+        if (!collabSupported) {
+          // What an omp without the collab RPC answers.
+          write({
+            id: command.id,
+            type: "response",
+            command: command.type,
+            success: false,
+            error: `Unknown command: ${command.type}`,
+          });
+          break;
+        }
+        answerCollab(command);
         break;
       default:
         write({

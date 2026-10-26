@@ -1493,6 +1493,47 @@ export function createServerEnvironmentAtoms<R, E>(
           `${environmentId}:${input.instanceId}:${input.projectId}:${input.sessionId}`,
       },
     }),
+    exportOmpThreadHtml: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:omp-thread-menu:export-html",
+      tag: WS_METHODS.serverExportOmpThreadHtml,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => `${environmentId}:${input.threadId}`,
+      },
+    }),
+    // One upload per click: a second click while the first runs joins it.
+    shareOmpThreadGist: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:omp-thread-menu:share-gist",
+      tag: WS_METHODS.serverShareOmpThreadGist,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => `${environmentId}:${input.threadId}`,
+      },
+    }),
+    startOmpThreadCollab: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:omp-thread-menu:collab-start",
+      tag: WS_METHODS.serverStartOmpThreadCollab,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => `${environmentId}:${input.threadId}:${input.access}`,
+      },
+    }),
+    stopOmpThreadCollab: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:omp-thread-menu:collab-stop",
+      tag: WS_METHODS.serverStopOmpThreadCollab,
+    }),
+    getOmpThreadCollab: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:omp-thread-menu:collab-status",
+      tag: WS_METHODS.serverGetOmpThreadCollab,
+    }),
+    getOmpThreadBranchTree: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:omp-thread-menu:branch-tree",
+      tag: WS_METHODS.serverGetOmpThreadBranchTree,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => `${environmentId}:${input.threadId}`,
+      },
+    }),
     readOmpSettings: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:omp-settings:read",
       tag: WS_METHODS.serverReadOmpSettings,

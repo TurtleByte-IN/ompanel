@@ -29,6 +29,13 @@ function cliCommand() {
   return ["config", "skill", "plugin", "agents"].includes(first) ? `${first} ${second}` : first;
 }
 
+/** `--export <session> <out>` writes the page OMP would render to `<out>`. */
+function writeExport(output) {
+  const outPath = argv[argv.indexOf("--export") + 2];
+  if (output.html !== undefined && outPath !== undefined)
+    NodeFS.writeFileSync(outPath, output.html);
+}
+
 log({ event: "start", pid: process.pid, argv, cwd: process.cwd() });
 
 if (!argv.includes("--mode")) {
@@ -42,6 +49,7 @@ if (!argv.includes("--mode")) {
   } else {
     if (output.stderr !== undefined) process.stderr.write(output.stderr);
     if (output.stdout !== undefined) process.stdout.write(output.stdout);
+    if (command === "--export" && (output.exitCode ?? 0) === 0) writeExport(output);
     process.exitCode = output.exitCode ?? 0;
   }
 } else {

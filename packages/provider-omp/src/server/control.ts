@@ -630,7 +630,9 @@ export interface OmpControlService {
    * `gh auth status` in the target's environment (10 s): whether `omp share --gist` can create a
    * gist there. OMP falls back to its share server when it cannot, so this runs first.
    */
-  readonly gistReady: (target: OmpControlTarget) => Effect.Effect<"ready" | "missing" | "signed_out">;
+  readonly gistReady: (
+    target: OmpControlTarget,
+  ) => Effect.Effect<"ready" | "missing" | "signed_out">;
   /** `omp [--profile p] share <sessionFile> --gist` (120 s): uploads, so never retried. */
   readonly shareGist: (
     target: OmpControlTarget,
@@ -1378,7 +1380,9 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       Effect.map((result) => (result.code === 0 ? ("ready" as const) : ("signed_out" as const))),
       Effect.catch((cause) =>
-        Effect.succeed(isCommandMissingCause(cause) ? ("missing" as const) : ("signed_out" as const)),
+        Effect.succeed(
+          isCommandMissingCause(cause) ? ("missing" as const) : ("signed_out" as const),
+        ),
       ),
       Effect.withSpan("OmpControl.gistReady"),
     );
