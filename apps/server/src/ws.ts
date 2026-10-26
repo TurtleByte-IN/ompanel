@@ -1566,7 +1566,7 @@ export const layerWsRpc = (
               if (racedImport !== null) return { threadId, imported: false } as const;
               return yield* new AcpRegistryOperationError({
                 reason: "session_import_failed",
-                message: "Could not create a Ompanel thread for the ACP session.",
+                message: "Could not create an Ompanel thread for the ACP session.",
                 cause: launched.failure,
               });
             }

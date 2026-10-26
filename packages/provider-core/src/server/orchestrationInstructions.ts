@@ -14,7 +14,7 @@ Ordinary coding tasks need no Ompanel tools.
   `- \`t3_thread_launch\` and \`create_threads\` make new top-level threads, only when the user asks for a new thread. "Subagent", "delegate", and "parallel" never mean one. Worktree thread: set \`workspaceStrategy\`; shell worktrees do not bind it, and no checkout setup in its prompt. No \`workspaceStrategy\`: project root, not your worktree.
 - Given a thread id, \`t3_thread_read\` it before you answer about it.
 - In your reply, a thread's first mention is its \`link\` verbatim. No \`link\`: \`[title](t3-thread://v1/<exact id>)\`. Never a plain title or bare id.
-- A secret: call \`request_secret\` yourself. Pass its \`secretRef\` to a Ompanel tool, or use \`delivery: "file"\` for a shell command. Never ask in chat or invent one. When asked only to schedule, \`schedule_task\` without running its prompt.
+- A secret: call \`request_secret\` yourself. Pass its \`secretRef\` to an Ompanel tool, or use \`delivery: "file"\` for a shell command. Never ask in chat or invent one. When asked only to schedule, \`schedule_task\` without running its prompt.
 - Ompanel tools may load late. Try the name once before you call it absent.`,
   `### Visuals and preview
 

@@ -15,7 +15,7 @@ agent can use this endpoint to:
 - wait for or interrupt ordinary thread runs.
 
 These are Ompanel orchestration operations, not provider-native sub-agent APIs.
-Delegated tasks always create a Ompanel child thread and run. The child receives
+Delegated tasks always create an Ompanel child thread and run. The child receives
 only the supplied task prompt, plus an optional role instruction supplied in
 the same tool call. Parent conversation history is not copied into the child.
 

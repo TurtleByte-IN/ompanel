@@ -108,7 +108,7 @@ update can roll back to the previous version. If the update still fails:
 2. Check that you updated the server's machine, not only the device you are using.
 3. For a command-line server, stop it and relaunch the exact version shown in the notice.
 
-Only one server can use a Ompanel home directory at a time. If startup reports that
+Only one server can use an Ompanel home directory at a time. If startup reports that
 another server owns it, stop that server before retrying, or use a separate home
 directory and pair with the running server.
 

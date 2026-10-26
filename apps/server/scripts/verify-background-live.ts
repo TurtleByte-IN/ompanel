@@ -297,7 +297,7 @@ try {
   const gateUrl = `http://127.0.0.1:${gateAddress.port}${gatePath}`;
   const launch =
     values.scenario === "native"
-      ? `Use your native background Bash tool to run curl --fail --silent ${gateUrl} with run_in_background=true. Do not delegate a Ompanel child.`
+      ? `Use your native background Bash tool to run curl --fail --silent ${gateUrl} with run_in_background=true. Do not delegate an Ompanel child.`
       : `Use Ompanel delegate_task with mode=async to create exactly one child using provider ${values.provider}, model ${values.model}. Give the child this task: ${values.scenario === "nested" ? "Use Ompanel delegate_task with mode=async to delegate the following task to a grandchild, then end your initial turn. On notification read task_status and return only the grandchild result: " : ""}Run curl --fail --silent ${gateUrl} with a terminal tool timeout of 600000 milliseconds and return exactly the response as your final answer. Do not read other files. Do not retry failures.`;
   const timing =
     values.scenario === "active"

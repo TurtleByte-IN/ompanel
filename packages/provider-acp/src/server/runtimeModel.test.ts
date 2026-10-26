@@ -1263,7 +1263,7 @@ describe("extractMcpToolCallIdentity", () => {
     }
   });
 
-  it("does not claim an agent's own tool that shares a Ompanel tool name", () => {
+  it("does not claim an agent's own tool that shares an Ompanel tool name", () => {
     const toolCall = toolCallFromUpdate({
       sessionUpdate: "tool_call",
       toolCallId: "own-delegate-1",

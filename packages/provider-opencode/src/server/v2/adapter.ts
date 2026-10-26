@@ -2854,7 +2854,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       }
     });
 
-    // OpenCode 2.0.18 executes even unstaged revert clears; wait so that end cannot settle a Ompanel turn.
+    // OpenCode 2.0.18 executes even unstaged revert clears; wait so that end cannot settle an Ompanel turn.
     const clearRevert = Effect.fnUntraced(function* (sessionId: string) {
       const settled = yield* Deferred.make<void>();
       clearing.set(sessionId, settled);

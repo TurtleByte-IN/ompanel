@@ -146,11 +146,11 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   ),
   request_secret: tool(["Ask for", "Asking for", "Asked for", "a secret"], "secret-request"),
   create_threads: tool(["Create", "Creating", "Created", "Ompanel threads"], "thread-create"),
-  t3_thread_start: tool(["Start", "Starting", "Started", "a Ompanel thread"], "thread-create"),
+  t3_thread_start: tool(["Start", "Starting", "Started", "an Ompanel thread"], "thread-create"),
   t3_thread_list: tool(["List", "Listing", "Listed", "Ompanel threads"], "thread-list"),
-  t3_thread_read: tool(["Read", "Reading", "Read", "a Ompanel thread"], "thread-read"),
-  t3_thread_send: tool(["Send", "Sending", "Sent", "to a Ompanel thread"], "thread-send"),
-  t3_thread_wait: tool(["Wait", "Waiting", "Waited", "for a Ompanel thread"], "thread-wait"),
+  t3_thread_read: tool(["Read", "Reading", "Read", "an Ompanel thread"], "thread-read"),
+  t3_thread_send: tool(["Send", "Sending", "Sent", "to an Ompanel thread"], "thread-send"),
+  t3_thread_wait: tool(["Wait", "Waiting", "Waited", "for an Ompanel thread"], "thread-wait"),
   t3_workflow_stop: tool(
     ["Stop", "Stopping", "Requested a stop for", "a workflow"],
     "workflow-stop",
@@ -160,7 +160,7 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     "background-wait",
   ),
   t3_thread_interrupt: tool(
-    ["Interrupt", "Interrupting", "Requested an interrupt of", "a Ompanel thread"],
+    ["Interrupt", "Interrupting", "Requested an interrupt of", "an Ompanel thread"],
     "thread-interrupt",
   ),
   t3_worktree_handoff: tool(

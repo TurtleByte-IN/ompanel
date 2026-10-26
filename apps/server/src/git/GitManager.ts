@@ -2388,7 +2388,7 @@ export const make = Effect.gen(function* () {
     ) {
       return remembered.value;
     }
-    // invalidateStatus bumps the epoch. A read that started before a Ompanel git
+    // invalidateStatus bumps the epoch. A read that started before an Ompanel git
     // action, or before a newer read finished, must not replace their state.
     const epoch = prLookupEpoch(cwd);
     const value = yield* read;

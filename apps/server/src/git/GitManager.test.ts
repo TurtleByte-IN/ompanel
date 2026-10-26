@@ -849,7 +849,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
-  it.effect("a git read in flight during a Ompanel git action does not outlive it", () =>
+  it.effect("a git read in flight during an Ompanel git action does not outlive it", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);

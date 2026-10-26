@@ -202,7 +202,7 @@ describe("ompanel server command safety", () => {
             ),
             Effect.flip,
           );
-          expect(String(error)).toContain("An Ompanel server is already running");
+          expect(String(error)).toContain("A T3 Code server is already running");
           expect(yield* Effect.promise(() => NodeFSP.readFile(statePath, "utf8"))).toBe(record);
           expect(yield* pathExists(newDirectory)).toBe(false);
           expect(yield* Effect.promise(() => NodeFSP.readdir(stateDir))).toEqual([
@@ -266,7 +266,7 @@ describe("ompanel app", () => {
     ),
   );
 
-  it.effect("never searches a dev state directory for an explicit Ompanel home", () =>
+  it.effect("never searches a dev state directory for an explicit T3 home", () =>
     withTempDirectory("t3-app-explicit-test-", (root) =>
       Effect.gen(function* () {
         const baseDir = NodePath.join(root, ".ompanel");

@@ -28,6 +28,8 @@ const NOT_USER_FACING: ReadonlyArray<RegExp> = [
   /\/(?:fixtures|testkit|__snapshots__)\//,
   /^apps\/server\/scripts\//,
   /^LICENSE$/,
+  // Dependency patches must match the lockfile's hashes byte for byte.
+  /^patches\//,
   /\.(?:png|jpe?g|webp|gif|ico|icns|woff2?|ttf|otf|wasm|zip|gz)$/,
   // Rebranded in its own pull request (feature/rebrand-ompanel-marketing), which drops this line.
   /^apps\/marketing\//,

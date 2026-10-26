@@ -3180,7 +3180,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           status: 500,
           body: { _tag: "UnknownError", message: "disk I/O error" },
         }),
-        // Uncleared stages commit on the next prompt; clearing triggers an empty execution without a Ompanel turn.
+        // Uncleared stages commit on the next prompt; clearing triggers an empty execution without an Ompanel turn.
         out("session.revert.clear", { sessionID: SESSION }),
         reply("session.revert.clear", null),
         event("session.revert.cleared", { sessionID: SESSION }),

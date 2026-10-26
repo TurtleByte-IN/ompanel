@@ -235,7 +235,7 @@ const ThreadReadTool = Tool.make("t3_thread_read", {
   failureMode: "return",
   dependencies,
 })
-  .annotate(Tool.Title, "Read a Ompanel thread")
+  .annotate(Tool.Title, "Read an Ompanel thread")
   .annotate(Tool.Strict, true)
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
@@ -263,7 +263,7 @@ const ThreadSendTool = Tool.make("t3_thread_send", {
   failureMode: "return",
   dependencies,
 })
-  .annotate(Tool.Title, "Send to a Ompanel thread")
+  .annotate(Tool.Title, "Send to an Ompanel thread")
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
 
@@ -276,7 +276,7 @@ const ThreadWaitTool = Tool.make("t3_thread_wait", {
   failureMode: "return",
   dependencies,
 })
-  .annotate(Tool.Title, "Wait for a Ompanel thread")
+  .annotate(Tool.Title, "Wait for an Ompanel thread")
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true);
@@ -290,7 +290,7 @@ const ThreadInterruptTool = Tool.make("t3_thread_interrupt", {
   failureMode: "return",
   dependencies,
 })
-  .annotate(Tool.Title, "Interrupt a Ompanel thread")
+  .annotate(Tool.Title, "Interrupt an Ompanel thread")
   .annotate(Tool.Destructive, true);
 
 export const OrchestratorToolkit = Toolkit.make(

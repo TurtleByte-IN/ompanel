@@ -170,7 +170,7 @@ describe("DesktopPreReadyPlatform", () => {
     vi.stubEnv("VITE_DEV_SERVER_URL", "");
     vi.stubEnv("XDG_DATA_HOME", "/xdg");
     vi.stubEnv("APPIMAGE", "/Applications/current.AppImage");
-    vi.stubEnv("OMPANEL_DESKTOP_LAUNCHER_PATH", " /opt/Ompanel/t3code ");
+    vi.stubEnv("OMPANEL_DESKTOP_LAUNCHER_PATH", " /opt/T3 Code/t3code ");
     getSwitchValueMock.mockReturnValue("");
 
     return Effect.scoped(
@@ -183,7 +183,7 @@ describe("DesktopPreReadyPlatform", () => {
         const entry = writeFileSyncMock.mock.calls.find(
           ([path]) => path === "/xdg/applications/in.turtlebyte.Ompanel.desktop",
         )?.[1];
-        assert.include(entry, 'Exec="/opt/Ompanel/t3code" %U');
+        assert.include(entry, 'Exec="/opt/T3 Code/t3code" %U');
       }),
     ).pipe(Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())));
   });
