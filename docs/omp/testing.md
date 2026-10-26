@@ -1,15 +1,17 @@
 # Testing the OMP provider
 
-Three layers, from fastest to most faithful.
+Four layers, from fastest to most faithful.
 
-| Layer           | Where                                                                                                                  | Drives                                                          |
-| --------------- | ---------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| Unit            | `packages/provider-omp/src/**/*.test.ts`                                                                               | Pure functions: launch arguments, approval-mode mapping, frames |
-| Adapter         | `packages/provider-omp/src/server/adapter.test.ts` (and the process-layer tests next to it)                            | The adapter and thread process against the scripted fake `omp`  |
-| Replay fixtures | `apps/server/src/orchestration-v2/testkit/OmpReplayFixtures.integration.test.ts`, fixtures in `testkit/fixtures/omp_*` | The process layer against stdout recorded from the pinned fork  |
+| Layer           | Where                                                                                                                  | Drives                                                           |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| Unit            | `packages/provider-omp/src/**/*.test.ts`                                                                               | Pure functions: launch arguments, approval-mode mapping, frames  |
+| Adapter         | `packages/provider-omp/src/server/adapter.test.ts` (and the process-layer tests next to it)                            | The adapter and thread process against the scripted fake `omp`   |
+| Replay fixtures | `apps/server/src/orchestration-v2/testkit/OmpReplayFixtures.integration.test.ts`, fixtures in `testkit/fixtures/omp_*` | The process layer against stdout recorded from the pinned fork   |
+| End-to-end      | `apps/web/e2e/omp/omp-thread.spec.ts` (Playwright)                                                                     | The web app and server against a real `omp` and a scripted model |
 
-All three run in CI with the rest of the suite; none needs a model, an
-account or a built `omp`.
+The first three run in CI with the rest of the suite; none needs a model, an
+account or a built `omp`. The end-to-end test has its own CI job, `OMP E2E`,
+which builds `omp` from the pinned tag ([End-to-end](#end-to-end)).
 
 ## The fake `omp`
 
@@ -109,6 +111,58 @@ another commit. For each scenario it:
    directory and the model URL with placeholders, replays the result through
    the process layer, and only then writes the fixture. A failed live run
    leaves what it saw in `$TMPDIR/omp-record-<name>.failed.ndjson`.
+
+## End-to-end
+
+`apps/web/e2e/omp/omp-thread.spec.ts` is gate G1: one OMP thread through the
+web app in headless Chromium. Its steps run in order on one page:
+
+1. create a thread, pick OMP in the model picker, set Supervised;
+2. send a message; the reply streams (the first paragraph renders while the
+   model is still sending the second; Ompanel's default
+   `responseStreamingMode` shows streamed text a paragraph at a time);
+3. ask for a shell command; approve the command approval card; the command runs
+   in the thread's T3 terminal (`terminal` host tool, [host-tools.md](host-tools.md));
+4. switch to Full access; the next command runs without an approval card, and
+   the thread's `omp` process (from the server's pidfiles) is the same one;
+5. rewind: `test.fixme` until C-11 (ompanel#74) lands;
+6. fork: `test.fixme` until C-11 (ompanel#74) lands;
+7. commit from the Git actions menu with an empty message; the subject comes
+   from OMP text generation (`omp -p`).
+
+`e2e/omp/ompStack.ts` starts everything in a throwaway directory: a `HOME`
+and Ompanel home, a git workspace the server bootstraps as a project, the
+server from source (`apps/server/src/bin.ts`, serving `apps/web/dist`) with
+the OMP instance pointed at the given binary, and the scripted model
+(`e2e/omp/scriptedModel.ts`, adapted from the fork's
+`fake-openai-server.ts`). OMP's agent directory gets the model's
+`models.yml` and `modelRoles.default: fake/fake-model`. The model answers by
+the last message: `run: <command>` calls the shell tool, a tool result gets
+`ran: <first line>`, Ompanel's text generation prompts get the JSON they ask
+for, and anything else gets two streamed paragraphs. Nothing reads the
+developer's `~/.omp` or Ompanel home, and no API key is used.
+
+Run it locally (the Node version in `package.json` `engines`, `bun`, and a
+Rust toolchain for the fork's native addon on the first build):
+
+```sh
+export OMPANEL_E2E_OMP_BINARY=$(node apps/web/e2e/omp/build-omp.ts ../wt/oh-my-pi/scratch | tail -n 1)
+node apps/web/node_modules/playwright/cli.js install --only-shell chromium   # once
+vp run --filter @t3tools/web test:e2e
+```
+
+`build-omp.ts` clones the fork at the `omp.lock` tag when the directory does
+not exist, refuses a checkout at another commit, builds the native addon and
+the `omp` binary (skipped when `dist/omp.commit` already names the pinned
+commit) and prints the binary's path. `test:e2e` builds the web app, then
+runs Playwright. Screenshots, `server.log` and one trace per step go to
+`apps/web/.playwright/omp-artifacts/`, or to `OMPANEL_E2E_ARTIFACTS_DIR`; the
+HTML report goes to `apps/web/playwright-report/`. Open a trace with
+`pnpm --filter @t3tools/web exec playwright show-trace <zip>`.
+
+In CI, `OMP E2E` caches the binary by the pinned commit, so only the first
+run after a re-pin builds it; it uploads the screenshots, traces and report as
+the `omp-e2e` artifact.
 
 ## What the recordings show (pinned tag)
 

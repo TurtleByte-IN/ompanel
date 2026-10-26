@@ -13,6 +13,8 @@ outputs:
     value: ${{ steps.detect.outputs.test_web }}
   test_server:
     value: ${{ steps.detect.outputs.test_server }}
+  e2e_omp:
+    value: ${{ steps.detect.outputs.e2e_omp }}
   rust:
     value: ${{ steps.detect.outputs.rust }}
   release_smoke:

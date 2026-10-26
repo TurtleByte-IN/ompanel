@@ -158,6 +158,8 @@ function decide(files, packages, full) {
       test_packages: everything ? "" : tested.map((pkg) => pkg.name).join(" "),
       test_web: has("@t3tools/web"),
       test_server: has("t3"),
+      // The OMP end-to-end test runs the server from source and drives the built web app.
+      e2e_omp: has("@t3tools/web") || has("t3"),
       rust: everything || rust,
       release_smoke: scriptsChanged,
       mobile_native: files === null || files.some((file) => MOBILE_NATIVE.test(file)),

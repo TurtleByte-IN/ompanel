@@ -35,6 +35,7 @@ jobs:
       test_packages: ${{ steps.detect.outputs.test_packages }}
       test_web: ${{ steps.detect.outputs.test_web }}
       test_server: ${{ steps.detect.outputs.test_server }}
+      e2e_omp: ${{ steps.detect.outputs.e2e_omp }}
       rust: ${{ steps.detect.outputs.rust }}
       release_smoke: ${{ steps.detect.outputs.release_smoke }}
       mobile_native: ${{ steps.detect.outputs.mobile_native }}
@@ -353,6 +354,111 @@ jobs:
       - name: Test
         run: vp run --filter @t3tools/web test
 
+  # Gate G1 (docs/omp/testing.md, "End-to-end"): one OMP thread through the built web app,
+  # against an omp built from the omp.lock tag and a scripted local model. No secrets: the
+  # fork is public and the model runs on loopback.
+  e2e_omp:
+    permissions:
+      contents: read
+      id-token: write
+    name: OMP E2E
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.e2e_omp != 'false' }}
+    runs-on: ubuntu-24.04
+    # A cold omp build (Rust addon, then Bun compile) takes most of this; later runs restore it.
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+            !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: ./.github/actions/setup-ci-deps
+        with:
+          task-cache-read-token: ${{ secrets.T3_TASK_CACHE_READ_TOKEN }}
+
+      - name: Resolve the OMP pin
+        id: omp
+        run: |
+          echo "tag=$(jq -r .tag packages/provider-omp/omp.lock)" >> "$GITHUB_OUTPUT"
+          echo "commit=$(jq -r .commit packages/provider-omp/omp.lock)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache the omp binary
+        id: omp_cache
+        uses: actions/cache@v6
+        with:
+          path: ~/omp-e2e
+          key: omp-e2e-binary-${{ runner.os }}-${{ runner.arch }}-${{ steps.omp.outputs.commit }}
+
+      - name: Check out the pinned OMP fork
+        if: steps.omp_cache.outputs.cache-hit != 'true'
+        uses: actions/checkout@v6
+        with:
+          repository: TurtleByte-IN/oh-my-pi
+          ref: ${{ steps.omp.outputs.tag }}
+          path: .omp-e2e-src
+          persist-credentials: false
+
+      - name: Setup Bun
+        if: steps.omp_cache.outputs.cache-hit != 'true'
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install the fork's Rust toolchain
+        if: steps.omp_cache.outputs.cache-hit != 'true'
+        working-directory: .omp-e2e-src
+        run: rustup toolchain install
+
+      - name: Build omp
+        if: steps.omp_cache.outputs.cache-hit != 'true'
+        run: |
+          binary=$(node apps/web/e2e/omp/build-omp.ts .omp-e2e-src | tail -n 1)
+          mkdir -p ~/omp-e2e
+          cp "$binary" ~/omp-e2e/omp
+
+      - name: Resolve Playwright version
+        id: playwright_version
+        run: echo "version=$(node -p "require('./apps/web/node_modules/playwright/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Chromium
+        id: chromium_cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-shell-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright_version.outputs.version }}
+
+      - name: Install Chromium
+        if: steps.chromium_cache.outputs.cache-hit != 'true'
+        run: node apps/web/node_modules/playwright/cli.js install --only-shell chromium
+
+      - name: Install missing Chromium system dependencies
+        run: |
+          browser=$(find "$HOME/.cache/ms-playwright" -name chrome-headless-shell -type f -print -quit)
+          test -n "$browser"
+          if ldd "$browser" | grep '=> not found'; then
+            node apps/web/node_modules/playwright/cli.js install-deps chromium
+          fi
+
+      - name: Test
+        run: OMPANEL_E2E_OMP_BINARY="$HOME/omp-e2e/omp" vp run --filter @t3tools/web test:e2e
+
+      - name: Upload screenshots, traces and report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: omp-e2e
+          path: |
+            apps/web/.playwright/
+            apps/web/playwright-report/
+          include-hidden-files: true
+          if-no-files-found: ignore
+
   # apps/server sets `fileParallelism: false`, so its test files run strictly
   # one at a time. Sharding spreads them over separate runners instead of
   # separate workers, so no two server test files ever share a machine and the
@@ -581,6 +687,7 @@ jobs:
         build,
         test,
         test_web,
+        e2e_omp,
         test_server,
         rust,
         mobile_native_static_analysis,

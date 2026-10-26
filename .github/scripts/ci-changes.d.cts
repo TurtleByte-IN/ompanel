@@ -20,6 +20,7 @@ export function decide(
     test_packages: string;
     test_web: boolean;
     test_server: boolean;
+    e2e_omp: boolean;
     rust: boolean;
     release_smoke: boolean;
     mobile_native: boolean;

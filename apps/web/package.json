@@ -9,7 +9,8 @@
     "dev:built": "vp build --watch",
     "build": "vp build",
     "preview": "vp preview",
-    "test": "vp test run --passWithNoTests --project unit --project browser"
+    "test": "vp test run --passWithNoTests --project unit --project browser",
+    "test:e2e": "vp build && playwright test"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
@@ -84,6 +85,7 @@
   "devDependencies": {
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
+    "@playwright/test": "1.60.0",
     "@tailwindcss/vite": "^4.0.0",
     "@tanstack/router-plugin": "^1.161.0",
     "@types/compression": "^1.8.1",
