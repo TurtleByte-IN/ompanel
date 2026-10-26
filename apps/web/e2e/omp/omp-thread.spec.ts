@@ -273,3 +273,25 @@ test("generates a commit message", async () => {
   expect(stack.git("show", "--name-only", "--format=", "HEAD")).toBe("g1.txt");
   await screenshot("07b-committed");
 });
+
+test("stops a running turn", async () => {
+  // The scripted model streams a few words, then hangs until OMP aborts the request.
+  await send("stall: g1-stop");
+  const stop = page.getByRole("button", { name: "Stop generation" });
+  await expect(stop).toBeVisible();
+  await expect
+    .poll(() => stack.model.calls.some((call) => call.lastText === "stall: g1-stop"))
+    .toBe(true);
+  await screenshot("08a-running");
+
+  await stop.click();
+  await expect(stop).toHaveCount(0);
+  await screenshot("08b-stopped");
+
+  // The thread keeps working on the same omp process.
+  const before = threadProcesses().map((entry) => entry.pid);
+  await send("after stop");
+  await expect(assistantSays(STREAMED_PARAGRAPHS[1]).last()).toBeVisible();
+  expect(threadProcesses().map((entry) => entry.pid)).toEqual(before);
+  await screenshot("08c-after-stop");
+});
