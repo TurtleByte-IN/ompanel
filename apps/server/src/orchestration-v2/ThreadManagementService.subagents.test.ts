@@ -70,6 +70,10 @@ interface Calls {
   readonly read: Array<{ nativeTaskId: string; fromByte: number }>;
 }
 
+type Runtime = ProviderAdapter.ProviderAdapterV2SessionRuntime;
+type ControlInput = Parameters<NonNullable<Runtime["controlSubagent"]>>[0];
+type ReadInput = Parameters<NonNullable<Runtime["readSubagentTranscript"]>>[0];
+
 const layerWith = (options: {
   readonly calls: Calls;
   readonly live?: boolean;
@@ -83,7 +87,7 @@ const layerWith = (options: {
             options.live === false
               ? Option.none()
               : Option.some({
-                  controlSubagent: (input) =>
+                  controlSubagent: (input: ControlInput) =>
                     options.refuse === undefined
                       ? Effect.sync(() => {
                           options.calls.control.push({
@@ -97,7 +101,7 @@ const layerWith = (options: {
                             detail: options.refuse,
                           }),
                         ),
-                  readSubagentTranscript: (input) =>
+                  readSubagentTranscript: (input: ReadInput) =>
                     Effect.sync(() => {
                       options.calls.read.push({
                         nativeTaskId: input.nativeTaskId,
