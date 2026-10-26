@@ -49,6 +49,7 @@ import { buildInitialOmpProviderSnapshot, ompProviderSnapshot } from "./status.t
 import { makeOmpTextGeneration } from "./textGeneration.ts";
 import { ompUsageReader, type OmpUsageReaderEnv } from "./usage.ts";
 import { makeOmpUsageController } from "./usageController.ts";
+import { makeOmpPluginsController } from "./pluginsController.ts";
 
 const DRIVER_KIND = ProviderDriverKind.make("omp");
 const decodeOmpSettings = Schema.decodeSync(OmpSettings);
@@ -313,6 +314,13 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv, OmpUsageReader
         target: controlTarget,
         globalCwd: stateDirs.launcher,
         sessions: threadSessions,
+      }),
+      ompPlugins: makeOmpPluginsController({
+        control,
+        target: controlTarget,
+        globalCwd: stateDirs.launcher,
+        sessions: threadSessions,
+        invalidateCatalog: catalog.invalidate,
       }),
     } satisfies ProviderInstance;
   }),

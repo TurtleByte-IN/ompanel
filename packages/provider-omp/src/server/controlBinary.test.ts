@@ -29,6 +29,7 @@ import {
   PINNED_CONFIG_SET,
   PINNED_LOGIN_PROVIDERS,
   PINNED_OAUTH_LOGIN_REQUESTS,
+  PINNED_PLUGIN_LIST,
   PINNED_READY,
   PINNED_USAGE,
   pinnedSkillList,
@@ -149,6 +150,29 @@ const CLI_CASES: ReadonlyArray<CliCase> = [
     argv: (workspace) => ["skill", "list", workspace, "--json"],
     expected: pinnedSkillList,
     wrongShape: '{"skills":[{"name":"tdd"}],"warnings":[]}\n',
+  },
+  {
+    name: "plugin list",
+    command: "plugin list",
+    operation: "plugin_list",
+    budget: "plugins",
+    run: (control, target) => control.pluginList(target),
+    argv: () => ["plugin", "list", "--json"],
+    // Only the fields the Plugins page shows are read.
+    expected: () => ({
+      npm: PINNED_PLUGIN_LIST.npm.map(({ name, version, enabled, manifest }) => ({
+        name,
+        version,
+        enabled,
+        manifest: { description: manifest.description },
+      })),
+      marketplace: PINNED_PLUGIN_LIST.marketplace.map(({ id, scope, entries }) => ({
+        id,
+        scope,
+        entries: entries.map(({ version }) => ({ version })),
+      })),
+    }),
+    wrongShape: '{"npm":[{"name":"@oh-my-pi/exa"}],"marketplace":[]}\n',
   },
 ];
 

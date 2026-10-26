@@ -116,6 +116,17 @@ import {
   OmpUsageInput,
   OmpUsageOperationError,
 } from "./ompUsage.ts";
+import {
+  OmpMarketplaceDiscover,
+  OmpMarketplaceDiscoverInput,
+  OmpPluginCommandInput,
+  OmpPluginList,
+  OmpPluginsInput,
+  OmpPluginsOperationError,
+  OmpPluginsReloadResult,
+  OmpSkillsList,
+  OmpUpdateCheck,
+} from "./ompPlugins.ts";
 import { ExternalLauncherError, LaunchEditorInput } from "./editor.ts";
 import {
   AuthAccessStreamError,
@@ -573,6 +584,12 @@ export const WS_METHODS = {
   serverGetOmpAccountUsage: "server.getOmpAccountUsage",
   serverGetOmpStats: "server.getOmpStats",
   serverGetOmpSessionStats: "server.getOmpSessionStats",
+  serverListOmpPlugins: "server.listOmpPlugins",
+  serverRunOmpPluginCommand: "server.runOmpPluginCommand",
+  serverDiscoverOmpMarketplace: "server.discoverOmpMarketplace",
+  serverReloadOmpPlugins: "server.reloadOmpPlugins",
+  serverCheckOmpUpdate: "server.checkOmpUpdate",
+  serverListOmpSkills: "server.listOmpSkills",
   serverGetTraceDiagnostics: "server.getTraceDiagnostics",
   serverGetProcessDiagnostics: "server.getProcessDiagnostics",
   serverGetHostResources: "server.getHostResources",
@@ -1087,6 +1104,44 @@ const WsServerGetOmpSessionStatsRpc = Rpc.make(WS_METHODS.serverGetOmpSessionSta
   payload: OmpUsageInput,
   success: OmpSessionUsageList,
   error: OmpUsageRpcError,
+});
+
+const OmpPluginsRpcError = Schema.Union([OmpPluginsOperationError, EnvironmentAuthorizationError]);
+
+const WsServerListOmpPluginsRpc = Rpc.make(WS_METHODS.serverListOmpPlugins, {
+  payload: OmpPluginsInput,
+  success: OmpPluginList,
+  error: OmpPluginsRpcError,
+});
+
+const WsServerRunOmpPluginCommandRpc = Rpc.make(WS_METHODS.serverRunOmpPluginCommand, {
+  payload: OmpPluginCommandInput,
+  success: OmpPluginList,
+  error: OmpPluginsRpcError,
+});
+
+const WsServerDiscoverOmpMarketplaceRpc = Rpc.make(WS_METHODS.serverDiscoverOmpMarketplace, {
+  payload: OmpMarketplaceDiscoverInput,
+  success: OmpMarketplaceDiscover,
+  error: OmpPluginsRpcError,
+});
+
+const WsServerReloadOmpPluginsRpc = Rpc.make(WS_METHODS.serverReloadOmpPlugins, {
+  payload: OmpPluginsInput,
+  success: OmpPluginsReloadResult,
+  error: OmpPluginsRpcError,
+});
+
+const WsServerCheckOmpUpdateRpc = Rpc.make(WS_METHODS.serverCheckOmpUpdate, {
+  payload: OmpPluginsInput,
+  success: OmpUpdateCheck,
+  error: OmpPluginsRpcError,
+});
+
+const WsServerListOmpSkillsRpc = Rpc.make(WS_METHODS.serverListOmpSkills, {
+  payload: OmpPluginsInput,
+  success: OmpSkillsList,
+  error: OmpPluginsRpcError,
 });
 
 const WsServerGetTraceDiagnosticsRpc = Rpc.make(WS_METHODS.serverGetTraceDiagnostics, {
@@ -2222,6 +2277,12 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetOmpAccountUsageRpc,
   WsServerGetOmpStatsRpc,
   WsServerGetOmpSessionStatsRpc,
+  WsServerListOmpPluginsRpc,
+  WsServerRunOmpPluginCommandRpc,
+  WsServerDiscoverOmpMarketplaceRpc,
+  WsServerReloadOmpPluginsRpc,
+  WsServerCheckOmpUpdateRpc,
+  WsServerListOmpSkillsRpc,
   WsServerGetTraceDiagnosticsRpc,
   WsServerGetProcessDiagnosticsRpc,
   WsServerGetHostResourcesRpc,

@@ -1579,6 +1579,30 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:omp-usage:sessions",
       tag: WS_METHODS.serverGetOmpSessionStats,
     }),
+    listOmpPlugins: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:omp-plugins:list",
+      tag: WS_METHODS.serverListOmpPlugins,
+    }),
+    runOmpPluginCommand: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:omp-plugins:run",
+      tag: WS_METHODS.serverRunOmpPluginCommand,
+    }),
+    discoverOmpMarketplace: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:omp-plugins:discover",
+      tag: WS_METHODS.serverDiscoverOmpMarketplace,
+    }),
+    reloadOmpPlugins: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:omp-plugins:reload",
+      tag: WS_METHODS.serverReloadOmpPlugins,
+    }),
+    checkOmpUpdate: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:omp-plugins:update-check",
+      tag: WS_METHODS.serverCheckOmpUpdate,
+    }),
+    listOmpSkills: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:omp-skills:list",
+      tag: WS_METHODS.serverListOmpSkills,
+    }),
     signalProcess: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:signal-process",
       tag: WS_METHODS.serverSignalProcess,

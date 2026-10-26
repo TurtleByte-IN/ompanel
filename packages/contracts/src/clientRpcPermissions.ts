@@ -34,6 +34,9 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.serverWriteOmpAgentFile]: AuthProvidersManageScope,
   [WS_METHODS.serverDeleteOmpAgentFile]: AuthProvidersManageScope,
   [WS_METHODS.serverUnpackOmpAgents]: AuthProvidersManageScope,
+  // Plugins are third-party code run by the provider install; reloading reaches its threads.
+  [WS_METHODS.serverRunOmpPluginCommand]: AuthProvidersManageScope,
+  [WS_METHODS.serverReloadOmpPlugins]: AuthProvidersManageScope,
   [WS_METHODS.pullRequestsRunAction]: AuthSourceControlWriteScope,
   [WS_METHODS.pullRequestsUpdate]: AuthSourceControlWriteScope,
   [WS_METHODS.pullRequestsComment]: AuthSourceControlWriteScope,

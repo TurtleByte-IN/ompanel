@@ -174,8 +174,34 @@ export const pinnedSkillList = (workspace: string) =>
     warnings: [],
   }) satisfies CliSkillList;
 
-/** `omp plugin list --json` with nothing installed. */
-const PINNED_PLUGIN_LIST = { npm: [], marketplace: [] } satisfies CliPluginList;
+/** `omp plugin list --json` with one npm and one marketplace plugin, as the pinned omp prints. */
+export const PINNED_PLUGIN_LIST = {
+  npm: [
+    {
+      name: "@oh-my-pi/exa",
+      version: "1.2.0",
+      path: "/home/tester/.omp/plugins/node_modules/@oh-my-pi/exa",
+      manifest: { version: "1.2.0", description: "Exa search tools" },
+      enabledFeatures: null,
+      enabled: true,
+    },
+  ],
+  marketplace: [
+    {
+      id: "docker-skills@docker",
+      scope: "user",
+      entries: [
+        {
+          scope: "user",
+          installPath: "/home/tester/.omp/plugins/cache/plugins/docker___docker-skills___0.3.1",
+          version: "0.3.1",
+          installedAt: "2026-10-26T16:50:12.000Z",
+          lastUpdated: "2026-10-26T16:50:12.000Z",
+        },
+      ],
+    },
+  ],
+} satisfies CliPluginList;
 
 /** The `ready` frame of `omp --mode rpc`. */
 export const PINNED_READY = {

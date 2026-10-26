@@ -1,6 +1,7 @@
 import {
   EnvironmentId,
   OmpAgentFilesOperationError,
+  type EditorId,
   ProviderInstanceId,
   type OmpConfigType,
 } from "@t3tools/contracts";
@@ -92,6 +93,9 @@ const REGISTRY: Readonly<Record<string, { type: OmpConfigType; default: unknown;
   "mcp.startupTimeoutMs": { type: "number", default: 30000 },
   "ttsr.enabled": { type: "boolean", default: true },
   "skills.customDirectories": { type: "array", default: [] },
+  extensions: { type: "array", default: [] },
+  "marketplace.autoUpdate": { type: "enum", default: "notify" },
+  "skills.registryUrl": { type: "string", default: "https://skills.omp.sh" },
 };
 
 /** The settings engine over an in-memory global layer: every write re-reads the list. */
@@ -119,6 +123,13 @@ const commands = vi.hoisted(() => ({
   writeFile: vi.fn(),
   deleteFile: vi.fn(),
   unpackAgents: vi.fn(),
+  listPlugins: vi.fn(),
+  runPluginCommand: vi.fn(),
+  discoverMarketplace: vi.fn(),
+  reloadPlugins: vi.fn(),
+  checkUpdate: vi.fn(),
+  listSkills: vi.fn(),
+  openInEditor: vi.fn(),
 }));
 
 vi.mock(import("../../state/use-atom-command"), async (original) => {
@@ -132,10 +143,29 @@ vi.mock(import("../../state/use-atom-command"), async (original) => {
     [serverEnvironment.writeOmpAgentFile, commands.writeFile],
     [serverEnvironment.deleteOmpAgentFile, commands.deleteFile],
     [serverEnvironment.unpackOmpAgents, commands.unpackAgents],
+    [serverEnvironment.listOmpPlugins, commands.listPlugins],
+    [serverEnvironment.runOmpPluginCommand, commands.runPluginCommand],
+    [serverEnvironment.discoverOmpMarketplace, commands.discoverMarketplace],
+    [serverEnvironment.reloadOmpPlugins, commands.reloadPlugins],
+    [serverEnvironment.checkOmpUpdate, commands.checkUpdate],
+    [serverEnvironment.listOmpSkills, commands.listSkills],
   ]);
   return {
     ...(await original()),
     useAtomCommand: ((atom: unknown) => byAtom.get(atom)) as never,
+  };
+});
+
+vi.mock(import("../../editorPreferences"), async (original) => ({
+  ...(await original()),
+  useOpenInPreferredEditor: (() => commands.openInEditor) as never,
+}));
+
+vi.mock(import("../../state/server"), async (original) => {
+  const { Atom } = await import("effect/reactivity");
+  return {
+    ...(await original()),
+    primaryServerAvailableEditorsAtom: Atom.make((): ReadonlyArray<EditorId> => ["vscode"]),
   };
 });
 
@@ -297,8 +327,99 @@ function resetEngine() {
     for (const name of written) files.set(`agents/${name}`, `# ${name}\n`);
     return { _tag: "Success", value: { written, skipped, files: fileList() } };
   });
+  plugins.installed = [
+    {
+      id: "differential-review@trailofbits",
+      source: "marketplace",
+      version: "1.1.4",
+      enabled: true,
+      scope: "user",
+      shadowed: false,
+    },
+  ];
+  commands.listPlugins.mockReset().mockImplementation(async () => ({
+    _tag: "Success",
+    value: pluginList(),
+  }));
+  commands.runPluginCommand
+    .mockReset()
+    .mockImplementation(async ({ input }: { input: { command: Record<string, string> } }) => {
+      const { command } = input;
+      if (command["action"] === "install") {
+        plugins.installed.push({
+          id: command["spec"]!,
+          source: "marketplace",
+          version: "2.0.2",
+          enabled: true,
+          scope: "user",
+          shadowed: false,
+        });
+      } else if (command["action"] === "uninstall") {
+        plugins.installed = plugins.installed.filter((plugin) => plugin.id !== command["name"]);
+      } else if (command["action"] === "disable" || command["action"] === "enable") {
+        plugins.installed = plugins.installed.map((plugin) =>
+          plugin.id === command["name"]
+            ? { ...plugin, enabled: command["action"] === "enable" }
+            : plugin,
+        );
+      }
+      return { _tag: "Success", value: pluginList() };
+    });
+  commands.discoverMarketplace.mockReset().mockImplementation(async () => ({
+    _tag: "Success",
+    value: {
+      marketplace: "trailofbits",
+      plugins: [
+        {
+          name: "audit-context-building",
+          version: "2.0.2",
+          description: "Understand a codebase before looking for bugs in it.",
+        },
+        { name: "differential-review", version: "1.1.4" },
+      ],
+    },
+  }));
+  commands.reloadPlugins
+    .mockReset()
+    .mockResolvedValue({ _tag: "Success", value: { reloaded: 2, busy: 1, failed: 0 } });
+  commands.checkUpdate.mockReset().mockResolvedValue({
+    _tag: "Success",
+    value: { status: "available", currentVersion: "18.12.6", latestVersion: "18.13.0" },
+  });
+  commands.listSkills.mockReset().mockResolvedValue({
+    _tag: "Success",
+    value: {
+      skills: [
+        {
+          name: "grilling",
+          description: "Stress-test a plan",
+          filePath: "/home/tester/.omp/plugins/cache/mattpocock/skills/grilling/SKILL.md",
+          source: "claude-plugins:user",
+          hidden: false,
+        },
+        {
+          name: "tdd",
+          description: "Test first",
+          filePath: `${AGENT_DIR}/skills/tdd/SKILL.md`,
+          source: "native:user",
+          hidden: true,
+        },
+      ],
+      warnings: [{ skillPath: `${AGENT_DIR}/skills/bad`, message: "missing description" }],
+    },
+  });
+  commands.openInEditor.mockReset().mockResolvedValue({ _tag: "Success", value: "vscode" });
   toastSpy.mockClear();
 }
+
+/** Installed plugins as `omp plugin list --json` reads them, mutated by confirmed commands. */
+const plugins = vi.hoisted(() => ({ installed: [] as Array<Record<string, unknown>> }));
+const pluginList = () => ({
+  command: ["omp", "--profile", "work"],
+  // A fresh array per read, as decoding one would give.
+  plugins: [...plugins.installed],
+  marketplaces: [{ name: "trailofbits", source: "trailofbits/skills" }],
+});
 
 const toastSpy = vi.spyOn(toastManager, "add");
 
@@ -922,6 +1043,212 @@ describe("OMP settings pages", () => {
       <OmpSettingsPageBody environmentId={environmentId} instanceId={instanceId} pageId={pageId} />,
     );
 
+  it("Plugins confirms an install with the exact command and warns it is third-party code", async () => {
+    resetEngine();
+    await using screen = await render(
+      <OmpSettingsPageBody
+        environmentId={environmentId}
+        instanceId={instanceId}
+        pageId="plugins"
+      />,
+    );
+    await expect
+      .poll(() => document.querySelector('[data-omp-plugin="differential-review@trailofbits"]'))
+      .not.toBeNull();
+    expect(document.querySelector("[data-omp-third-party]")?.textContent).toContain("xd://");
+    await expect.poll(() => row("marketplace.autoUpdate")).not.toBeNull();
+
+    await userEvent.fill(
+      screen.getByRole("textbox", { name: "Plugin to install" }),
+      "github:someone/plugin#v1",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Install…" }).first());
+    await expect
+      .poll(() => document.querySelector("[data-omp-plugin-command]")?.textContent)
+      .toBe("omp --profile work plugin install 'github:someone/plugin#v1'");
+    expect(document.querySelector('[data-omp-plugin-confirm="install"]')?.textContent).toContain(
+      "Third-party code",
+    );
+    // Nothing runs until the command is confirmed.
+    expect(commands.runPluginCommand).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Install", exact: true }));
+    await expect
+      .poll(() => document.querySelector('[data-omp-plugin="github:someone/plugin#v1"]'))
+      .not.toBeNull();
+    expect(commands.runPluginCommand).toHaveBeenCalledWith({
+      environmentId,
+      input: { instanceId, command: { action: "install", spec: "github:someone/plugin#v1" } },
+    });
+  });
+
+  it("Plugins cancels, disables and uninstalls only after confirmation", async () => {
+    resetEngine();
+    await using screen = await render(
+      <OmpSettingsPageBody
+        environmentId={environmentId}
+        instanceId={instanceId}
+        pageId="plugins"
+      />,
+    );
+    await expect
+      .poll(() => document.querySelector('[data-omp-plugin="differential-review@trailofbits"]'))
+      .not.toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "Uninstall" }));
+    await expect
+      .poll(() => document.querySelector("[data-omp-plugin-command]")?.textContent)
+      .toBe("omp --profile work plugin uninstall differential-review@trailofbits");
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await expect.poll(() => document.querySelector("[data-omp-plugin-confirm]")).toBeNull();
+    expect(commands.runPluginCommand).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole("button", { name: "Disable" }));
+    await expect
+      .poll(() => document.querySelector("[data-omp-plugin-command]")?.textContent)
+      .toBe("omp --profile work plugin disable differential-review@trailofbits");
+    // Turning code off is not a third-party warning; turning it on is.
+    expect(document.querySelector("[data-omp-plugin-confirm]")?.textContent).not.toContain(
+      "Third-party code",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Disable", exact: true }).last());
+    await expect
+      .poll(
+        () =>
+          document.querySelector('[data-omp-plugin="differential-review@trailofbits"]')
+            ?.textContent,
+      )
+      .toContain("disabled");
+    await userEvent.click(screen.getByRole("button", { name: "Enable" }));
+    await expect
+      .poll(() => document.querySelector("[data-omp-plugin-confirm]")?.textContent)
+      .toContain("Third-party code");
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    await userEvent.click(screen.getByRole("button", { name: "Uninstall" }));
+    await userEvent.click(screen.getByRole("button", { name: "Uninstall", exact: true }).last());
+    await expect
+      .poll(() => document.querySelector('[data-omp-plugin="differential-review@trailofbits"]'))
+      .toBeNull();
+    expect(commands.runPluginCommand).toHaveBeenCalledTimes(2);
+  });
+
+  it("Plugins browses a marketplace, installs name@marketplace, reloads threads and checks for updates", async () => {
+    resetEngine();
+    await using screen = await render(
+      <OmpSettingsPageBody
+        environmentId={environmentId}
+        instanceId={instanceId}
+        pageId="plugins"
+      />,
+    );
+    await expect
+      .poll(() => document.querySelector('[data-omp-marketplace="trailofbits"]'))
+      .not.toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Browse" }));
+    await expect
+      .poll(
+        () =>
+          document.querySelector('[data-omp-marketplace-plugin="differential-review@trailofbits"]')
+            ?.textContent,
+      )
+      .toContain("installed");
+    const entry = document.querySelector<HTMLElement>(
+      '[data-omp-marketplace-plugin="audit-context-building@trailofbits"]',
+    );
+    expect(entry?.textContent).toContain("Understand a codebase");
+    await userEvent.click(entry!.querySelector("button")!);
+    await expect
+      .poll(() => document.querySelector("[data-omp-plugin-command]")?.textContent)
+      .toBe("omp --profile work plugin install audit-context-building@trailofbits");
+    await userEvent.click(screen.getByRole("button", { name: "Install", exact: true }));
+    await expect
+      .poll(
+        () =>
+          document.querySelector(
+            '[data-omp-marketplace-plugin="audit-context-building@trailofbits"]',
+          )?.textContent,
+      )
+      .toContain("installed");
+
+    await userEvent.click(screen.getByRole("button", { name: "Reload plugins" }));
+    await expect
+      .poll(() => toastSpy.mock.calls.at(-1)?.[0])
+      .toMatchObject({
+        title: "Reloaded plugins in 2 of 3 running thread(s)",
+        description: "1 busy with a turn, left alone",
+      });
+    expect(commands.reloadPlugins).toHaveBeenCalledWith({ environmentId, input: { instanceId } });
+
+    expect(document.querySelector("[data-omp-update]")?.textContent).toContain(
+      "Sidecar updates only arrive with app updates",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Check for updates" }));
+    await expect
+      .poll(() => document.querySelector('[data-omp-update-status="available"]')?.textContent)
+      .toContain("OMP 18.13.0 is out; this app ships 18.12.6");
+  });
+
+  it("Plugins adds a marketplace only after a third-party confirmation", async () => {
+    resetEngine();
+    await using screen = await render(
+      <OmpSettingsPageBody
+        environmentId={environmentId}
+        instanceId={instanceId}
+        pageId="plugins"
+      />,
+    );
+    await expect.poll(() => document.querySelector("[data-omp-marketplaces]")).not.toBeNull();
+    await userEvent.fill(screen.getByRole("textbox", { name: "Marketplace to add" }), "--force");
+    expect(screen.getByRole("button", { name: "Add marketplace…" }).element()).toBeDisabled();
+    await userEvent.fill(
+      screen.getByRole("textbox", { name: "Marketplace to add" }),
+      "docker/skills",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Add marketplace…" }));
+    await expect
+      .poll(() => document.querySelector("[data-omp-plugin-command]")?.textContent)
+      .toBe("omp --profile work plugin marketplace add docker/skills");
+    expect(document.querySelector("[data-omp-plugin-confirm]")?.textContent).toContain(
+      "third-party catalog",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Add marketplace", exact: true }));
+    expect(commands.runPluginCommand).toHaveBeenCalledWith({
+      environmentId,
+      input: { instanceId, command: { action: "marketplace_add", source: "docker/skills" } },
+    });
+  });
+
+  it("Skills lists what omp skill list resolves and opens a skill in the editor", async () => {
+    resetEngine();
+    await using screen = await render(
+      <OmpSettingsPageBody environmentId={environmentId} instanceId={instanceId} pageId="skills" />,
+    );
+    await expect
+      .poll(() => document.querySelector('[data-omp-skill="grilling"]')?.textContent)
+      .toContain("claude-plugins:user");
+    expect(document.querySelector('[data-omp-skill="tdd"]')?.textContent).toContain(
+      "hidden from the model",
+    );
+    expect(document.querySelector("[data-omp-skill-warnings]")?.textContent).toContain(
+      "missing description",
+    );
+    await expect.poll(() => row("skills.registryUrl")).not.toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Open in editor" }).first());
+    expect(commands.openInEditor).toHaveBeenCalledWith(
+      "/home/tester/.omp/plugins/cache/mattpocock/skills/grilling/SKILL.md",
+    );
+  });
+
+  it("MCP says its servers' xd:// tools are third-party code", async () => {
+    resetEngine();
+    await using _screen = await render(
+      <OmpSettingsPageBody environmentId={environmentId} instanceId={instanceId} pageId="mcp" />,
+    );
+    await expect
+      .poll(() => document.querySelector('[data-omp-third-party="mcp"]')?.textContent)
+      .toContain("xd://");
+  });
+
   it("Memory switches the backend and keeps backend credentials reset-only", async () => {
     resetEngine();
     await using screen = await renderK04c("memory");
@@ -1142,7 +1469,11 @@ describe("OMP settings pages at phone width", () => {
         .poll(() =>
           ["mcp", "customization"].includes(page.id)
             ? document.querySelector("[data-omp-files]")
-            : true,
+            : page.id === "plugins"
+              ? document.querySelector("[data-omp-plugins]")
+              : page.id === "skills"
+                ? document.querySelector("[data-omp-skills]")
+                : true,
         )
         .not.toBeNull();
       expect(elementsPastViewport(screen.container)).toEqual([]);

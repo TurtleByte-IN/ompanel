@@ -36,6 +36,8 @@ export type OmpSettingsPageId =
   | "discovery"
   | "mcp"
   | "customization"
+  | "plugins"
+  | "skills"
   | "terminal";
 
 export interface OmpSettingsPage {
@@ -216,6 +218,20 @@ export const OMP_SETTINGS_PAGES: Readonly<Record<OmpSettingsPageId, OmpSettingsP
     description:
       "Skills, rules (TTSR), prompt templates, hooks, custom tools and custom agents in OMP's agent directory, and how rules fire.",
     keys: ["ttsr.", "skills.customDirectories", "skills.ignoredSkills", "skills.includeSkills"],
+  },
+  plugins: {
+    id: "plugins",
+    title: "Plugins",
+    description:
+      "Plugins and marketplaces installed through omp plugin, at user scope, plus extensions OMP loads and how marketplaces update. Plugins are third-party code that runs inside every thread.",
+    keys: ["extensions", "disabledExtensions", "extensionHandlers.", "marketplace."],
+  },
+  skills: {
+    id: "skills",
+    title: "Skills",
+    description:
+      "The skills a new thread loads, as omp skill list resolves them: your own, Claude's and other agents', and those plugins bring.",
+    keys: ["skills.registryUrl"],
   },
   terminal: {
     id: "terminal",

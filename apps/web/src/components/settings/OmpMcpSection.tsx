@@ -55,6 +55,11 @@ export function OmpMcpSection({
           adds more there. Arguments, headers and environment are not shown; open the file to see
           them.
         </p>
+        <p className="text-warning-foreground text-xs" data-omp-third-party="mcp">
+          Each server is third-party code that runs with your permissions. By default OMP mounts its
+          tools as <code>xd://</code> devices the agent calls, and their cards are labelled{" "}
+          <code>xd://</code>. Add only servers you trust.
+        </p>
         {list.mcpServers.length === 0 ? (
           <p className="text-muted-foreground text-xs">No servers.</p>
         ) : (

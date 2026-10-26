@@ -28,6 +28,8 @@ import { toastManager } from "../ui/toast";
 import { OmpAgentFilesSection } from "./OmpAgentFilesSection";
 import { OmpCustomizationSection } from "./OmpCustomizationSection";
 import { OmpMcpSection } from "./OmpMcpSection";
+import { OmpPluginsSection } from "./OmpPluginsSection";
+import { OmpSkillsSection } from "./OmpSkillsSection";
 import { OmpModelsConfigSection } from "./OmpModelsConfigSection";
 import { OmpSettingsForm, type OmpSettingsFormProps } from "./OmpSettingsForm";
 import {
@@ -285,6 +287,12 @@ export function OmpSettingsPageBody({
       ) : null}
       {pageId === "customization" ? (
         <OmpCustomizationSection environmentId={environmentId} instanceId={instanceId} />
+      ) : null}
+      {pageId === "plugins" ? (
+        <OmpPluginsSection environmentId={environmentId} instanceId={instanceId} />
+      ) : null}
+      {pageId === "skills" ? (
+        <OmpSkillsSection environmentId={environmentId} instanceId={instanceId} />
       ) : null}
       {!hasSettings ? null : form === null ? (
         <p className="text-muted-foreground text-xs">

@@ -115,6 +115,11 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverGetOmpAccountUsage]: AuthProvidersManageScope,
   [WS_METHODS.serverGetOmpStats]: AuthDiagnosticsReadScope,
   [WS_METHODS.serverGetOmpSessionStats]: AuthDiagnosticsReadScope,
+  // Installed plugins, marketplaces and skill paths are provider configuration.
+  [WS_METHODS.serverListOmpPlugins]: AuthProvidersManageScope,
+  [WS_METHODS.serverDiscoverOmpMarketplace]: AuthProvidersManageScope,
+  [WS_METHODS.serverListOmpSkills]: AuthProvidersManageScope,
+  [WS_METHODS.serverCheckOmpUpdate]: AuthProvidersManageScope,
   [WS_METHODS.serverDiscoverSourceControl]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetTraceDiagnostics]: AuthDiagnosticsReadScope,
   [WS_METHODS.serverGetProcessDiagnostics]: AuthDiagnosticsReadScope,
