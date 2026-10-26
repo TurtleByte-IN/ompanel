@@ -82,8 +82,9 @@ In vibe mode the agent directs persistent `fast` and `good` worker sessions (`vi
 `vibe_send`, `vibe_wait`, `vibe_kill`, `vibe_list`) and only reads files itself. It is the
 composer's **Vibe Mode** trait (see [models.md](./models.md)): before a prompt the adapter sends
 `set_vibe_mode {enabled}` when the trait changed; turning it off ends the workers. OMP refuses
-vibe mode while plan or goal mode is on, and refuses rewind and fork while it is on; a refused
-trait is logged and the turn runs.
+vibe mode while plan or goal mode is on, refuses a new goal while vibe mode is on, and refuses
+`new_session` and `fork` (Fork thread) while it is on; rewind (`branch`) and session switches
+keep vibe mode as the target session recorded it. A refused trait is logged and the turn runs.
 
 `set_vibe_mode` is newer than the pinned sidecar: it arrives with RPC contract
 `OMP_VIBE_CONTRACT` (1.7.0, `packages/provider-omp/src/server/vibe.ts`). Until `omp.lock` pins
