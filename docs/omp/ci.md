@@ -38,6 +38,11 @@ On the fork they are skipped, not failed:
 | `web-preview.yml`                   | `deploy`                                                         | repository (added for the fork)                      |
 | `desktop-macos-preview-publish.yml` | `resolve` (and the signed `build` and `publish` through it)      | repository (added for the fork)                      |
 
+The `cleanup` job in `desktop-macos-preview-publish.yml` stays ungated. It runs
+when a pull request closes or loses the `preview:mac` label. It only deletes
+this repository's own preview release assets with `GITHUB_TOKEN`, and on the
+fork it usually finds nothing to delete.
+
 The shared task cache in `.github/actions/setup-ci-deps` is also limited to
 upstream, so fork jobs build and test without a remote cache.
 
