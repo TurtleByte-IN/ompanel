@@ -24,16 +24,26 @@ export interface OmpTextGenerationOptions {
   readonly resolveBinary: Effect.Effect<string, OmpSidecarError>;
   readonly profile: string;
   readonly environment: NodeJS.ProcessEnv;
+  /**
+   * An empty directory Ompanel owns. omp runs here, never in the checkout, so the checkout's
+   * `.mcp.json`, `.omp/tools`, `.claude/tools`, rules and extensions are never discovered.
+   */
+  readonly cwd: string;
 }
 
 /**
- * The OMP model role for an operation: `@tiny` for thread titles, `@commit` for the
- * source-control writers (commit message, PR content, branch name), as `omp commit` does.
+ * The OMP model selector for an operation. Thread titles use `@tiny`, which OMP itself falls
+ * back to `@smol` when unset. The source-control writers use the chain `omp commit` resolves
+ * (`commit`, then `smol`, then the default model); `@commit` alone has no fallback.
  */
 const ompTextGenerationRole = (operation: TextGenerationOperations.Operation) =>
-  operation === "generateThreadTitle" ? "@tiny" : "@commit";
+  operation === "generateThreadTitle" ? "@tiny" : "@commit,@smol,@default";
 
-/** `omp -p` one-shot args; the prompt is piped on stdin so diffs never hit argv limits. */
+/**
+ * `omp -p` one-shot args; the prompt is piped on stdin so diffs never hit argv limits.
+ * `--no-tools` drops built-in tools and `--no-extensions` stops extension discovery; neither
+ * disables MCP servers or custom tools, which the owned empty cwd keeps to user-level ones.
+ */
 const ompTextGenerationArgs = (input: {
   readonly operation: TextGenerationOperations.Operation;
   readonly model: string;
@@ -43,6 +53,7 @@ const ompTextGenerationArgs = (input: {
   "-p",
   "--no-session",
   "--no-tools",
+  "--no-extensions",
   "--model",
   input.model === OMP_DEFAULT_MODEL_SLUG ? ompTextGenerationRole(input.operation) : input.model,
 ];
@@ -67,7 +78,7 @@ export const makeOmpTextGeneration = Effect.fn("makeOmpTextGeneration")(function
 
   const runOmp: TextGenerationOperations.Runner = Effect.fn("OmpTextGeneration.run")(
     function* (request) {
-      const { operation, cwd, prompt, modelSelection } = request;
+      const { operation, prompt, modelSelection } = request;
       const binaryPath = yield* options.resolveBinary.pipe(
         Effect.mapError(
           (cause) =>
@@ -86,7 +97,7 @@ export const makeOmpTextGeneration = Effect.fn("makeOmpTextGeneration")(function
           profile: options.profile,
         }),
         {
-          cwd,
+          cwd: options.cwd,
           env: options.environment,
           extendEnv: false,
           stdin: { stream: Stream.encodeText(Stream.make(prompt)) },

@@ -186,11 +186,28 @@ environment credentials are not visible there.
 ## Text generation
 
 Commit messages, PR titles and bodies, branch names and thread titles run a one-shot
-`omp -p --no-session --no-tools --model <role>` through the same sidecar lookup, with the prompt
-on stdin. When the selected OMP model is `default`, thread titles use the `@tiny` role and the
-source-control writers use `@commit`, the role `omp commit` uses; any other model slug is passed
-as-is. `--profile` is added when the instance sets one. Terminal escapes are stripped from the
-output. Cancelling an operation kills the process and returns nothing, and a non-zero exit fails
-with the process's stderr. OMP is the last entry in the text-generation fallback list, used only
-when it is enabled and no earlier provider is. Review guides are unsupported: they need read-only
-tools, and this process runs with none.
+`omp -p --no-session --no-tools --no-extensions --model <selector>` through the same sidecar
+lookup, with the prompt on stdin. `--profile` is added when the instance sets one.
+
+When the selected OMP model is `default`, the source-control writers pass
+`@commit,@smol,@default`, the chain `omp commit` resolves (`@commit` alone has no fallback), and
+thread titles pass `@tiny`, which OMP falls back to `@smol` when unset. Any other model slug is
+passed as-is.
+
+The process runs in `<stateDir>/omp/text-generation`, an empty directory Ompanel owns, never in
+the checkout. The prompt carries diff text Ompanel does not control, so the process should reach
+as little as possible:
+
+- Built-in tools are off (`--no-tools`).
+- Ambient extension discovery is off (`--no-extensions`).
+- The checkout's `.mcp.json`, `.omp/tools`, `.claude/tools`, rules and project config are never
+  discovered, because omp does not run there.
+- Still loaded: the profile's user-level MCP servers and custom tools (user-level tool
+  directories, tools from installed plugins, configured tool paths), plus user-level skills and
+  rules. At the pinned tag, `--no-tools` only removes built-in tools; no CLI flag stops MCP
+  servers or custom tools.
+
+Terminal escapes are stripped from the output. Cancelling an operation kills the process and
+returns nothing, and a non-zero exit fails with the process's stderr. OMP is the last entry in
+the text-generation fallback list, used only when it is enabled and no earlier provider is.
+Review guides are unsupported: they need read-only tools, and this process runs with none.

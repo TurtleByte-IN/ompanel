@@ -22,7 +22,7 @@ const log = process.env.FAKE_OMP_LOG;
 let stdin = "";
 process.stdin.on("data", (chunk) => (stdin += chunk));
 process.stdin.on("end", () => {
-  fs.writeFileSync(log, JSON.stringify({ args: process.argv.slice(2), stdin, pid: process.pid }));
+  fs.writeFileSync(log, JSON.stringify({ args: process.argv.slice(2), stdin, cwd: process.cwd() }));
   const mode = process.env.FAKE_OMP_MODE;
   if (mode === "fail") {
     process.stderr.write("\\u001b[31mmodel @commit is not configured\\u001b[0m\\n");
@@ -48,6 +48,9 @@ const setup = (mode: "ok" | "fail" | "hang", options?: { readonly profile?: stri
     const dir = yield* fs.makeTempDirectoryScoped({ prefix: "omp-textgen-test-" });
     const binary = path.join(dir, "omp");
     const log = path.join(dir, "log.json");
+    // Stands in for the empty directory Ompanel owns; `dir` plays the checkout.
+    const ownedCwd = path.join(dir, "owned");
+    yield* fs.makeDirectory(ownedCwd);
     yield* fs.writeFileString(binary, FAKE_OMP);
     yield* fs.chmod(binary, 0o755);
     // Wraps the real spawner so a test can await the child's first stdout bytes.
@@ -67,6 +70,7 @@ const setup = (mode: "ok" | "fail" | "hang", options?: { readonly profile?: stri
       resolveBinary: Effect.succeed(binary),
       profile: options?.profile ?? "",
       environment: { PATH: process.env.PATH, FAKE_OMP_LOG: log, FAKE_OMP_MODE: mode },
+      cwd: ownedCwd,
     }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, observed));
     const readLog = fs.readFileString(log).pipe(
       Effect.map(
@@ -74,11 +78,11 @@ const setup = (mode: "ok" | "fail" | "hang", options?: { readonly profile?: stri
           JSON.parse(text) as {
             readonly args: ReadonlyArray<string>;
             readonly stdin: string;
-            readonly pid: number;
+            readonly cwd: string;
           },
       ),
     );
-    return { textGeneration, readLog, dir, firstOutput };
+    return { textGeneration, readLog, dir, firstOutput, ownedCwd: yield* fs.realPath(ownedCwd) };
   });
 
 const isAlive = (pid: number) => {
@@ -91,30 +95,35 @@ const isAlive = (pid: number) => {
 };
 
 describe("OmpTextGeneration", () => {
-  it.live("runs @commit for commit messages and pipes the prompt on stdin", () =>
-    Effect.gen(function* () {
-      const { textGeneration, readLog, dir } = yield* setup("ok");
-      const result = yield* textGeneration.generateCommitMessage({
-        cwd: dir,
-        branch: "main",
-        stagedSummary: "M src/a.ts",
-        stagedPatch: "+const a = 1;",
-        modelSelection,
-      });
-      assert.deepStrictEqual(result, { subject: "Add feature", body: "Details." });
-      const launch = yield* readLog;
-      assert.deepStrictEqual(launch.args, [
-        "-p",
-        "--no-session",
-        "--no-tools",
-        "--model",
-        "@commit",
-      ]);
-      assert.include(launch.stdin, "+const a = 1;");
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  it.live(
+    "runs the @commit chain for commit messages in the owned directory, prompt on stdin",
+    () =>
+      Effect.gen(function* () {
+        const { textGeneration, readLog, dir, ownedCwd } = yield* setup("ok");
+        const result = yield* textGeneration.generateCommitMessage({
+          cwd: dir,
+          branch: "main",
+          stagedSummary: "M src/a.ts",
+          stagedPatch: "+const a = 1;",
+          modelSelection,
+        });
+        assert.deepStrictEqual(result, { subject: "Add feature", body: "Details." });
+        const launch = yield* readLog;
+        assert.deepStrictEqual(launch.args, [
+          "-p",
+          "--no-session",
+          "--no-tools",
+          "--no-extensions",
+          "--model",
+          "@commit,@smol,@default",
+        ]);
+        assert.include(launch.stdin, "+const a = 1;");
+        // Never the checkout the request names.
+        assert.strictEqual(launch.cwd, ownedCwd);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.live("runs @commit for PR content and branch names", () =>
+  it.live("runs the @commit chain for PR content and branch names", () =>
     Effect.gen(function* () {
       const { textGeneration, readLog, dir } = yield* setup("ok");
       const pr = yield* textGeneration.generatePrContent({
@@ -127,14 +136,14 @@ describe("OmpTextGeneration", () => {
         modelSelection,
       });
       assert.strictEqual(pr.title, "Fix login");
-      assert.strictEqual((yield* readLog).args.at(-1), "@commit");
+      assert.strictEqual((yield* readLog).args.at(-1), "@commit,@smol,@default");
       const branch = yield* textGeneration.generateBranchName({
         cwd: dir,
         message: "Fix the login form",
         modelSelection,
       });
       assert.include(branch.branch, "login");
-      assert.strictEqual((yield* readLog).args.at(-1), "@commit");
+      assert.strictEqual((yield* readLog).args.at(-1), "@commit,@smol,@default");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
@@ -153,6 +162,7 @@ describe("OmpTextGeneration", () => {
         "-p",
         "--no-session",
         "--no-tools",
+        "--no-extensions",
         "--model",
         "@tiny",
       ]);
