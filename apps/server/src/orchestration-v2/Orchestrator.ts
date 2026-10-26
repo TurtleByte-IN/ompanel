@@ -628,6 +628,19 @@ function hasLiveRun(projection: Pick<OrchestrationV2ThreadProjection, "runs">): 
   );
 }
 
+/** How much a runtime mode lets an agent do unasked; Auto and Auto-accept edits allow different things. */
+const RUNTIME_MODE_REACH: Record<RuntimeMode, number> = {
+  "approval-required": 0,
+  "auto-accept-edits": 1,
+  auto: 1,
+  "full-access": 2,
+};
+
+/** True unless `next` only widens `previous`; incomparable modes count as tightening. */
+function runtimeModeTightens(previous: RuntimeMode, next: RuntimeMode): boolean {
+  return previous !== next && RUNTIME_MODE_REACH[next] <= RUNTIME_MODE_REACH[previous];
+}
+
 function withPullRequestWatch(
   link: ThreadPullRequestLink,
   watch: ThreadPullRequestWatch | undefined,
@@ -3831,7 +3844,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           : command.type === "thread.runtime-mode.set"
             ? (providerContext?.providerSessions ?? [])
                 .filter(
-                  (session) => !session.capabilities.sessions.supportsRuntimeModeSwitchInSession,
+                  (session) =>
+                    !session.capabilities.sessions.supportsRuntimeModeSwitchInSession ||
+                    // In-session switches apply from the next turn: a turn already running
+                    // must not keep the looser mode, so it ends with its session.
+                    ((session.status === "running" || session.status === "waiting") &&
+                      runtimeModeTightens(thread.runtimeMode, command.runtimeMode)),
                 )
                 .map((session) => session.id)
             : (providerSwitchPlan?.releaseProviderSessionIds ?? []),

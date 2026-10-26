@@ -426,8 +426,19 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
     );
     // Stopping the thread closes stdin first, so OMP can finish its session file; the tree is
     // killed only if that stalls (and by the spawn's own finalizer, whatever happens here).
+    // A running turn is aborted first: OMP would otherwise drain it, still under the mode it
+    // started with, after T3 detached the session (for example for a stricter permission mode).
     yield* Effect.addFinalizer(() =>
-      process.close().pipe(Effect.andThen(exclusive(settle("stopped", null))), Effect.ignore),
+      (mapper.hasActiveTurn
+        ? process
+            .request("abort", undefined, { timeoutMs: SIDE_REQUEST_TIMEOUT_MS })
+            .pipe(Effect.ignore)
+        : Effect.void
+      ).pipe(
+        Effect.andThen(process.close()),
+        Effect.andThen(exclusive(settle("stopped", null))),
+        Effect.ignore,
+      ),
     );
     // Subagent lifecycle and progress frames feed the agents panel; their own session events
     // ("events") are not needed, the panel pages transcripts instead.

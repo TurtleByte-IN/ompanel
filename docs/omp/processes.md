@@ -33,6 +33,11 @@ A refusal fails that turn before its prompt with the reason
 `permission_mode_refused`; the process keeps the mode it had, and the next turn
 in a different mode asks again.
 
+A turn already running keeps the mode it started with, so the orchestrator
+still detaches a `running` or `waiting` session when the mode tightens. Closing
+a session with a turn in flight sends `abort` before closing stdin; otherwise
+OMP would drain that turn, under its old mode, for up to the 10 s graceful exit.
+
 ## Handshake
 
 1. The first frame must be `ready` (30 s limit).

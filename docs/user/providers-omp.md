@@ -34,7 +34,8 @@ OMP has no automatic review, so it offers no **Auto**. A thread already set to
 **Auto** runs in **Supervised**.
 
 Change the mode in the composer at any time. The new mode applies from the
-thread's next message, in the same OMP session. If OMP refuses the new mode,
+thread's next message, in the same OMP session. Choosing a stricter mode while
+OMP is working stops the current response first. If OMP refuses the new mode,
 that message fails with an error and OMP keeps its previous mode; switch back
 to that mode or start a new thread.
 

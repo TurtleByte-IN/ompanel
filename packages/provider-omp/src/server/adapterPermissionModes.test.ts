@@ -26,7 +26,12 @@ import { makeOmpAdapter } from "./adapter.ts";
 import { ompApprovalModeFor } from "./launch.ts";
 import { makeOmpPidfiles } from "./pidfiles.ts";
 import { ompStateDirs } from "./session.ts";
-import { makeFakeOmpState, waitUntil, type FakeOmpStep } from "./testing/fakeOmp.ts";
+import {
+  makeFakeOmpState,
+  waitUntil,
+  type FakeOmpState,
+  type FakeOmpStep,
+} from "./testing/fakeOmp.ts";
 import { makeOmpThreadSessions } from "./threadSessions.ts";
 
 const platform = HostProcess.Platform.defaultValue();
@@ -52,18 +57,25 @@ const policy = (runtimeMode: RuntimeMode) =>
     cwd: null,
   });
 
-/** Opens a thread on the fake in `launchMode`; `turn` runs one prompt turn in a given mode. */
+/**
+ * Opens a thread on the fake in `launchMode`; `turn` runs one prompt turn in a given mode.
+ * `options.state` outlives the thread's scope, for checking what happened after it closed.
+ */
 const openThread = Effect.fnUntraced(function* (
   launchMode: RuntimeMode,
   setApprovalMode: ReadonlyArray<FakeOmpStep>,
+  options: {
+    readonly state?: FakeOmpState;
+    readonly prompt?: ReadonlyArray<FakeOmpStep>;
+  } = {},
 ) {
-  const state = yield* makeFakeOmpState;
+  const state = options.state ?? (yield* makeFakeOmpState);
   const env = state.script({
     commands: {
       set_session_name: [{ respond: null }],
       set_ask_dialog: [{ respond: { enabled: true } }],
       set_approval_mode: setApprovalMode,
-      prompt: PROMPT_TURN,
+      prompt: options.prompt ?? PROMPT_TURN,
     },
   });
   const path = yield* Path.Path;
@@ -103,8 +115,8 @@ const openThread = Effect.fnUntraced(function* (
   const now = yield* DateTime.now;
   let ordinal = 0;
 
-  /** Starts a turn in `runtimeMode` and, once OMP accepted it, waits for its terminal. */
-  const turn = (runtimeMode: RuntimeMode) =>
+  /** Starts a turn in `runtimeMode` and, once OMP accepted it, waits for its terminal unless told not to. */
+  const turn = (runtimeMode: RuntimeMode, awaitTerminal = true) =>
     Effect.gen(function* () {
       ordinal += 1;
       const appThread: OrchestrationV2AppThread = {
@@ -150,7 +162,7 @@ const openThread = Effect.fnUntraced(function* (
         modelSelection: { instanceId: INSTANCE_ID, model: "default" },
         runtimePolicy: policy(runtimeMode),
       });
-      assert.isTrue(yield* waitUntil(() => terminals > settledBefore));
+      if (awaitTerminal) assert.isTrue(yield* waitUntil(() => terminals > settledBefore));
     });
 
   const sent = (type: string) => state.commands().filter((command) => command["type"] === type);
@@ -243,6 +255,37 @@ posixOnly("OmpAdapter permission modes", () => {
       yield* turn("approval-required").pipe(Effect.flip);
       assert.lengthOf(sent("set_approval_mode"), 2);
       assert.lengthOf(sent("prompt"), 1);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("aborts a running turn before closing, so a detached turn does not drain on", () =>
+    Effect.gen(function* () {
+      // T3 detaches a session mid-turn when its mode tightens; OMP would otherwise finish the
+      // turn under the looser mode while it drains on stdin end.
+      const state = yield* makeFakeOmpState;
+      yield* Effect.gen(function* () {
+        const { turn, sent } = yield* openThread("full-access", [], {
+          state,
+          prompt: [{ respond: { agentInvoked: true } }],
+        });
+        yield* turn("full-access", false);
+        assert.isTrue(yield* waitUntil(() => sent("prompt").length === 1));
+      }).pipe(Effect.scoped);
+      const events = state.events();
+      assert.include(events, "command:abort");
+      assert.isBelow(events.indexOf("command:abort"), events.indexOf("stdin-end"));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("closes an idle session without an abort", () =>
+    Effect.gen(function* () {
+      const state = yield* makeFakeOmpState;
+      yield* Effect.gen(function* () {
+        const { turn } = yield* openThread("full-access", [], { state });
+        yield* turn("full-access");
+      }).pipe(Effect.scoped);
+      assert.notInclude(state.events(), "command:abort");
+      assert.include(state.events(), "stdin-end");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
