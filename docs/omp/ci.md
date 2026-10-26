@@ -36,7 +36,10 @@ cancelled job fails it. Through it, every pull request is gated on:
 
 A new job joins the gate by being added to `Check`'s `needs`; the branch
 protection setting does not change. Workflows other than `ci.yml` (PR size,
-vouch, mobile fingerprint) are not required.
+vouch, mobile fingerprint, `OMP live`) are not required. `OMP live`
+(`omp-live.yml`, nightly) runs the OMP live suite when the repository secret
+`OMPANEL_LIVE_ANTHROPIC_API_KEY` is set and otherwise passes with a "skipped"
+notice ([testing.md](testing.md#live-suite)).
 
 ## Jobs that run only upstream
 

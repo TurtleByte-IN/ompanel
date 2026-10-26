@@ -1,0 +1,76 @@
+name: Setup OMP end-to-end
+description: >-
+  Provide an omp built from the omp.lock tag (cached by the pinned commit) at ~/omp-e2e/omp and
+  Playwright's headless Chromium, for the OMP end-to-end tests (docs/omp/testing.md). Run after
+  setup-ci-deps.
+runs:
+  using: composite
+  steps:
+    - name: Resolve the OMP pin
+      id: omp
+      shell: bash
+      run: |
+        echo "tag=$(jq -r .tag packages/provider-omp/omp.lock)" >> "$GITHUB_OUTPUT"
+        echo "commit=$(jq -r .commit packages/provider-omp/omp.lock)" >> "$GITHUB_OUTPUT"
+
+    - name: Cache the omp binary
+      id: omp_cache
+      uses: actions/cache@v6
+      with:
+        path: ~/omp-e2e
+        key: omp-e2e-binary-${{ runner.os }}-${{ runner.arch }}-${{ steps.omp.outputs.commit }}
+
+    - name: Check out the pinned OMP fork
+      if: steps.omp_cache.outputs.cache-hit != 'true'
+      uses: actions/checkout@v6
+      with:
+        repository: TurtleByte-IN/oh-my-pi
+        ref: ${{ steps.omp.outputs.tag }}
+        path: .omp-e2e-src
+        persist-credentials: false
+
+    - name: Setup Bun
+      if: steps.omp_cache.outputs.cache-hit != 'true'
+      uses: oven-sh/setup-bun@v2
+      with:
+        bun-version: latest
+
+    - name: Install the fork's Rust toolchain
+      if: steps.omp_cache.outputs.cache-hit != 'true'
+      shell: bash
+      working-directory: .omp-e2e-src
+      run: rustup toolchain install
+
+    - name: Build omp
+      if: steps.omp_cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        binary=$(node apps/web/e2e/omp/build-omp.ts .omp-e2e-src | tail -n 1)
+        mkdir -p ~/omp-e2e
+        cp "$binary" ~/omp-e2e/omp
+
+    - name: Resolve Playwright version
+      id: playwright_version
+      shell: bash
+      run: echo "version=$(node -p "require('./apps/web/node_modules/playwright/package.json').version")" >> "$GITHUB_OUTPUT"
+
+    - name: Cache Chromium
+      id: chromium_cache
+      uses: actions/cache@v6
+      with:
+        path: ~/.cache/ms-playwright
+        key: playwright-chromium-shell-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright_version.outputs.version }}
+
+    - name: Install Chromium
+      if: steps.chromium_cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: node apps/web/node_modules/playwright/cli.js install --only-shell chromium
+
+    - name: Install missing Chromium system dependencies
+      shell: bash
+      run: |
+        browser=$(find "$HOME/.cache/ms-playwright" -name chrome-headless-shell -type f -print -quit)
+        test -n "$browser"
+        if ldd "$browser" | grep '=> not found'; then
+          node apps/web/node_modules/playwright/cli.js install-deps chromium
+        fi

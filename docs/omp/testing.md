@@ -1,6 +1,6 @@
 # Testing the OMP provider
 
-Four layers, from fastest to most faithful.
+Five layers, from fastest to most faithful.
 
 | Layer           | Where                                                                                                                  | Drives                                                           |
 | --------------- | ---------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
@@ -8,10 +8,13 @@ Four layers, from fastest to most faithful.
 | Adapter         | `packages/provider-omp/src/server/adapter.test.ts` (and the process-layer tests next to it)                            | The adapter and thread process against the scripted fake `omp`   |
 | Replay fixtures | `apps/server/src/orchestration-v2/testkit/OmpReplayFixtures.integration.test.ts`, fixtures in `testkit/fixtures/omp_*` | The process layer against stdout recorded from the pinned fork   |
 | End-to-end      | `apps/web/e2e/omp/omp-thread.spec.ts` (Playwright)                                                                     | The web app and server against a real `omp` and a scripted model |
+| Live            | `apps/web/e2e/omp/omp-live.spec.ts` (Playwright, `OMPANEL_LIVE=1`)                                                     | The web app and server against a real `omp` and a real model     |
 
 The first three run in CI with the rest of the suite; none needs a model, an
 account or a built `omp`. The end-to-end test has its own CI job, `OMP E2E`,
-which builds `omp` from the pinned tag ([End-to-end](#end-to-end)).
+which builds `omp` from the pinned tag ([End-to-end](#end-to-end)). The live
+suite runs nightly in its own workflow and needs a model key
+([Live suite](#live-suite)).
 
 ## The fake `omp`
 
@@ -144,7 +147,10 @@ web app in headless Chromium. Its steps run in order on one page:
 7. commit from the Git actions menu with an empty message; the subject comes
    from OMP text generation (`omp -p`).
 
-`e2e/omp/ompStack.ts` starts everything in a throwaway directory: a `HOME`
+`e2e/omp/ompSuite.ts` holds what both Playwright specs share: the hooks that
+start one stack and one paired page per file and record a trace per step, and
+the page helpers the steps use. `e2e/omp/ompStack.ts` starts everything in a
+throwaway directory: a `HOME`
 and Ompanel home, a git workspace the server bootstraps as a project, the
 server from source (`apps/server/src/bin.ts`, serving `apps/web/dist`) with
 the OMP instance pointed at the given binary, and the scripted model
@@ -169,14 +175,71 @@ vp run --filter @t3tools/web test:e2e
 not exist, refuses a checkout at another commit, builds the native addon and
 the `omp` binary (skipped when `dist/omp.commit` already names the pinned
 commit) and prints the binary's path. `test:e2e` builds the web app, then
-runs Playwright. Screenshots, `server.log` and one trace per step go to
+runs Playwright on every spec in `e2e/` (the live suite is skipped without
+`OMPANEL_LIVE=1`). Screenshots, `server.log` and one trace per step go to
 `apps/web/.playwright/omp-artifacts/`, or to `OMPANEL_E2E_ARTIFACTS_DIR`; the
 HTML report goes to `apps/web/playwright-report/`. Open a trace with
 `pnpm --filter @t3tools/web exec playwright show-trace <zip>`.
 
 In CI, `OMP E2E` caches the binary by the pinned commit, so only the first
 run after a re-pin builds it; it uploads the screenshots, traces and report as
-the `omp-e2e` artifact.
+the `omp-e2e` artifact. The build and the Chromium install are the composite
+action `.github/actions/setup-omp-e2e`, shared with `OMP live`.
+
+## Live suite
+
+`apps/web/e2e/omp/omp-live.spec.ts` runs one OMP thread through the web app
+against the `omp` built from the `omp.lock` tag and a real model. It is
+skipped unless `OMPANEL_LIVE=1`. Its steps run in order on one page:
+
+1. streamed turn: a new OMP thread in Supervised; the reply's first paragraph
+   is on screen before its second has arrived;
+2. approval-driven tool run: the model asks to run a shell command; nothing
+   runs until the approval card is approved, then the command writes
+   `live-approval.txt` and the reply quotes its output;
+3. subagent fan-out: in Full access the model starts two subagents with OMP's
+   `task` tool; the agents panel lists both as Completed;
+4. rewind: two turns each give the model a code word; "Edit from here" on the
+   second removes it, and the model, asked for every code word, names only
+   the first, in the same `omp` process;
+5. text generation: a commit with an empty message gets its subject from OMP
+   (`omp -p`).
+
+The model is Anthropic's, chosen with `OMPANEL_LIVE_MODEL` (default
+`anthropic/claude-haiku-4-5`). The key is read from
+`OMPANEL_LIVE_ANTHROPIC_API_KEY` and reaches OMP only as the Ompanel server's
+`ANTHROPIC_API_KEY` environment variable, which every `omp` it starts
+inherits: never on a command line, never in a file, and replaced by
+`<redacted>` in the saved `server.log`. OMP's agent directory gets
+`modelRoles.default: <model>`; nothing else changes from the end-to-end
+stack. With `OMPANEL_LIVE=1` and no key, the suite fails at its first step
+and names the variable.
+
+The prompts are worded so the scripted model answers them as well:
+`OMPANEL_LIVE_MODEL=scripted` runs the suite with no key, which checks the
+suite itself. The scripted model additionally starts one `task` subagent per
+name after `fanout: a, b`, answers a subagent (the only caller offered OMP's
+`yield` tool) by yielding, repeats the text after "Reply with exactly these
+two paragraphs and nothing else:", and answers "List every code word I asked
+you to remember" from the `code word: <word>` lines of the history it was
+sent.
+
+```sh
+export OMPANEL_E2E_OMP_BINARY=$(node apps/web/e2e/omp/build-omp.ts ../wt/oh-my-pi/scratch | tail -n 1)
+export OMPANEL_LIVE_ANTHROPIC_API_KEY=...   # or OMPANEL_LIVE_MODEL=scripted
+vp run --filter @t3tools/web test:e2e:live
+```
+
+Artifacts go to `apps/web/.playwright/omp-live-artifacts/`, or to
+`live/` under `OMPANEL_E2E_ARTIFACTS_DIR`.
+
+In CI, `.github/workflows/omp-live.yml` (`OMP live`) runs the suite nightly,
+on pull requests that change it, and on demand (`workflow_dispatch`, with an
+optional `model` input; `scripted` needs no key). The key is the repository
+secret `OMPANEL_LIVE_ANTHROPIC_API_KEY`, passed to the test step's
+environment only. Without it the job passes, runs nothing, and posts the
+notice "OMP live suite skipped" on the run and in its summary. The run
+uploads the `omp-live` artifact. `OMP live` is not a required check.
 
 ## What the recordings show (pinned tag)
 

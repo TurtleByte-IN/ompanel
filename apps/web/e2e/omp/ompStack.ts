@@ -1,7 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off globalTimers:off - a host-side end-to-end fixture.
-// One isolated Ompanel for the OMP end-to-end test: a throwaway HOME and Ompanel home, a git
+// One isolated Ompanel for the OMP end-to-end tests: a throwaway HOME and Ompanel home, a git
 // workspace the server bootstraps as a project, the scripted model, and the server from source
-// serving the built web app (`apps/web/dist`) with OMP pointed at a real `omp` binary.
+// serving the built web app (`apps/web/dist`) with OMP pointed at a real `omp` binary. The live
+// suite points OMP's default model at a real provider instead (`OmpStackOptions`).
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeNet from "node:net";
@@ -16,6 +17,16 @@ const WEB_DIST = NodePath.join(REPO_ROOT, "apps", "web", "dist", "index.html");
 
 /** The `omp` the test runs; build it from the pinned tag with `e2e/omp/build-omp.ts`. */
 const OMP_BINARY_ENV = "OMPANEL_E2E_OMP_BINARY";
+
+export interface OmpStackOptions {
+  /** OMP's `modelRoles.default`; the scripted model (`fake/fake-model`) unless given. */
+  readonly defaultModel?: string;
+  /**
+   * Extra server environment, inherited by every `omp` it starts: a provider's API key for the
+   * live suite. Never on a command line; every value is redacted from `serverLog()`.
+   */
+  readonly secretEnvironment?: Readonly<Record<string, string>>;
+}
 
 export interface OmpProcess {
   readonly pid: number;
@@ -61,7 +72,9 @@ const commandLine = (pid: number) => {
   }
 };
 
-export const startOmpStack = async (): Promise<OmpStack> => {
+export const startOmpStack = async (options: OmpStackOptions = {}): Promise<OmpStack> => {
+  const secretEnvironment = options.secretEnvironment ?? {};
+  const secrets = Object.values(secretEnvironment).filter((value) => value !== "");
   const binary = process.env[OMP_BINARY_ENV];
   if (binary === undefined || !NodeFS.existsSync(binary)) {
     throw new Error(
@@ -81,10 +94,11 @@ export const startOmpStack = async (): Promise<OmpStack> => {
   const workspace = NodePath.join(root, "workspace");
   for (const dir of [agentDir, userdata, workspace]) NodeFS.mkdirSync(dir, { recursive: true });
 
-  // OMP's default model is the scripted one; nothing reads the developer's ~/.omp.
+  // OMP's default model is the scripted one unless the live suite names a real one; nothing
+  // reads the developer's ~/.omp.
   NodeFS.writeFileSync(
     NodePath.join(agentDir, "config.yml"),
-    "modelRoles:\n  default: fake/fake-model\n",
+    `modelRoles:\n  default: ${options.defaultModel ?? "fake/fake-model"}\n`,
   );
   // OMP enabled at the given binary; commit messages are generated through it.
   NodeFS.writeFileSync(
@@ -130,6 +144,7 @@ export const startOmpStack = async (): Promise<OmpStack> => {
       OMPANEL_TELEMETRY_ENABLED: "false",
       OMPANEL_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "1",
       PI_NO_PTY: "1",
+      ...secretEnvironment,
     },
     stdio: ["ignore", "pipe", log],
   });
@@ -171,7 +186,10 @@ export const startOmpStack = async (): Promise<OmpStack> => {
     ompProcesses,
     git,
     serverLog: () =>
-      NodeFS.readFileSync(logPath, "utf8").replaceAll(/#token=\S+/g, "#token=<redacted>"),
+      secrets.reduce(
+        (text, secret) => text.replaceAll(secret, "<redacted>"),
+        NodeFS.readFileSync(logPath, "utf8").replaceAll(/#token=\S+/g, "#token=<redacted>"),
+      ),
     stop: async () => {
       const leftover = ompProcesses();
       server.kill("SIGTERM");
