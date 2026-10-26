@@ -19,7 +19,7 @@ repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 
 if ! pairing_output="$({
-  T3CODE_PORT="$server_port" node apps/server/src/bin.ts auth pairing create \
+  OMPANEL_PORT="$server_port" node apps/server/src/bin.ts auth pairing create \
     --base-dir "$base_dir" \
     --base-url "$mobile_origin" \
     --ttl 15m \
@@ -40,11 +40,11 @@ const query = new URLSearchParams({
   pairingUrl: process.env.PAIRING_URL,
   autoConnect: "1",
 });
-process.stdout.write(`t3code-dev://connections/new?${query}`);
+process.stdout.write(`ompanel-dev://connections/new?${query}`);
 NODE
 )"
 
-if ! "$agent_device_command" open com.t3tools.t3code.dev "$deep_link" "$@" \
+if ! "$agent_device_command" open in.turtlebyte.ompanel.dev "$deep_link" "$@" \
   >/dev/null 2>&1; then
   echo "AgentDevice could not open the pairing route. Check the Device panel and retry with a fresh credential." >&2
   exit 1

@@ -1,7 +1,9 @@
-import type { DesktopWslState } from "@t3tools/contracts";
-import { describe, expect, it, vi } from "vite-plus/test";
+import type { AdvertisedEndpoint, DesktopWslState } from "@t3tools/contracts";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   applyWslEnableSelection,
+  endpointShareHint,
+  resolveAdvertisedEndpointPairingUrl,
   selectQrEndpointOption,
   togglePairingScopeSelection,
 } from "./ConnectionsSettings.logic";
@@ -121,5 +123,42 @@ describe("selectQrEndpointOption", () => {
     expect(selectQrEndpointOption(options, "tailscale-ip:gone", "nope")?.id).toBe(
       "tailscale-ip:http://100.84.12.7:4780",
     );
+  });
+});
+
+describe("resolveAdvertisedEndpointPairingUrl", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  const tailnetEndpoint: AdvertisedEndpoint = {
+    id: "tailscale-serve",
+    label: "Tailscale",
+    provider: { id: "tailscale", label: "Tailscale", kind: "private-network", isAddon: false },
+    httpBaseUrl: "https://desktop.tailnet.ts.net:44342",
+    wsBaseUrl: "wss://desktop.tailnet.ts.net:44342",
+    reachability: "private-network",
+    compatibility: { hostedHttpsApp: "compatible", desktopApp: "compatible" },
+    source: "desktop-core",
+    status: "available",
+  };
+
+  it("pairs a hosted-compatible endpoint directly when no hosted app is configured", () => {
+    vi.stubEnv("VITE_HOSTED_APP_URL", "");
+
+    const url = resolveAdvertisedEndpointPairingUrl(tailnetEndpoint, "PAIRCODE");
+
+    expect(url).toBe("https://desktop.tailnet.ts.net:44342/pair#token=PAIRCODE");
+    expect(url).not.toContain("t3.codes");
+    expect(endpointShareHint(tailnetEndpoint, url)).toBe("Devices on your private network");
+  });
+
+  it("uses the configured hosted app for a hosted-compatible endpoint", () => {
+    vi.stubEnv("VITE_HOSTED_APP_URL", "https://hosted.example.test");
+
+    const url = resolveAdvertisedEndpointPairingUrl(tailnetEndpoint, "PAIRCODE");
+
+    expect(new URL(url).origin).toBe("https://hosted.example.test");
+    expect(url).not.toContain("t3.codes");
   });
 });

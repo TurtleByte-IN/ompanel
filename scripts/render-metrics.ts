@@ -42,7 +42,7 @@ function runOnce(): RenderMetrics {
   try {
     const result = NodeChildProcess.spawnSync("vp", ["test", "run", "--project", "renders"], {
       cwd: NodePath.join(root, "apps/web"),
-      env: { ...process.env, T3CODE_RENDER_REPORT_DIR: directory },
+      env: { ...process.env, OMPANEL_RENDER_REPORT_DIR: directory },
       stdio: ["ignore", "inherit", "inherit"],
     });
     if (result.status !== 0) throw new Error(`render scenarios failed (exit ${result.status})`);

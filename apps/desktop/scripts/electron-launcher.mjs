@@ -15,9 +15,9 @@ const devBundleIdSuffix = NodePath.basename(repoRoot)
   .replaceAll(/[^a-z0-9]+/g, "");
 const APP_DISPLAY_NAME = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Beta)";
 const APP_BUNDLE_ID = isDevelopment
-  ? `com.t3tools.t3code.dev.${devBundleIdSuffix || "local"}`
-  : "com.t3tools.t3code";
-const APP_PROTOCOL_SCHEMES = isDevelopment ? ["t3code-dev"] : ["t3code"];
+  ? `in.turtlebyte.ompanel.dev.${devBundleIdSuffix || "local"}`
+  : "in.turtlebyte.ompanel";
+const APP_PROTOCOL_SCHEMES = isDevelopment ? ["ompanel-dev"] : ["ompanel"];
 const LAUNCHER_VERSION = 20;
 const developmentMacIconPngPath = NodePath.join(
   repoRoot,
@@ -109,14 +109,14 @@ function shellSingleQuote(value) {
 export function makeDevelopmentEnvironmentScript(environment) {
   const envEntries = [
     ["VITE_DEV_SERVER_URL", environment.VITE_DEV_SERVER_URL],
-    ["T3CODE_PORT", environment.T3CODE_PORT],
-    ["T3CODE_HOME", environment.T3CODE_HOME],
-    ["T3CODE_COMMIT_HASH", environment.T3CODE_COMMIT_HASH],
-    ["T3CODE_OTLP_TRACES_URL", environment.T3CODE_OTLP_TRACES_URL],
-    ["T3CODE_OTLP_EXPORT_INTERVAL_MS", environment.T3CODE_OTLP_EXPORT_INTERVAL_MS],
-    ["T3CODE_OTLP_HEADERS", environment.T3CODE_OTLP_HEADERS],
-    ["T3CODE_OTLP_PROTOCOL", environment.T3CODE_OTLP_PROTOCOL],
-    ["T3CODE_DESKTOP_APP_USER_MODEL_ID", APP_BUNDLE_ID],
+    ["OMPANEL_PORT", environment.OMPANEL_PORT],
+    ["OMPANEL_HOME", environment.OMPANEL_HOME],
+    ["OMPANEL_COMMIT_HASH", environment.OMPANEL_COMMIT_HASH],
+    ["OMPANEL_OTLP_TRACES_URL", environment.OMPANEL_OTLP_TRACES_URL],
+    ["OMPANEL_OTLP_EXPORT_INTERVAL_MS", environment.OMPANEL_OTLP_EXPORT_INTERVAL_MS],
+    ["OMPANEL_OTLP_HEADERS", environment.OMPANEL_OTLP_HEADERS],
+    ["OMPANEL_OTLP_PROTOCOL", environment.OMPANEL_OTLP_PROTOCOL],
+    ["OMPANEL_DESKTOP_APP_USER_MODEL_ID", APP_BUNDLE_ID],
   ].filter((entry) => typeof entry[1] === "string" && entry[1].trim().length > 0);
   return [
     ...envEntries.map(

@@ -10,7 +10,7 @@ Pairing delegates a set of scopes. Exchanging a bootstrap credential can narrow
 that grant but cannot widen it. The default grant includes access and relay
 management: `terminal:operate` is a shell as the server's user and
 `orchestration:operate` can start a full-access agent, and either can mint a
-session with every scope through `t3 auth session issue`, so withholding
+session with every scope through `ompanel auth session issue`, so withholding
 management from the default would not be a boundary. A narrower client gets
 explicit scopes. Creating another pairing link requires both `access:write` and
 every scope being delegated. The
@@ -107,7 +107,7 @@ do not follow this replacement rule.
 
 ### Reusable dev credential
 
-Web development environments can accept one `T3CODE_DEV_AUTH_TOKEN` across
+Web development environments can accept one `OMPANEL_DEV_AUTH_TOKEN` across
 worktrees and ports on one hostname. The token and startup URLs that contain it
 grant administrative access. Desktop and non-development servers ignore it. See
 the [development runbook](../operations/development.md#reusable-dev-credential)

@@ -67,7 +67,7 @@ export interface McpToolSession {
 
 /**
  * One initialized MCP session over T3 Code's HTTP endpoint, terminated when
- * the scope closes. Used by the ACP terminal fallback and `t3 thread`.
+ * the scope closes. Used by the ACP terminal fallback and `ompanel thread`.
  */
 export const mcpToolSession = (
   options: McpToolSessionOptions,

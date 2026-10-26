@@ -13,8 +13,8 @@ const { version } = JSON.parse(
 const SUPPORTED = ["darwin-arm64", "linux-arm64", "linux-x64", "win32-arm64", "win32-x64"];
 
 function t3Home() {
-  const raw = (process.env.T3CODE_HOME || "").trim();
-  if (raw === "") return path.join(os.homedir(), ".t3");
+  const raw = (process.env.OMPANEL_HOME || "").trim();
+  if (raw === "") return path.join(os.homedir(), ".ompanel");
   if (raw === "~") return os.homedir();
   if (raw.startsWith("~/") || raw.startsWith("~\\")) return path.join(os.homedir(), raw.slice(2));
   return path.resolve(raw);
@@ -62,9 +62,10 @@ async function download(url, file) {
 }
 
 async function install(dir, key) {
-  const archive = `t3-${version}-${key}.${process.platform === "win32" ? "zip" : "tar.gz"}`;
+  const archive = `ompanel-${version}-${key}.${process.platform === "win32" ? "zip" : "tar.gz"}`;
   const base = (
-    process.env.T3CODE_RELEASE_BASE_URL || "https://github.com/pingdotgg/t3code/releases/download"
+    process.env.OMPANEL_RELEASE_BASE_URL ||
+    "https://github.com/TurtleByte-IN/ompanel/releases/download"
   ).replace(/\/+$/, "");
   const sums = await (await get(`${base}/v${version}/SHA256SUMS`)).text();
   const expected = /^([0-9a-f]{64})\s+\*?(.+)$/im;
@@ -122,7 +123,7 @@ async function main() {
   if (!SUPPORTED.includes(key)) {
     throw new Error(
       `no T3 Code CLI build is available for ${key} (supported: ${SUPPORTED.join(", ")}).\n` +
-        "The desktop app is at https://github.com/pingdotgg/t3code/releases",
+        "The desktop app is at https://github.com/TurtleByte-IN/ompanel/releases",
     );
   }
   const dir = path.join(t3Home(), "runtime", "versions", version);
@@ -131,12 +132,12 @@ async function main() {
   // Service IPC and signals must reach the child; terminal Ctrl-C already does, so do not forward SIGINT twice.
   const ipc = process.send !== undefined;
   const child = spawn(
-    path.join(dir, process.platform === "win32" ? "t3.exe" : "t3"),
+    path.join(dir, process.platform === "win32" ? "ompanel.exe" : "ompanel"),
     process.argv.slice(2),
     {
       stdio: ipc ? ["inherit", "inherit", "inherit", "ipc"] : "inherit",
       // The executable lives in the T3 home, so this is how it knows npm launched it.
-      env: { ...process.env, T3CODE_NPM_LAUNCHER_PATH: import.meta.filename },
+      env: { ...process.env, OMPANEL_NPM_LAUNCHER_PATH: import.meta.filename },
     },
   );
   if (ipc) {
@@ -154,7 +155,7 @@ async function main() {
 }
 
 function fail(error) {
-  process.stderr.write(`t3: ${error.message}\n`);
+  process.stderr.write(`ompanel: ${error.message}\n`);
   process.exit(1);
 }
 

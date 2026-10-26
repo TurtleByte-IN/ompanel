@@ -91,9 +91,11 @@ repeating the call's outcome and duration, so event counts are not call counts.
 
 ## Delivery
 
-The server sends batches to the ingest endpoint at `ingest.t3.codes`, which archives
-every event and forwards some of them to PostHog. A send can fail after the endpoint
-has stored the batch, so every retry is a copy.
+Ompanel ships without an ingest endpoint: the server sends nothing unless both
+`OMPANEL_POSTHOG_KEY` and `OMPANEL_POSTHOG_HOST` are set (upstream defaults to its own
+`ingest.t3.codes`, which an upstream merge must not bring back). The configured endpoint
+receives PostHog-format batches. A send can fail after the endpoint has stored the batch,
+so every retry is a copy.
 [Delivery](../../apps/server/src/telemetry/AnalyticsService.ts) gives each event a
 uuid when it is recorded (the endpoint rejects events without one), backs off after
 a failed send, and drops a batch after a few tries. Without these limits, one stuck
@@ -108,4 +110,4 @@ must not reject a connection. PostHog person profiles remain disabled.
 
 Dev-runner servers and the CI archive smoke test turn telemetry off, which also
 stops relay tracing, because each would count as a new install. Set
-`T3CODE_TELEMETRY_ENABLED=true` to test analytics or relay tracing from a dev server.
+`OMPANEL_TELEMETRY_ENABLED=true` to test analytics or relay tracing from a dev server.

@@ -90,14 +90,16 @@ describe("thread links", () => {
 });
 
 describe("link round trips", () => {
-  it("builds a link that parses back to the same prompt", () => {
+  it("builds a hosted link that parses back to the same prompt", () => {
+    const origin = "https://hosted.example.test";
     const link = buildNewThreadLink({
       prompt: "Swear count & rating?",
       repository: { owner: "pingdotgg", name: "t3code" },
       provider: "claudeAgent",
       model: "opus",
+      origin,
     });
-    const path = promptLinkAppPath(link);
+    const path = promptLinkAppPath(link, origin);
     expect(path).toBe(new URL(link).pathname + new URL(link).search);
     const parsed = parseNewThreadLink(new URL(link).search);
     expect(parsed.ok && parsed.value.kind === "new" && parsed.value.prompt.text).toBe(
@@ -105,14 +107,27 @@ describe("link round trips", () => {
     );
   });
 
-  it("maps app scheme and hosted links to in-app paths, and nothing else", () => {
-    expect(promptLinkAppPath("t3code://new?prompt=hi")).toBe("/new?prompt=hi");
-    expect(promptLinkAppPath("t3code-dev://threads/env-1/thread-1")).toBe("/env-1/thread-1");
-    expect(promptLinkAppPath("https://app.t3.codes/env-1/thread-1?prompt=go")).toBe(
+  it("builds an app deep link when no hosted app is configured", () => {
+    const link = buildNewThreadLink({ prompt: "hi", provider: "codex", model: "gpt" });
+    expect(link).toBe("ompanel://new?prompt=hi&provider=codex&model=gpt");
+    expect(link).not.toContain("t3.codes");
+    expect(promptLinkAppPath(link)).toBe("/new?prompt=hi&provider=codex&model=gpt");
+  });
+
+  it("maps app scheme and configured hosted links to in-app paths, and nothing else", () => {
+    const hosted = "https://hosted.example.test";
+    expect(promptLinkAppPath("ompanel://new?prompt=hi")).toBe("/new?prompt=hi");
+    expect(promptLinkAppPath("ompanel-dev://threads/env-1/thread-1")).toBe("/env-1/thread-1");
+    expect(promptLinkAppPath(`${hosted}/env-1/thread-1?prompt=go`, hosted)).toBe(
       "/env-1/thread-1?prompt=go",
     );
-    expect(promptLinkAppPath("https://app.t3.codes/settings/general")).toBeNull();
-    expect(promptLinkAppPath("https://evil.test/new?prompt=hi")).toBeNull();
-    expect(promptLinkAppPath("t3code://app/index.html")).toBeNull();
+    expect(promptLinkAppPath(`${hosted}/settings/general`, hosted)).toBeNull();
+    expect(promptLinkAppPath("https://evil.test/new?prompt=hi", hosted)).toBeNull();
+    expect(promptLinkAppPath("ompanel://app/index.html")).toBeNull();
+  });
+
+  it("accepts no web origin, upstream included, when no hosted app is configured", () => {
+    expect(promptLinkAppPath("https://app.t3.codes/new?prompt=hi")).toBeNull();
+    expect(promptLinkAppPath("https://app.t3.codes/env-1/thread-1?prompt=go")).toBeNull();
   });
 });

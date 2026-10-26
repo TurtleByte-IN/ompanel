@@ -1,3 +1,4 @@
+import { APP_ID, PRODUCT_SLUG } from "@t3tools/shared/brand";
 import type {
   DesktopAppBranding,
   DesktopAppStageLabel,
@@ -229,10 +230,10 @@ const make = Effect.fn("desktop.environment.make")(function* (
     branding,
     displayName,
     appUserModelId: Option.getOrElse(config.appUserModelIdOverride, () =>
-      isDevelopment ? "com.t3tools.t3code.dev" : "com.t3tools.t3code",
+      isDevelopment ? `${APP_ID}.dev` : APP_ID,
     ),
     linuxDesktopEntryName: resolveLinuxDesktopEntryName(isDevelopment),
-    linuxWmClass: isDevelopment ? "t3code-dev" : "t3code",
+    linuxWmClass: isDevelopment ? `${PRODUCT_SLUG}-dev` : PRODUCT_SLUG,
     linuxApplicationsDir,
     desktopLauncherPath: config.desktopLauncherPath,
     appImagePath: config.appImagePath,

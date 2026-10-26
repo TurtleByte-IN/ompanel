@@ -1,5 +1,6 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto digest is effectful; a sync hash keeps historyPath a plain function.
 import * as NodeCrypto from "node:crypto";
+import { ENV_PREFIX } from "@t3tools/shared/brand";
 
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import {
@@ -1284,7 +1285,7 @@ function toSessionKey(threadId: string, terminalId: string): string {
 
 function shouldExcludeTerminalEnvKey(key: string): boolean {
   const normalizedKey = key.toUpperCase();
-  if (normalizedKey.startsWith("T3CODE_")) {
+  if (normalizedKey.startsWith(ENV_PREFIX)) {
     return true;
   }
   if (normalizedKey.startsWith("VITE_")) {

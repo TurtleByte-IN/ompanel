@@ -7,7 +7,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import { findOwnedLauncher } from "./uninstall.ts";
 
-it.layer(NodeServices.layer)("t3 uninstall launcher", (it) => {
+it.layer(NodeServices.layer)("ompanel uninstall launcher", (it) => {
   it.effect("claims only a launcher that points into this home's runtime tree", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

@@ -20,34 +20,34 @@ On Windows, in PowerShell:
 irm https://t3.codes/install.ps1 | iex
 ```
 
-This installs the `t3` binary to `~/.local/bin`. If your shell reports `command not found`
+This installs the `ompanel` binary to `~/.local/bin`. If your shell reports `command not found`
 afterwards, that directory is not on your `PATH` yet; the installer prints the
-line to add. Set `T3CODE_CHANNEL=nightly` to install the nightly train, or
-`T3CODE_VERSION` to pin an exact version.
+line to add. Set `OMPANEL_CHANNEL=nightly` to install the nightly train, or
+`OMPANEL_VERSION` to pin an exact version.
 
-| Task                                             | Command                                                                 |
-| ------------------------------------------------ | ----------------------------------------------------------------------- |
-| Start the server and open the web app            | `t3`                                                                    |
-| Start the server without a browser               | `t3 serve`                                                              |
-| Keep it running in the background (macOS, Linux) | `t3 service install` ([details](./background-service.md))               |
-| Move to the newest release                       | `t3 update`                                                             |
-| Reclaim database space                           | `t3 doctor` ([details](./background-service.md#reclaim-database-space)) |
-| Remove it again                                  | `t3 uninstall`                                                          |
+| Task                                             | Command                                                                      |
+| ------------------------------------------------ | ---------------------------------------------------------------------------- |
+| Start the server and open the web app            | `ompanel`                                                                    |
+| Start the server without a browser               | `ompanel serve`                                                              |
+| Keep it running in the background (macOS, Linux) | `ompanel service install` ([details](./background-service.md))               |
+| Move to the newest release                       | `ompanel update`                                                             |
+| Reclaim database space                           | `ompanel doctor` ([details](./background-service.md#reclaim-database-space)) |
+| Remove it again                                  | `ompanel uninstall`                                                          |
 
-Run `t3 help` or `t3 --help` for the full reference. To start in a new working
+Run `ompanel help` or `ompanel --help` for the full reference. To start in a new working
 directory, use an explicit path such as `t3 ./my-project`. A bare directory name
 is accepted only if it already exists.
 
-If `t3` or `t3 start` reports an already running server, connect to that server
+If `ompanel` or `ompanel start` reports an already running server, connect to that server
 instead. Stop it before starting a replacement, or use a different `--base-dir`
 for an independent server.
 
-To try T3 Code once without installing it, run `npx t3@latest` instead (needs
+To try T3 Code once without installing it, run `npx ompanel@latest` instead (needs
 Node.js for `npx`).
 
 ### Intel Macs
 
-There is no `t3` executable for Intel Macs (the desktop app is available). To
+There is no `ompanel` executable for Intel Macs (the desktop app is available). To
 run a server there, build it from source with `vp`, which provides the Node version it needs
 ([Install vp](https://github.com/pingdotgg/t3code#install-vp)):
 
@@ -57,7 +57,7 @@ cd t3code && vp i && vp run build:desktop
 node apps/server/dist/bin.mjs
 ```
 
-`t3 update` and the background service do not apply to a server run this way;
+`ompanel update` and the background service do not apply to a server run this way;
 update it with `git pull` and a rebuild.
 
 ## Desktop app
@@ -77,13 +77,13 @@ The `.deb` updates itself like the other desktop builds. It asks for your
 password to install each update. If your desktop has no password prompt, the
 update fails. Download the new `.deb` and install it the same way.
 
-### The `t3` command
+### The `ompanel` command
 
-The desktop app includes the `t3` command-line tool. To run it from any
+The desktop app includes the `ompanel` command-line tool. To run it from any
 terminal, open **Settings → General → About** and choose **Install** next to
-**t3 command**. On macOS and Linux it adds a `t3` link to a folder on your
+**ompanel command**. On macOS and Linux it adds a `ompanel` link to a folder on your
 `PATH`; on Windows it adds the app's command folder to your `PATH`. Open a new
-terminal afterwards. **Remove** takes it off again. If you already have `t3`
+terminal afterwards. **Remove** takes it off again. If you already have `ompanel`
 from npm, it stays as it is.
 
 ### Windows Subsystem for Linux
@@ -98,11 +98,11 @@ take longer.
 With the desktop app already running on the same machine:
 
 ```bash
-t3 app
+ompanel app
 ```
 
 This opens a new thread for the current directory, adding the project if needed.
-Pass a path, such as `t3 app ../my-project`, to open another directory. It requires
+Pass a path, such as `ompanel app ../my-project`, to open another directory. It requires
 the desktop app, so a standalone server or an SSH session is not enough. If the
 command cannot reach the app, start or update the desktop app and try again.
 
@@ -110,7 +110,7 @@ command cannot reach the app, start or update the desktop app and try again.
 
 Install T3 Code from the
 [App Store](https://apps.apple.com/us/app/t3-code-remote-claude-more/id6787819824) or
-[Google Play](https://play.google.com/store/apps/details?id=com.t3tools.t3code).
+[Google Play](https://play.google.com/store/apps/details?id=in.turtlebyte.ompanel).
 The phone connects to a server on another machine. Follow
 [remote access](./remote-access.md) to link it through T3 Connect or a pairing URL.
 
@@ -174,6 +174,30 @@ For provider-specific setup and accounts, see [Codex](./providers-codex.md),
 [Claude](./providers-claude.md), [OpenCode](./providers-opencode.md),
 [Antigravity](./providers-antigravity.md), [Pi](./providers-pi.md), and
 [Muse Code](./providers-muse.md).
+
+## Moving from T3 Code
+
+Ompanel keeps its data in `~/.ompanel`. The first time an Ompanel server starts with that
+default home, it copies your T3 Code projects, threads, settings and attachments from
+`~/.t3/userdata` into `~/.ompanel/userdata`. It does this once, records that in
+`~/.ompanel/legacy-home-migration.json`, and never changes `~/.t3`, so T3 Code keeps working.
+Existing threads keep using their worktrees under `~/.t3/worktrees`; new ones go under
+`~/.ompanel/worktrees`.
+
+- Quit T3 Code first. While its server is running, Ompanel starts without your T3 Code data, does
+  not open the current folder as a project, and copies your data on the next start after T3 Code
+  quits. If you add projects or threads yourself in between, Ompanel keeps them and does not
+  copy; otherwise the copy replaces that empty start.
+- Nothing is copied when `~/.ompanel/userdata` already has projects or threads, when you start
+  with `--base-dir` or `OMPANEL_HOME` pointing elsewhere, or in development mode.
+- Paired devices, pairing links, T3 Connect sign-in, device hosts, scheduled-task webhook URLs
+  and stored secrets stay behind. Pair your
+  phone or other clients with Ompanel again, sign in again to providers whose sign-in T3 Code
+  stored, re-enter secret environment values in provider settings, and rotate the webhook URL of
+  any webhook-triggered task.
+- Logs and per-install identifiers stay behind too, so Ompanel shows up as a new environment.
+- Environment variables use the `OMPANEL_` prefix. Ompanel does not read `T3CODE_*` variables,
+  so rename any you set, for example `T3CODE_HOME` to `OMPANEL_HOME`.
 
 ## Next steps
 
