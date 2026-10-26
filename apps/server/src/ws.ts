@@ -25,6 +25,7 @@ import {
   AcpRegistryOperationError,
   OmpAccountsOperationError,
   OmpAgentFilesOperationError,
+  type OmpAgentFileRef,
   OmpUsageOperationError,
   OmpSettingsOperationError,
   OmpSessionsOperationError,
@@ -377,6 +378,19 @@ function withoutWorkspaceSnapshots(providers: ReadonlyArray<ServerProvider>): Se
 
 function unexpectedCompatibilityError(error: never): never {
   throw new Error(`Unhandled compatibility error: ${String(error)}`);
+}
+
+/** Which OMP agent directory file a call touches, for spans; never its contents. */
+function ompAgentFileLabel(file: OmpAgentFileRef): string {
+  switch (file.kind) {
+    case "agent":
+    case "mcp":
+      return file.name;
+    case "custom":
+      return file.path;
+    default:
+      return file.kind;
+  }
 }
 
 const persistChatAttachments = Effect.fn("ws.assets.persistChatAttachments")(function* (input: {
@@ -2780,7 +2794,7 @@ export const layerWsRpc = (
         [WS_METHODS.serverReadOmpAgentFile]: (input) =>
           Effect.annotateCurrentSpan({
             "provider.instance_id": input.instanceId,
-            "omp.agent_file": input.file.kind === "agent" ? input.file.name : input.file.kind,
+            "omp.agent_file": ompAgentFileLabel(input.file),
           }).pipe(
             Effect.andThen(ompAgentFilesController(input.instanceId)),
             Effect.flatMap((files) => files.read(input.file)),
@@ -2788,7 +2802,7 @@ export const layerWsRpc = (
         [WS_METHODS.serverWriteOmpAgentFile]: (input) =>
           Effect.annotateCurrentSpan({
             "provider.instance_id": input.instanceId,
-            "omp.agent_file": input.file.kind === "agent" ? input.file.name : input.file.kind,
+            "omp.agent_file": ompAgentFileLabel(input.file),
           }).pipe(
             Effect.andThen(ompAgentFilesController(input.instanceId)),
             Effect.flatMap((files) =>
@@ -2802,12 +2816,17 @@ export const layerWsRpc = (
         [WS_METHODS.serverDeleteOmpAgentFile]: (input) =>
           Effect.annotateCurrentSpan({
             "provider.instance_id": input.instanceId,
-            "omp.agent_file": input.file.kind === "agent" ? input.file.name : input.file.kind,
+            "omp.agent_file": ompAgentFileLabel(input.file),
           }).pipe(
             Effect.andThen(ompAgentFilesController(input.instanceId)),
             Effect.flatMap((files) =>
               files.remove({ file: input.file, baseVersion: input.baseVersion }),
             ),
+          ),
+        [WS_METHODS.serverUnpackOmpAgents]: (input) =>
+          Effect.annotateCurrentSpan({ "provider.instance_id": input.instanceId }).pipe(
+            Effect.andThen(ompAgentFilesController(input.instanceId)),
+            Effect.flatMap((files) => files.unpackAgents),
           ),
         [WS_METHODS.serverGetOmpAccountUsage]: (input) =>
           Effect.annotateCurrentSpan({ "provider.instance_id": input.instanceId }).pipe(

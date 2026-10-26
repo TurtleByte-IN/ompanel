@@ -91,6 +91,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.serverReadOmpAgentFile]: "provider",
   [WS_METHODS.serverWriteOmpAgentFile]: "provider",
   [WS_METHODS.serverDeleteOmpAgentFile]: "provider",
+  [WS_METHODS.serverUnpackOmpAgents]: "provider",
   [WS_METHODS.serverGetOmpAccountUsage]: "provider",
   [WS_METHODS.serverGetOmpStats]: "provider",
   [WS_METHODS.serverGetOmpSessionStats]: "provider",
