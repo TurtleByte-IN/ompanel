@@ -17,6 +17,7 @@ export function decide(
     typecheck: boolean;
     build: boolean;
     boot_smoke: boolean;
+    desktop_smoke: boolean;
     test: boolean;
     test_packages: string;
     test_web: boolean;

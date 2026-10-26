@@ -30,6 +30,7 @@ squashfs-root/
 /audits/
 dist-electron/
 .electron-runtime/
+.smoke-omp/
 .showcase/
 apps/mobile/.showcase/
 apps/mobile/.generated/

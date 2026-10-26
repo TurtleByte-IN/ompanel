@@ -968,6 +968,8 @@ export function ProviderInstanceCard({
     return (
       <div
         data-slot="settings-row"
+        data-provider-instance={instanceId}
+        data-provider-status={statusKey}
         className={cn(
           "group flex min-h-18 items-center gap-3 px-3 py-3 transition-colors sm:px-4",
           selected ? "bg-muted/45" : "hover:bg-muted/25",

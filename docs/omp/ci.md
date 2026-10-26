@@ -41,6 +41,23 @@ cancelled job fails it. Through it, every pull request is gated on:
   desktop backend), then stay up 15 s. An exit at any point fails the job, so a
   backend that would crash-loop in the desktop app cannot merge. Run the same
   command locally after `vp run --filter t3 build`.
+- desktop on every OS: `Desktop Smoke macOS arm64`, `Linux x64`, `Linux arm64`,
+  `Windows x64` and `Windows arm64`, for the same changes. Each builds the
+  desktop app and server (`vp run --filter @t3tools/desktop --filter t3 build`)
+  on its own runner, then runs `node apps/desktop/scripts/smoke-omp.mjs`
+  (under `xvfb-run` on Linux). The script launches `dist-electron/boot.cjs`,
+  the entry the packaged app runs, with a throwaway home and OMP enabled with
+  no binary path. It passes only when the backend logs ready and answers
+  `/.well-known/t3/environment`, the main window opens, and the OMP row on
+  Settings → Providers turns ready. It then checks that the sidecar that ran
+  is this platform's `omp.lock` asset: downloaded into
+  `<OMPANEL_HOME>/tools/omp/<tag>/` with the sha256 in the lock. A screenshot
+  of the providers page and the app's log are uploaded as
+  `desktop-smoke-<platform>-<arch>`. On Windows the job first runs
+  `processTree.windows.test.ts`, which kills real process trees under the
+  job-object launcher ([processes.md](processes.md#stopping)). Locally, run
+  the build, then the script; set `OMPANEL_DESKTOP_SMOKE_ARTIFACTS` to keep the
+  screenshot somewhere other than `apps/desktop/.smoke-omp`.
 
 A new job joins the gate by being added to `Check`'s `needs`; the branch
 protection setting does not change. Workflows other than `ci.yml` (PR size,
