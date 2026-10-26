@@ -17,7 +17,7 @@ import {
 
 import { resolveShortcutCommand, type ShortcutEventLike } from "./keybindings";
 
-export type ComposerTriggerKind = "path" | "pull-request" | "slash-command" | "skill";
+export type ComposerTriggerKind = "path" | "pull-request" | "slash-command" | "skill" | "keyword";
 export type ComposerSlashCommand = "model" | "plan" | "default";
 export type ComposerSubmissionIntent = "foreground" | "background" | "alternate";
 
@@ -26,6 +26,14 @@ export interface ComposerTrigger {
   query: string;
   rangeStart: number;
   rangeEnd: number;
+}
+
+export interface ComposerTriggerOptions {
+  /**
+   * Completions a plain lowercase word being typed offers (a provider's magic keywords); a word
+   * with none is not a trigger. Without it no `keyword` trigger is detected.
+   */
+  readonly keywordCompletions?: (token: string) => ReadonlyArray<unknown>;
 }
 
 export function isPathSuggestionCurrent(
@@ -278,7 +286,11 @@ export function isCollapsedCursorAdjacentToInlineToken(
   return false;
 }
 
-export function detectComposerTrigger(text: string, cursorInput: number): ComposerTrigger | null {
+export function detectComposerTrigger(
+  text: string,
+  cursorInput: number,
+  options?: ComposerTriggerOptions,
+): ComposerTrigger | null {
   const cursor = clampCursor(text, cursorInput);
   const tokenStart = tokenStartForCursor(text, cursor);
   const token = text.slice(tokenStart, cursor);
@@ -310,16 +322,24 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
       rangeEnd: cursor,
     };
   }
-  if (!token.startsWith("@")) {
-    return null;
+  if (token.startsWith("@")) {
+    return {
+      kind: "path",
+      query: token.slice(1),
+      rangeStart: tokenStart,
+      rangeEnd: cursor,
+    };
   }
-
-  return {
-    kind: "path",
-    query: token.slice(1),
-    rangeStart: tokenStart,
-    rangeEnd: cursor,
-  };
+  const keywordCompletions = options?.keywordCompletions;
+  if (
+    keywordCompletions !== undefined &&
+    /^[a-z]+$/.test(token) &&
+    (cursor === text.length || isWhitespace(text[cursor] ?? "")) &&
+    keywordCompletions(token).length > 0
+  ) {
+    return { kind: "keyword", query: token, rangeStart: tokenStart, rangeEnd: cursor };
+  }
+  return null;
 }
 
 export function pastedPathQueryLength(
@@ -335,6 +355,7 @@ export function pastedPathQueryLength(
 export function composerStateAtPromptEnd(
   text: string,
   literalText = false,
+  options?: ComposerTriggerOptions,
 ): {
   cursor: number;
   trigger: ComposerTrigger | null;
@@ -344,7 +365,7 @@ export function composerStateAtPromptEnd(
     cursor,
     trigger: literalText
       ? null
-      : detectComposerTrigger(text, expandCollapsedComposerCursor(text, cursor)),
+      : detectComposerTrigger(text, expandCollapsedComposerCursor(text, cursor), options),
   };
 }
 

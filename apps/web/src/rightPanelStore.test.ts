@@ -688,6 +688,49 @@ describe("rightPanelStore", () => {
     });
   });
 
+  it("opens one goal tab per thread and toggles it", () => {
+    const store = useRightPanelStore.getState();
+    store.open(refA, "diff");
+    store.toggle(refA, "goal");
+    expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      id: "goal",
+      kind: "goal",
+    });
+    store.open(refA, "diff");
+    store.open(refA, "goal");
+    const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.surfaces.filter((surface) => surface.kind === "goal")).toHaveLength(1);
+    expect(state.activeSurfaceId).toBe("goal");
+    store.toggle(refA, "goal");
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).not.toBe(
+      "goal",
+    );
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refB)).toBeNull();
+  });
+
+  it("keeps a persisted goal surface", async () => {
+    const panelState = {
+      isOpen: true,
+      activeSurfaceId: "goal",
+      surfaces: [
+        { id: "diff", kind: "diff" },
+        { id: "goal", kind: "goal" },
+      ],
+    };
+    expect(
+      migratePersistedRightPanelState({ byThreadKey: { "env-1:thread-A": panelState } }, 15),
+    ).toEqual({
+      byThreadKey: { "env-1:thread-A": panelState },
+      threadPanelVisibilityByThreadKey: {},
+    });
+    useRightPanelStore.getState().open(refA, "goal");
+    await reloadRightPanelStore();
+    expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      id: "goal",
+      kind: "goal",
+    });
+  });
+
   it("persists inline preference without restoring an open popover", () => {
     expect(
       migratePersistedRightPanelState({

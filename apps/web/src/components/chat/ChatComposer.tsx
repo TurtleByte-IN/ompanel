@@ -47,6 +47,11 @@ import { splitTransferredFiles } from "./workspaceFileDrop";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
 import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
 import {
+  ompMagicKeywordCompletions,
+  ompMagicKeywordsIn,
+  type OmpMagicKeyword,
+} from "@t3tools/provider-omp/composer";
+import {
   memo,
   type ReactNode,
   useEffect,
@@ -61,6 +66,7 @@ import { createPortal, flushSync } from "react-dom";
 import {
   clampCollapsedComposerCursor,
   type ComposerTrigger,
+  type ComposerTriggerOptions,
   type ComposerSubmissionIntent,
   collapseExpandedComposerCursor,
   composerRequiresModifier,
@@ -210,7 +216,12 @@ import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
 import { buildPullRequestReferenceContext } from "../pullRequest/pullRequestDetail.logic";
-import { getComposerPromptInjectionState, getComposerReasoningStep } from "./composerProviderState";
+import type { ComposerGoalChipState } from "./ComposerGoalChip";
+import {
+  getComposerPromptInjectionState,
+  getComposerReasoningStep,
+  ULTRATHINK_COMPOSER_CLASSES,
+} from "./composerProviderState";
 import { readPromptUltrathink } from "./TraitsPicker";
 import {
   providerSupportsManualCompaction,
@@ -529,10 +540,17 @@ export interface ChatComposerProps {
   setThreadError: (threadId: ThreadId | null, error: string | null) => void;
   onExpandImage: (preview: ExpandedImagePreview) => void;
   onFileOpen: (attachment: ChatFileAttachment) => void;
+  /** An OMP thread's goal chip in the footer controls; shown only while OMP is selected. */
+  goalChip?: ComposerGoalChipState | null;
 }
 
 const NO_PROVIDER_SKILLS: ServerProvider["skills"] = [];
 const NO_PROVIDER_SLASH_COMMANDS: ServerProvider["slashCommands"] = [];
+const NO_MAGIC_KEYWORDS: ReadonlyArray<OmpMagicKeyword> = [];
+/** OMP threads also complete OMP's magic keywords as they are typed. */
+const OMP_COMPOSER_TRIGGER_OPTIONS: ComposerTriggerOptions = {
+  keywordCompletions: ompMagicKeywordCompletions,
+};
 
 export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps) {
   const {
@@ -960,6 +978,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     lockedInstanceId:
       activeThread?.runtime?.providerInstanceId ?? activeThreadModelSelection?.instanceId,
   });
+  const isOmpComposer = selectedProvider === "omp";
+  // Every trigger detection passes these, so the composer offers magic keywords only to OMP.
+  const composerTriggerOptions = isOmpComposer ? OMP_COMPOSER_TRIGGER_OPTIONS : undefined;
+  const promptMagicKeywords = isOmpComposer ? ompMagicKeywordsIn(prompt) : NO_MAGIC_KEYWORDS;
+  const composerFrameState = promptMagicKeywords.some((keyword) => keyword.id === "ultrathink")
+    ? ULTRATHINK_COMPOSER_CLASSES
+    : composerProviderState;
   const noProviderAvailable =
     selectedProviderEntry === undefined && multipleModelSelections === null;
   const providerCatalogPending = noProviderAvailable && !providerCatalogKnown;
@@ -1066,7 +1091,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     dismissTrigger: dismissComposerTrigger,
     resetTrigger: resetComposerTrigger,
   } = useComposerTriggerState(() =>
-    isLiteralPendingAnswer ? null : detectComposerTrigger(prompt, prompt.length),
+    isLiteralPendingAnswer
+      ? null
+      : detectComposerTrigger(prompt, prompt.length, composerTriggerOptions),
   );
   const [composerHighlightedItemId, setComposerHighlightedItemId] = useState<string | null>(null);
   const composerSuggestionId = useId();
@@ -1209,7 +1236,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     showSkillsInSlashMenu: settings.showSkillsInSlashMenu,
   });
 
-  const composerMenuOpen = Boolean(composerTrigger);
+  // A keyword trigger is only a suggestion: with nothing to complete there is no menu at all.
+  const composerMenuOpen =
+    composerTrigger !== null &&
+    (composerTrigger.kind !== "keyword" || composerMenuItems.length > 0);
   const composerMenuSearchKey = composerTrigger
     ? `${composerSuggestionListId}:${composerTrigger.kind}:${composerTrigger.query.trim().toLowerCase()}`
     : null;
@@ -1267,7 +1297,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     setComposerDraftPrompt(composerDraftTarget, nextPrompt);
     const nextCursor = collapseExpandedComposerCursor(nextPrompt, nextPrompt.length);
     setComposerCursor(nextCursor);
-    setComposerTrigger(detectComposerTrigger(nextPrompt, nextPrompt.length));
+    setComposerTrigger(
+      detectComposerTrigger(nextPrompt, nextPrompt.length, composerTriggerOptions),
+    );
     scheduleComposerFocus();
   };
   const editPromptFromTraitsStable = useStableCallback(editPromptFromTraits);
@@ -1503,7 +1535,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (typeof nextCustomAnswer !== "string") {
       if (lastSyncedPendingInputRef.current !== null) {
         promptRef.current = prompt;
-        const { cursor, trigger } = composerStateAtPromptEnd(prompt);
+        const { cursor, trigger } = composerStateAtPromptEnd(prompt, false, composerTriggerOptions);
         setComposerCursor(cursor);
         resetComposerTrigger(trigger);
       }
@@ -1528,7 +1560,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
 
     promptRef.current = nextCustomAnswer;
-    const { cursor, trigger } = composerStateAtPromptEnd(nextCustomAnswer, isLiteralPendingAnswer);
+    const { cursor, trigger } = composerStateAtPromptEnd(
+      nextCustomAnswer,
+      isLiteralPendingAnswer,
+      composerTriggerOptions,
+    );
     setComposerCursor(cursor);
     resetComposerTrigger(trigger);
     setComposerHighlightedItemId(null);
@@ -1540,6 +1576,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     prompt,
     promptRef,
     resetComposerTrigger,
+    composerTriggerOptions,
   ]);
 
   const composerSessionKey = `${draftId ?? ""}:${activeThreadId ?? ""}:${isLiteralPendingAnswer}`;
@@ -1554,6 +1591,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     const { cursor, trigger } = composerStateAtPromptEnd(
       typeof pendingAnswer === "string" ? pendingAnswer : prompt,
       isLiteralPendingAnswer,
+      composerTriggerOptions,
     );
     setComposerCursor(cursor);
     resetComposerTrigger(trigger);
@@ -1688,7 +1726,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       if (activePendingProgress.activeQuestion.allowCustomAnswer === false) return;
       setComposerCursor(nextCursor);
       setComposerTrigger(
-        cursorAdjacentToMention ? null : detectComposerTrigger(nextPrompt, expandedCursor),
+        cursorAdjacentToMention
+          ? null
+          : detectComposerTrigger(nextPrompt, expandedCursor, composerTriggerOptions),
       );
       onChangeActivePendingUserInputCustomAnswer(
         activePendingProgress.activeQuestion.id,
@@ -1789,7 +1829,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
     setComposerCursor(nextCursor);
     setComposerTrigger(
-      cursorAdjacentToMention ? null : detectComposerTrigger(nextPrompt, expandedCursor),
+      cursorAdjacentToMention
+        ? null
+        : detectComposerTrigger(nextPrompt, expandedCursor, composerTriggerOptions),
     );
   };
   const onPromptChangeStable = useStableCallback(onPromptChange);
@@ -1860,7 +1902,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
     setComposerCursor(nextCursor);
     setComposerTrigger(
-      isLiteralPendingAnswer ? null : detectComposerTrigger(next.text, nextExpandedCursor),
+      isLiteralPendingAnswer
+        ? null
+        : detectComposerTrigger(next.text, nextExpandedCursor, composerTriggerOptions),
     );
     if (options?.focusEditorAfterReplace !== false) {
       window.requestAnimationFrame(() => {
@@ -1904,7 +1948,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       snapshot,
       trigger: isLiteralPendingAnswer
         ? null
-        : resolveComposerTrigger(detectComposerTrigger(snapshot.value, snapshot.expandedCursor)),
+        : resolveComposerTrigger(
+            detectComposerTrigger(snapshot.value, snapshot.expandedCursor, composerTriggerOptions),
+          ),
     };
   };
 
@@ -1983,6 +2029,22 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
     if (item.type === "skill") {
       const replacement = `$${item.skill.name} `;
+      const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+        snapshot.value,
+        trigger.rangeEnd,
+        replacement,
+      );
+      const applied = applyPromptReplacement(trigger.rangeStart, replacementRangeEnd, replacement, {
+        expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd),
+      });
+      if (applied) {
+        setComposerHighlightedItemId(null);
+      }
+      return;
+    }
+    if (item.type === "magic-keyword") {
+      if (trigger.kind !== "keyword") return;
+      const replacement = `${item.keyword.word} `;
       const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
         snapshot.value,
         trigger.rangeEnd,
@@ -2583,8 +2645,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       terminalOpen={terminalOpen}
       modelPickerOpen={isComposerModelPickerOpen}
       onModelPickerOpenChange={setIsComposerModelPickerOpen}
-      modelPickerIconClassName={composerProviderState.modelPickerIconClassName}
+      modelPickerIconClassName={composerFrameState.modelPickerIconClassName}
       getModelDisabledReason={getModelDisabledReason}
+      goalChip={isOmpComposer && routeKind === "server" ? (props.goalChip ?? null) : null}
+      magicKeywords={promptMagicKeywords}
     />
   );
   const showTasksTab =
@@ -3197,6 +3261,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             ? detectComposerTrigger(
                 promptForState,
                 expandCollapsedComposerCursor(promptForState, cursor),
+                composerTriggerOptions,
               )
             : null,
         );
@@ -3228,7 +3293,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         if (!inserted) return;
         promptRef.current = insertion.prompt;
         setComposerCursor(nextCollapsedCursor);
-        setComposerTrigger(detectComposerTrigger(insertion.prompt, insertion.cursor));
+        setComposerTrigger(
+          detectComposerTrigger(insertion.prompt, insertion.cursor, composerTriggerOptions),
+        );
         window.requestAnimationFrame(() => {
           composerEditorRef.current?.focusAt(nextCollapsedCursor);
         });
@@ -3314,6 +3381,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       readComposerSnapshotStable,
       resetComposerTrigger,
       setComposerTrigger,
+      composerTriggerOptions,
       selectedModel,
       selectedInstanceId,
       reportedModelSelection,
@@ -3589,7 +3657,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           data-model-only-strip={
             restingControlsHost?.closest("[data-composer-model-strip]") ? "true" : undefined
           }
-          className={composerProviderState.composerFrameClassName}
+          className={composerFrameState.composerFrameClassName}
         >
           <div
             ref={composerSurfaceRef}
@@ -3600,7 +3668,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               "in-data-[thread-context-over]:bg-accent/45 in-data-[thread-context-over]:ring-1 in-data-[thread-context-over]:ring-inset in-data-[thread-context-over]:ring-primary/70",
               isDragOverComposer ? "bg-accent/45 ring-1 ring-inset ring-primary/70" : null,
               projectSelectionRequired ? "opacity-75" : null,
-              composerProviderState.composerSurfaceClassName,
+              composerFrameState.composerSurfaceClassName,
             )}
           >
             {showCollapsedMobilePromptRow ? (

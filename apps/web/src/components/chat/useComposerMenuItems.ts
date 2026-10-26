@@ -14,6 +14,7 @@ import {
   filterComposerPullRequestMatches,
 } from "@t3tools/shared/composerPullRequestMatches";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
+import { ompMagicKeywordCompletions } from "@t3tools/provider-omp/composer";
 
 import type { ComposerTrigger } from "../../composer-logic";
 import { basenameOfPath } from "../../pierre-icons";
@@ -45,7 +46,7 @@ const COMPOSER_PULL_REQUEST_RESULT_LIMIT = 12;
 const EMPTY_PULL_REQUEST_LIST_TARGETS: ReadonlyArray<EnvironmentQueryTarget<PullRequestListInput>> =
   [];
 
-/** Builds the @, /, $ and # suggestion lists, running the searches each trigger needs. */
+/** Builds the @, /, $, # and magic-keyword suggestion lists, running the searches each needs. */
 export function useComposerMenuItems({
   composerTrigger,
   environmentId,
@@ -255,6 +256,15 @@ export function useComposerMenuItems({
           skill.shortDescription ??
           skill.description ??
           (skill.scope ? `${skill.scope} skill` : "Run provider skill"),
+      }));
+    }
+    if (composerTrigger.kind === "keyword") {
+      return ompMagicKeywordCompletions(composerTrigger.query).map((keyword) => ({
+        id: `magic-keyword:${keyword.id}`,
+        type: "magic-keyword" as const,
+        keyword,
+        label: keyword.word,
+        description: keyword.description,
       }));
     }
     if (

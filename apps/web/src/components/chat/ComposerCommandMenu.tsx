@@ -4,6 +4,7 @@ import {
   resolveProviderSkillSourceKind,
   type ProviderSkillSourceKind,
 } from "@t3tools/client-runtime/providerSkills";
+import type { OmpMagicKeyword } from "@t3tools/provider-omp/composer";
 import {
   type ProjectEntry,
   type ProviderDriverKind,
@@ -30,6 +31,7 @@ import { Command, CommandGroup, CommandItem, CommandList } from "../ui/command";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 import { ComposerBanner } from "./ComposerBanner";
 import { resolvePullRequestState } from "../pullRequest/pullRequestPresentation";
+import { MagicKeywordWord, magicKeywordRequiresNote } from "./MagicKeywordChip";
 
 export type ComposerCommandItem =
   | {
@@ -75,6 +77,13 @@ export type ComposerCommandItem =
       id: string;
       type: "thread";
       thread: ScopedThreadRef;
+      label: string;
+      description: string;
+    }
+  | {
+      id: string;
+      type: "magic-keyword";
+      keyword: OmpMagicKeyword;
       label: string;
       description: string;
     };
@@ -216,6 +225,8 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
               <span className="text-secondary-label">/skill:</span>
               {formatProviderSkillDisplayName(isSlashSkill)}
             </>
+          ) : props.item.type === "magic-keyword" ? (
+            <MagicKeywordWord keyword={props.item.keyword} />
           ) : (
             props.item.label
           )}
@@ -223,6 +234,11 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
         <span className="min-w-0 flex-1 truncate text-left text-secondary-label text-xs">
           {props.item.description}
         </span>
+        {props.item.type === "magic-keyword" && props.item.keyword.requires.length > 0 ? (
+          <Badge variant="outline" size="sm" className="shrink-0">
+            {magicKeywordRequiresNote(props.item.keyword)}
+          </Badge>
+        ) : null}
         {skillSourceKind ? (
           <SkillSourceBadge
             kind={skillSourceKind}
@@ -244,6 +260,7 @@ const LISTBOX_LABEL_BY_TRIGGER: Record<ComposerTriggerKind, string> = {
   "pull-request": "Pull requests",
   "slash-command": "Commands",
   skill: "Skills",
+  keyword: "Magic keywords",
 };
 
 const SKILL_SOURCE_ICON_BY_KIND: Record<ProviderSkillSourceKind, LucideIcon> = {

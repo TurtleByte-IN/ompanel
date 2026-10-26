@@ -211,7 +211,10 @@ export function useComposerCommandKey(input: {
         nudgeComposerMenuHighlight("ArrowUp");
         return true;
       }
-      if ((key === "Enter" || key === "Tab") && selectedItem) {
+      // A magic keyword is suggested over prose ("work" offers workflowz), so Enter still sends;
+      // Tab or a click takes the suggestion.
+      const acceptKey = key === "Tab" || (key === "Enter" && trigger?.kind !== "keyword");
+      if (acceptKey && selectedItem) {
         onSelectComposerItem(selectedItem);
         return true;
       }

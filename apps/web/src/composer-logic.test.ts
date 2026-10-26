@@ -11,6 +11,7 @@ import {
   mergeWithDefaultKeybindings,
 } from "@t3tools/shared/keybindings";
 import { describe, expect, it } from "vite-plus/test";
+import { ompMagicKeywordCompletions } from "@t3tools/provider-omp/composer";
 
 import {
   clampCollapsedComposerCursor,
@@ -305,6 +306,67 @@ describe("detectComposerTrigger", () => {
       query: "",
       rangeStart: "Please inspect ".length,
       rangeEnd: cursorAfterAt,
+    });
+  });
+});
+
+describe("detectComposerTrigger keyword completions", () => {
+  const omp = { keywordCompletions: ompMagicKeywordCompletions };
+
+  it("offers a magic keyword for a typed prefix", () => {
+    const text = "fix the parser, ult";
+    expect(detectComposerTrigger(text, text.length, omp)).toEqual({
+      kind: "keyword",
+      query: "ult",
+      rangeStart: "fix the parser, ".length,
+      rangeEnd: text.length,
+    });
+    expect(composerStateAtPromptEnd("orch", false, omp).trigger).toEqual({
+      kind: "keyword",
+      query: "orch",
+      rangeStart: 0,
+      rangeEnd: 4,
+    });
+  });
+
+  it.each([
+    ["a complete keyword", "please ultrathink"],
+    ["a prefix below the minimum", "ul"],
+    ["a word no keyword starts with", "refactor"],
+    ["a capitalised prefix", "Ult"],
+    ["a prefix glued to punctuation", "(ult"],
+  ])("offers nothing for %s", (_name, text) => {
+    expect(detectComposerTrigger(text, text.length, omp)).toBeNull();
+  });
+
+  it("offers nothing mid-word", () => {
+    expect(detectComposerTrigger("ultra", "ult".length, omp)).toBeNull();
+    expect(detectComposerTrigger("ult rest", "ult".length, omp)?.kind).toBe("keyword");
+  });
+
+  it("leaves the other triggers first", () => {
+    expect(detectComposerTrigger("/ult", 4, omp)?.kind).toBe("slash-command");
+    expect(detectComposerTrigger("@ult", 4, omp)?.kind).toBe("path");
+    expect(detectComposerTrigger("$ult", 4, omp)?.kind).toBe("skill");
+    expect(detectComposerTrigger("#ult", 4, omp)?.kind).toBe("pull-request");
+  });
+
+  it("detects no keyword trigger without completions", () => {
+    for (const text of ["ult", "fix it, orch", "jev"]) {
+      expect(detectComposerTrigger(text, text.length)).toBeNull();
+      expect(composerStateAtPromptEnd(text).trigger).toBeNull();
+      expect(detectComposerTrigger(text, text.length, {})).toBeNull();
+    }
+  });
+
+  it("replaces the typed prefix with the keyword and one space", () => {
+    const text = "ult the rest";
+    const trigger = detectComposerTrigger(text, "ult".length, omp)!;
+    const replacement = "ultrathink ";
+    const rangeEnd = extendReplacementRangeForTrailingSpace(text, trigger.rangeEnd, replacement);
+    expect(replaceTextRange(text, trigger.rangeStart, rangeEnd, replacement)).toEqual({
+      text: "ultrathink the rest",
+      cursor: "ultrathink ".length,
     });
   });
 });
