@@ -58,12 +58,12 @@ adapter writes it to the thread's `--config` overlay, which OMP reloads in place
 
 On OMP default, the Role select runs the thread as one of OMP's chat roles (`smol`,
 `slow`, `plan`, `vision`, `task`, `advisor`, `commit`, `tiny`). The adapter writes
-`modelRoles.default: "@<role>"` to the thread's overlay before the process starts;
-OMP resolves the alias through the configured roles (overlays deep-merge, so the
-user's own `modelRoles` entries still apply). The model is chosen at startup, so a
-role change answers `planSelectionTransition` with `restart_session`. Back on
-`default`, only a role alias is removed from the overlay; a model a settings override
-put there stays.
+`modelRoles.default: "@<role>"` to the thread's overlay before the process starts
+(overlays deep-merge, so the user's own `modelRoles` entries still apply), and a role
+change answers `planSelectionTransition` with `restart_session`.
 
-A resumed OMP session restores the model it last recorded, so the role decides the
-model of sessions that have not switched models.
+The process's own fresh session runs the model OMP resolves at launch, which is the
+role's model; the adapter records it before it switches to the thread's session. A
+resumed session reloads the model it recorded, so when that differs, the next turn
+on OMP default sends `set_model` with the launch model. Back on `default`, only a role
+alias is removed from the overlay; a model a settings override put there stays.

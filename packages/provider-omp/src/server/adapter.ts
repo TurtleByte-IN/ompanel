@@ -82,6 +82,8 @@ const SIDE_REQUEST_TIMEOUT_MS = 2_000;
 const SELECTION_REQUEST_TIMEOUT_MS = 10_000;
 /** The overlay key the role chip writes (docs/omp/models.md). */
 const ROLE_OVERLAY_KEY = "modelRoles.default";
+/** Stands for the model a prewalk handoff left OMP on, which no selection names. */
+const PREWALK_HANDOFF_MODEL = "\0prewalk";
 /** Subagent controls wait for OMP to accept them, which can include a subagent's turn setup. */
 const SUBAGENT_REQUEST_TIMEOUT_MS = 30_000;
 /** Reviving rebuilds a subagent session from its transcript (models, tools, extensions). */
@@ -674,6 +676,10 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
     // Before the first turn, so its tools and directory handling are in place.
     yield* hostBridge.setup;
 
+    /** What OMP runs: the launch model until a `set_model`, then each pick OMP accepted. */
+    let appliedModel: string = OMP_DEFAULT_MODEL_SLUG;
+    /** The model OMP started the session on, restored when the thread goes back to default. */
+    let baselineModel: { readonly provider: string; readonly modelId: string } | undefined;
     /**
      * Binds the thread to its OMP session: the one it ran before (reopened if the process runs
      * another), else the process's own fresh session. A thread with no run yet whose session
@@ -691,6 +697,11 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
         return bound;
       }
       let state = yield* process.request("get_state", undefined);
+      // The process's own fresh session runs the model OMP's config (and the role chip's
+      // overlay) resolves at launch: OMP default for this thread.
+      if (state.model !== undefined) {
+        baselineModel = { provider: state.model.provider, modelId: state.model.id };
+      }
       const nativeId = existing?.nativeThreadRef?.nativeId;
       if (nativeId != null && nativeId !== state.sessionId) {
         state = yield* withFiles(switchOmpSession({ ...binding, sessionId: nativeId })).pipe(
@@ -698,9 +709,14 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
             protocolError(`OMP session ${nativeId} could not be resumed: ${error.message}`),
           ),
         );
-      }
-      if (state.model !== undefined) {
-        baselineModel = { provider: state.model.provider, modelId: state.model.id };
+        // A resumed session reloads the model it recorded, which need not be OMP default.
+        if (
+          state.model !== undefined &&
+          (state.model.provider !== baselineModel?.provider ||
+            state.model.id !== baselineModel?.modelId)
+        ) {
+          appliedModel = `${state.model.provider}/${state.model.id}`;
+        }
       }
       const result = mapper.bindThread(
         { threadId, state, ...(existing === undefined ? {} : { existing }) },
@@ -764,10 +780,6 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       appliedApprovalMode = wanted;
     });
 
-    /** What OMP runs: the launch model until a `set_model`, then each pick OMP accepted. */
-    let appliedModel: string = OMP_DEFAULT_MODEL_SLUG;
-    /** The model OMP started the session on, restored when the thread goes back to default. */
-    let baselineModel: { readonly provider: string; readonly modelId: string } | undefined;
     const applied: {
       thinking?: string;
       fastMode?: boolean;
@@ -805,8 +817,10 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
           yield* process
             .request("set_model", target, { timeoutMs: SELECTION_REQUEST_TIMEOUT_MS })
             .pipe(Effect.mapError(selectionError("set_model")));
-          // OMP re-applies the new model's own thinking level.
+          // OMP re-applies the new model's own thinking level, and fast mode is per model
+          // family: both are re-sent for the new model.
           delete applied.thinking;
+          delete applied.fastMode;
         }
         appliedModel = traits.model;
       }
@@ -844,7 +858,13 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
         yield* process
           .request("set_prewalk", { armed }, { timeoutMs: SIDE_REQUEST_TIMEOUT_MS })
           .pipe(
-            Effect.tap(() => Effect.sync(() => (applied.prewalk = armed))),
+            Effect.tap(() =>
+              Effect.sync(() => {
+                applied.prewalk = armed;
+                // OMP's handoff switches the model for good; the next turn restores the pick.
+                if (armed) appliedModel = PREWALK_HANDOFF_MODEL;
+              }),
+            ),
             Effect.catch(traitRefused("prewalk")),
           );
       }

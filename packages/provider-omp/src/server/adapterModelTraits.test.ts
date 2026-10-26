@@ -303,4 +303,57 @@ posixOnly("OmpAdapter model and traits", () => {
       });
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
+
+  it.live("restores the picked model after a prewalk handoff, and re-arms it", () =>
+    Effect.gen(function* () {
+      const { turn, sent } = yield* openThread(selection("default"));
+      const picked = selection("anthropic/claude-sonnet-4-5", [{ id: "prewalk", value: true }]);
+      yield* turn(picked);
+      yield* turn(picked);
+      // The handoff left OMP on the prewalk target: the pick is set again before the prompt.
+      assert.lengthOf(sent("set_model"), 2);
+      assert.lengthOf(sent("set_prewalk"), 2);
+      yield* turn(selection("anthropic/claude-sonnet-4-5", [{ id: "prewalk", value: false }]));
+      assert.lengthOf(sent("set_model"), 3);
+      yield* turn(selection("anthropic/claude-sonnet-4-5", [{ id: "prewalk", value: false }]));
+      assert.lengthOf(sent("set_model"), 3);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("re-sends fast mode after a model change, since OMP keeps it per model family", () =>
+    Effect.gen(function* () {
+      const { turn, sent } = yield* openThread(selection("default"));
+      const fast = [{ id: "fastMode", value: true }];
+      yield* turn(selection("default", fast));
+      yield* turn(selection("anthropic/claude-sonnet-4-5", fast));
+      yield* turn(selection("anthropic/claude-sonnet-4-5", fast));
+      assert.deepStrictEqual(
+        sent("set_fast_mode").map((command) => command["enabled"]),
+        [true, true],
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("goes back to the model OMP launched on (the role's model) for OMP default", () =>
+    Effect.gen(function* () {
+      const role = selection("default", [{ id: "role", value: "smol" }]);
+      const { turn, sent } = yield* openThread(role, {
+        get_state: [
+          {
+            respond: {
+              sessionId: "launch",
+              sessionFile: "/fake/sessions/launch.jsonl",
+              model: { ...MODEL, id: "claude-haiku-4-5" },
+            },
+          },
+        ],
+      });
+      yield* turn(selection("anthropic/claude-sonnet-4-5"));
+      yield* turn(role);
+      assert.deepStrictEqual(
+        sent("set_model").map((command) => command["modelId"]),
+        ["claude-sonnet-4-5", "claude-haiku-4-5"],
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
 });
