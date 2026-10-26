@@ -49,6 +49,14 @@ describe("fallbackTextGenerationModelSelection", () => {
     );
     expect(fallback?.instanceId).toBe(configured);
   });
+
+  it("falls back to OMP's default model when it is the only enabled provider", () => {
+    const fallback = fallbackTextGenerationModelSelection(
+      {},
+      (_instanceId, driver) => driver === ProviderDriverKind.make("omp"),
+    );
+    expect(fallback).toEqual({ instanceId: ProviderInstanceId.make("omp"), model: "default" });
+  });
 });
 
 describe("serverSettings helpers", () => {

@@ -1,0 +1,202 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { assert, describe, it } from "@effect/vitest";
+import { ProviderInstanceId, TextGenerationError } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
+
+import { OmpAnsi } from "./ompAnsi.ts";
+import { makeOmpTextGeneration } from "./textGeneration.ts";
+
+// Records argv and stdin, then behaves per FAKE_OMP_MODE.
+const FAKE_OMP = `#!/usr/bin/env node
+const fs = require("node:fs");
+const log = process.env.FAKE_OMP_LOG;
+let stdin = "";
+process.stdin.on("data", (chunk) => (stdin += chunk));
+process.stdin.on("end", () => {
+  fs.writeFileSync(log, JSON.stringify({ args: process.argv.slice(2), stdin, pid: process.pid }));
+  const mode = process.env.FAKE_OMP_MODE;
+  if (mode === "fail") {
+    process.stderr.write("\\u001b[31mmodel @commit is not configured\\u001b[0m\\n");
+    process.exit(3);
+  }
+  if (mode === "hang") {
+    process.stdout.write('{"subject":"Partial');
+    setInterval(() => {}, 1000);
+    return;
+  }
+  const reply = { subject: "Add feature", body: "Details.", title: "Fix login", branch: "feature/login" };
+  process.stdout.write("\\u001b[1m\\u001b[32m" + JSON.stringify(reply) + "\\u001b[0m\\n");
+});
+`;
+
+const modelSelection = { instanceId: ProviderInstanceId.make("omp"), model: "default" };
+const isTextGenerationError = Schema.is(TextGenerationError);
+
+const setup = (mode: "ok" | "fail" | "hang", options?: { readonly profile?: string }) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const dir = yield* fs.makeTempDirectoryScoped({ prefix: "omp-textgen-test-" });
+    const binary = path.join(dir, "omp");
+    const log = path.join(dir, "log.json");
+    yield* fs.writeFileString(binary, FAKE_OMP);
+    yield* fs.chmod(binary, 0o755);
+    const textGeneration = yield* makeOmpTextGeneration({
+      resolveBinary: Effect.succeed(binary),
+      profile: options?.profile ?? "",
+      environment: { PATH: process.env.PATH, FAKE_OMP_LOG: log, FAKE_OMP_MODE: mode },
+    });
+    const readLog = fs.readFileString(log).pipe(
+      Effect.map(
+        (text) =>
+          JSON.parse(text) as {
+            readonly args: ReadonlyArray<string>;
+            readonly stdin: string;
+            readonly pid: number;
+          },
+      ),
+    );
+    return { textGeneration, readLog, dir, fs, log };
+  });
+
+const isAlive = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+describe("OmpTextGeneration", () => {
+  it.live("runs @commit for commit messages and pipes the prompt on stdin", () =>
+    Effect.gen(function* () {
+      const { textGeneration, readLog, dir } = yield* setup("ok");
+      const result = yield* textGeneration.generateCommitMessage({
+        cwd: dir,
+        branch: "main",
+        stagedSummary: "M src/a.ts",
+        stagedPatch: "+const a = 1;",
+        modelSelection,
+      });
+      assert.deepStrictEqual(result, { subject: "Add feature", body: "Details." });
+      const launch = yield* readLog;
+      assert.deepStrictEqual(launch.args, [
+        "-p",
+        "--no-session",
+        "--no-tools",
+        "--model",
+        "@commit",
+      ]);
+      assert.include(launch.stdin, "+const a = 1;");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("runs @commit for PR content and branch names", () =>
+    Effect.gen(function* () {
+      const { textGeneration, readLog, dir } = yield* setup("ok");
+      const pr = yield* textGeneration.generatePrContent({
+        cwd: dir,
+        baseBranch: "main",
+        headBranch: "feature/login",
+        commitSummary: "Fix login",
+        diffSummary: "1 file",
+        diffPatch: "+x",
+        modelSelection,
+      });
+      assert.strictEqual(pr.title, "Fix login");
+      assert.strictEqual((yield* readLog).args.at(-1), "@commit");
+      const branch = yield* textGeneration.generateBranchName({
+        cwd: dir,
+        message: "Fix the login form",
+        modelSelection,
+      });
+      assert.include(branch.branch, "login");
+      assert.strictEqual((yield* readLog).args.at(-1), "@commit");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("runs @tiny for thread titles, with the instance profile", () =>
+    Effect.gen(function* () {
+      const { textGeneration, readLog, dir } = yield* setup("ok", { profile: "work" });
+      const result = yield* textGeneration.generateThreadTitle({
+        cwd: dir,
+        message: "The login form rejects valid passwords",
+        modelSelection,
+      });
+      assert.strictEqual(result.title, "Fix login");
+      assert.deepStrictEqual((yield* readLog).args, [
+        "--profile",
+        "work",
+        "-p",
+        "--no-session",
+        "--no-tools",
+        "--model",
+        "@tiny",
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("passes a non-default model slug through", () =>
+    Effect.gen(function* () {
+      const { textGeneration, readLog, dir } = yield* setup("ok");
+      yield* textGeneration.generateThreadTitle({
+        cwd: dir,
+        message: "hello",
+        modelSelection: { ...modelSelection, model: "anthropic/claude-haiku-4-5" },
+      });
+      assert.strictEqual((yield* readLog).args.at(-1), "anthropic/claude-haiku-4-5");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("fails with a typed, ANSI-free error on a non-zero exit", () =>
+    Effect.gen(function* () {
+      const { textGeneration, dir } = yield* setup("fail");
+      const error = yield* textGeneration
+        .generateThreadTitle({ cwd: dir, message: "hello", modelSelection })
+        .pipe(Effect.flip);
+      assert.isTrue(isTextGenerationError(error));
+      assert.strictEqual(error.operation, "generateThreadTitle");
+      assert.strictEqual(error.detail, "OMP exited with code 3: model @commit is not configured");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  // A real child process: its startup and death are OS events, so this polls on the real clock.
+  it.live("cancellation kills the process and returns no partial text", () =>
+    Effect.gen(function* () {
+      const { textGeneration, readLog, dir, fs, log } = yield* setup("hang");
+      const fiber = yield* textGeneration
+        .generateCommitMessage({
+          cwd: dir,
+          branch: null,
+          stagedSummary: "",
+          stagedPatch: "",
+          modelSelection,
+        })
+        .pipe(Effect.forkChild);
+      while (!(yield* fs.exists(log))) yield* Effect.sleep("20 millis");
+      const { pid } = yield* readLog;
+      assert.isTrue(isAlive(pid));
+      yield* Fiber.interrupt(fiber);
+      const exit = yield* Fiber.await(fiber);
+      assert.isTrue(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause));
+      for (let attempt = 0; attempt < 100 && isAlive(pid); attempt++) {
+        yield* Effect.sleep("20 millis");
+      }
+      assert.isFalse(isAlive(pid));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+});
+
+it("OmpAnsi strips colour, cursor and OSC sequences", () => {
+  assert.strictEqual(
+    OmpAnsi.strip("\u001b[1;32mok\u001b[0m \u001b[2K\u001b]8;;https://x\u0007link\u001b]8;;\u0007"),
+    "ok link",
+  );
+});

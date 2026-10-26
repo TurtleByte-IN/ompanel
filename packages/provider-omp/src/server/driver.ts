@@ -185,7 +185,12 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
       enabled,
       snapshot,
       orchestrationAdapter,
-      textGeneration: makeOmpTextGeneration(),
+      textGeneration: yield* makeOmpTextGeneration({
+        // Same provisioning resolver as the probe: re-hashed right before every spawn.
+        resolveBinary: resolveBinary.pipe(Effect.map((sidecar) => sidecar.path)),
+        profile: effectiveConfig.profile,
+        environment: processEnv,
+      }),
       ompSettings: makeOmpSettingsController({
         engine: makeOmpSettingsEngine({
           control,

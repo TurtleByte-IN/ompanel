@@ -182,3 +182,15 @@ none, is shown as an error.
 available, authenticated}`). The status card shows the signed-in ones as
 authenticated; with none signed in, auth stays "unknown", because API keys and
 environment credentials are not visible there.
+
+## Text generation
+
+Commit messages, PR titles and bodies, branch names and thread titles run a one-shot
+`omp -p --no-session --no-tools --model <role>` through the same sidecar lookup, with the prompt
+on stdin. When the selected OMP model is `default`, thread titles use the `@tiny` role and the
+source-control writers use `@commit`, the role `omp commit` uses; any other model slug is passed
+as-is. `--profile` is added when the instance sets one. Terminal escapes are stripped from the
+output. Cancelling an operation kills the process and returns nothing, and a non-zero exit fails
+with the process's stderr. OMP is the last entry in the text-generation fallback list, used only
+when it is enabled and no earlier provider is. Review guides are unsupported: they need read-only
+tools, and this process runs with none.
