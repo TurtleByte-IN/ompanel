@@ -53,6 +53,7 @@ describe("OMP model catalog", () => {
       "advisor",
       "prewalk",
       "computer",
+      "vibe",
     ]);
     assert.deepStrictEqual(thinkingOptions(models[2]!.capabilities!), [
       "inherit",
@@ -72,6 +73,7 @@ describe("OMP model catalog", () => {
       "advisor",
       "prewalk",
       "computer",
+      "vibe",
     ]);
     assert.notInclude(optionIds(OMP_CUSTOM_MODEL_CAPABILITIES), "role");
     assert.deepStrictEqual(thinkingOptions(OMP_CUSTOM_MODEL_CAPABILITIES), [

@@ -106,9 +106,10 @@ argv, cwd of every process) and `frames()` (every RPC line it read).
 `controlBinary.test.ts` runs the real service on the real spawner against it.
 
 `target(script)` returns an `OmpControlTarget` whose `omp` answers with the
-pinned fork's output (`PINNED_*`, captured from the v18.12.6-ompanel.3
-sidecar in a scratch `HOME` and typed against the vendored CLI and wire
-contracts) unless `script` replaces a command:
+pinned fork's output (`PINNED_*`, captured in a scratch `HOME`: CLI output from
+the v18.12.6-ompanel.3 sidecar, whose CLI the pinned v18.12.6-ompanel.4 keeps,
+and the `ready` frame from v18.12.6-ompanel.4; typed against the vendored CLI
+and wire contracts) unless `script` replaces a command:
 
 ```ts
 const omp = yield * makeFakeOmpControl;
@@ -276,8 +277,11 @@ the OMP instance pointed at the given binary, and the scripted model
 `models.yml` and `modelRoles.default: fake/fake-model`. The model answers by
 the last message: `run: <command>` calls the shell tool, a tool result gets
 `ran: <first line>`, Ompanel's text generation prompts get the JSON they ask
-for, and anything else gets two streamed paragraphs. Nothing reads the
-developer's `~/.omp` or Ompanel home, and no API key is used.
+for, and anything else gets two streamed paragraphs. OMP's `collab.relayUrl`
+is a loopback relay (`e2e/omp/collabRelay.ts`, cut down from the fork's
+`packages/collab-web/scripts/local-relay.ts`), so Share live opens and stops a
+real room without the internet. Nothing reads the developer's `~/.omp` or
+Ompanel home, and no API key is used.
 
 Run it locally (the Node version in `package.json` `engines`, `bun`, and a
 Rust toolchain for the fork's native addon on the first build):

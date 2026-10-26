@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - an end-to-end test writing artifacts.
 // Composer extras on an OMP thread (PHASES P-05): goal mode through the composer chip and the Goal
-// panel, magic-keyword chips, and the traits menu (boolean traits, role chip; Vibe Mode only once
-// the pin has `set_vibe_mode`). A real `omp` from the omp.lock tag and the scripted model.
+// panel, magic-keyword chips, and the traits menu (boolean traits, role chip, Vibe Mode over
+// `set_vibe_mode`). A real `omp` from the omp.lock tag and the scripted model.
 import * as NodePath from "node:path";
 
 import { expect, test } from "@playwright/test";
@@ -120,15 +120,41 @@ test("offers magic keywords as chips, and OMP acts on them", async () => {
   expect(turn?.userTexts.join("\n")).toContain("Multi-step reasoning");
 });
 
-test("shows OMP's boolean traits and role chip; no Vibe Mode before the vibe contract", async () => {
+test("shows OMP's boolean traits, Vibe Mode and the role chip", async () => {
   const { page, screenshot } = suite.current();
   await page.locator('[data-composer-shortcut="composer.effort"]').click();
   const menu = page.getByRole("menu");
-  for (const label of ["Fast Mode", "Advisor", "Prewalk", "Computer Use", "Role"]) {
+  for (const label of ["Fast Mode", "Advisor", "Prewalk", "Computer Use", "Vibe Mode", "Role"]) {
     await expect(menu.getByText(label, { exact: true }).first()).toBeVisible();
   }
-  // The pinned sidecar has no `set_vibe_mode`, so the trait is not offered (docs/omp/composer.md).
-  await expect(menu.getByText("Vibe Mode", { exact: true })).toHaveCount(0);
   await screenshot("p05-09-traits-menu");
   await page.keyboard.press("Escape");
+});
+
+test("Vibe Mode gives the agent OMP's worker tools, and turning it off takes them away", async () => {
+  const { page, screenshot, sendAndSettle, stack } = suite.current();
+  // The adapter sends `set_vibe_mode` before the next prompt; the tools OMP then offers the model
+  // show the mode it runs in: vibe mode keeps `read` and adds the `vibe_*` tools.
+  const turnTools = async (vibe: "On" | "Off", text: string) => {
+    await page.locator('[data-composer-shortcut="composer.effort"]').click();
+    await page
+      .getByRole("menu")
+      .getByRole("group")
+      .filter({ has: page.getByText("Vibe Mode", { exact: true }) })
+      .last()
+      .getByRole("menuitemradio", { name: vibe, exact: true })
+      .click();
+    const before = stack.model.calls.length;
+    await sendAndSettle(text);
+    return stack.model.calls.slice(before).find((entry) => entry.lastRole === "user")?.tools;
+  };
+
+  const vibeTools = await turnTools("On", "hello in vibe mode");
+  expect(vibeTools).toEqual(expect.arrayContaining(["read", "vibe_spawn", "vibe_send"]));
+  expect(vibeTools).not.toContain("terminal");
+  await screenshot("p05-10-vibe-mode");
+
+  const tools = await turnTools("Off", "hello after vibe mode");
+  expect(tools).toContain("terminal");
+  expect(tools).not.toContain("vibe_spawn");
 });

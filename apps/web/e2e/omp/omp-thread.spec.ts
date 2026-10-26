@@ -200,14 +200,6 @@ test("stops a running turn", async () => {
   await screenshot("08c-after-stop");
 });
 
-/** The RPC contract of the sidecar `omp.lock` pins, which the stack's omp speaks. */
-const PINNED_CONTRACT: string = JSON.parse(
-  NodeFS.readFileSync(
-    new URL("../../../../packages/provider-omp/omp.lock", import.meta.url),
-    "utf8",
-  ),
-).contract.version;
-
 /** Picks `label` in the OMP section of the thread's menu (the title button opens it). */
 const pickOmpMenuItem = async (label: string) => {
   const { page } = suite.current();
@@ -248,22 +240,33 @@ test("shows the session's branch tree from the thread menu", async () => {
   await expect(dialog).toHaveCount(0);
 });
 
-test("opens Share live with the pairing warning, gated on the collab RPC", async () => {
-  const [major = 0, minor = 0] = PINNED_CONTRACT.split(".").map(Number);
-  const hasCollab = major > 1 || minor >= 7;
-  const { page, screenshot } = suite.current();
+test("shares the thread live: a room opens on OMP's relay with its links, and stops", async () => {
+  const { page, screenshot, stack } = suite.current();
   // The menu item itself says the link is outside T3 pairing.
   await pickOmpMenuItem("Share live \\(outside pairing\\)…");
   const dialog = page.locator("[data-omp-share-live-dialog]");
   await expect(dialog.getByText("This link bypasses T3 pairing")).toBeVisible();
-  const start = dialog.getByRole("button", { name: "Start sharing" });
-  if (hasCollab) {
-    await expect(start).toBeEnabled();
-  } else {
-    await expect(dialog.getByText(/needs OMP RPC contract 1\.7\.0/)).toBeVisible();
-    await expect(start).toBeDisabled();
-  }
   await screenshot("11-share-live-dialog");
+
+  await dialog.getByRole("button", { name: "Start sharing" }).click();
+  // OMP opened the room on the stack's loopback relay, and the links point there.
+  const browserLink = dialog.getByRole("textbox", { name: "Browser link" });
+  const joinLink = dialog.getByRole("textbox", { name: "omp join link" });
+  await expect(browserLink).toHaveValue(/^http:\/\/127\.0\.0\.1:\d+\//);
+  await expect(joinLink).toHaveValue(
+    new RegExp(`^${stack.collabRelay.url.replaceAll(".", "\\.")}/r/`),
+  );
+  await expect(dialog.getByText("Nobody has joined yet.")).toBeVisible();
+  expect(stack.collabRelay.openRooms()).toHaveLength(1);
+  // The links are capabilities: they never reach the server's log.
+  const log = stack.serverLog();
+  expect(log).not.toContain(await browserLink.inputValue());
+  expect(log).not.toContain(await joinLink.inputValue());
+  await screenshot("12-share-live-room");
+
+  await dialog.getByRole("button", { name: "Stop sharing" }).click();
+  await expect(dialog.getByRole("button", { name: "Start sharing" })).toBeEnabled();
+  await expect.poll(() => stack.collabRelay.openRooms()).toHaveLength(0);
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
 });

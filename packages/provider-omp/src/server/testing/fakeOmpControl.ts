@@ -89,9 +89,11 @@ const FAKE_OMP_CONTROL_FIXTURE = NodeURL.fileURLToPath(
   new URL("./fakeOmpControl.fixture.mjs", import.meta.url),
 );
 
-// Output of the pinned omp (v18.12.6-ompanel.3, darwin-arm64 sidecar sha256 612fff7d...),
-// captured in a scratch HOME on 2026-10-26; the CLI shapes are checked against the vendored CLI
-// contract. Long values (URLs, provider and setting lists) are cut down, never reshaped.
+// Output of the pinned omp, captured in a scratch HOME: the CLI outputs from v18.12.6-ompanel.3
+// (darwin-arm64 sidecar sha256 612fff7d..., 2026-10-26; the CLI and its contract are unchanged at
+// v18.12.6-ompanel.4), the RPC frames from v18.12.6-ompanel.4 (darwin-arm64 sha256 1a244df0...).
+// The CLI shapes are checked against the vendored CLI contract. Long values (URLs, provider and
+// setting lists) are cut down, never reshaped.
 
 const pretty = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
 const line = (value: unknown) => `${JSON.stringify(value)}\n`;
@@ -220,7 +222,7 @@ export const PINNED_READY = {
   supportedProtocolVersions: [1, 2],
   maxFrameBytes: 1_048_576,
   maxReassembledFrameBytes: 67_108_864,
-  contractVersion: "1.6.0",
+  contractVersion: "1.8.0",
 } satisfies ReadyEvent;
 
 /** Frames OMP writes unprompted right after `ready` (the command list is cut to one entry). */
