@@ -28,6 +28,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { OMP_LOCK } from "../ompLock.ts";
 import { OmpSettings } from "../settings.ts";
 import { makeOmpAdapter } from "./adapter.ts";
+import { makeOmpAccountsController } from "./accountsController.ts";
 import { makeOmpControlService } from "./control.ts";
 import { makeOmpPidfiles } from "./pidfiles.ts";
 import { ompStateDirs } from "./session.ts";
@@ -181,6 +182,24 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
       .makeDirectory(textGenerationCwd, { recursive: true, mode: 0o700 })
       .pipe(Effect.ignore);
 
+    const settingsEngine = makeOmpSettingsEngine({
+      control,
+      threads: yield* makeOmpThreadSettingsHost({
+        sessions: threadSessions,
+        threadsDir: stateDirs.threads,
+      }),
+    });
+    const controlTarget = (cwd: string) =>
+      resolveBinary.pipe(
+        Effect.map((sidecar) => ({
+          binaryPath: sidecar.path,
+          binaryIdentity: sidecar.identity,
+          profile: effectiveConfig.profile,
+          environment: processEnv,
+          cwd,
+        })),
+      );
+
     return {
       instanceId,
       driverKind: DRIVER_KIND,
@@ -198,24 +217,15 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
         cwd: textGenerationCwd,
       }),
       ompSettings: makeOmpSettingsController({
-        engine: makeOmpSettingsEngine({
-          control,
-          threads: yield* makeOmpThreadSettingsHost({
-            sessions: threadSessions,
-            threadsDir: stateDirs.threads,
-          }),
-        }),
+        engine: settingsEngine,
         sessions: threadSessions,
-        target: (cwd) =>
-          resolveBinary.pipe(
-            Effect.map((sidecar) => ({
-              binaryPath: sidecar.path,
-              binaryIdentity: sidecar.identity,
-              profile: effectiveConfig.profile,
-              environment: processEnv,
-              cwd,
-            })),
-          ),
+        target: controlTarget,
+        globalCwd: stateDirs.launcher,
+      }),
+      ompAccounts: yield* makeOmpAccountsController({
+        control,
+        target: controlTarget,
+        readSettings: settingsEngine.read,
         globalCwd: stateDirs.launcher,
       }),
     } satisfies ProviderInstance;

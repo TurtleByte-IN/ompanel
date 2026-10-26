@@ -1,6 +1,6 @@
 /**
  * OmpControlService: every short-lived `omp` process Ompanel starts outside a thread — the
- * status probe, `omp usage`, the login-provider list and RPC sign-in — runs here, each under a
+ * status probe, `omp usage`, the login-provider list, RPC sign-in and sign-out — runs here, each under a
  * hard deadline. On a deadline the process group gets SIGTERM, then SIGKILL after
  * {@link OMP_CONTROL_KILL_GRACE_MS}, so a hung omp never outlives the call.
  */
@@ -15,6 +15,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -24,7 +25,6 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type {
   ExtensionUiRequest,
   ExtensionUiResponse,
-  LoginProvider,
   ReadyEvent,
 } from "../../contract/src/wire.generated.ts";
 import type { OmpConfigScope } from "@t3tools/contracts";
@@ -50,6 +50,27 @@ export type OmpControlBudget = keyof typeof OMP_CONTROL_TIMEOUTS_MS;
 export const OMP_CONTROL_KILL_GRACE_MS = 1_000;
 /** How long one instance reuses a probe or usage result. */
 export const OMP_CONTROL_CACHE_TTL_MS = 30_000;
+/**
+ * First RPC contract whose `login` takes `input` and `secretInput` and whose provider list
+ * includes API-key providers (oh-my-pi O-8). Older servers would drop `input` and ask for the key
+ * in an unmasked prompt, so Ompanel never sends a key to them.
+ */
+export const OMP_LOGIN_INPUT_CONTRACT = "1.6.0";
+
+/** True when semver `version` is at least `minimum`; an absent or unreadable version is not. */
+export const ompContractAtLeast = (version: string | undefined, minimum: string): boolean => {
+  const parse = (text: string | undefined) => {
+    const match = text === undefined ? null : /^(\d+)\.(\d+)\.(\d+)/.exec(text);
+    return match === null ? null : [Number(match[1]), Number(match[2]), Number(match[3])];
+  };
+  const have = parse(version);
+  const need = parse(minimum);
+  if (have === null || need === null) return false;
+  for (let index = 0; index < 3; index++) {
+    if (have[index]! !== need[index]!) return have[index]! > need[index]!;
+  }
+  return true;
+};
 
 /**
  * A control process must not open a session, start MCP servers, run hooks or extensions: no
@@ -84,6 +105,8 @@ export type OmpControlOperation =
   | "rpc"
   | "login_providers"
   | "login"
+  | "logout_accounts"
+  | "logout"
   | "config_list"
   | "config_set"
   | "config_reset";
@@ -96,11 +119,21 @@ export class OmpControlError extends Schema.TaggedError<OmpControlError>()("OmpC
     "rpc",
     "login_providers",
     "login",
+    "logout_accounts",
+    "logout",
     "config_list",
     "config_set",
     "config_reset",
   ]),
-  reason: Schema.Literals(["missing", "spawn", "timeout", "exit", "invalid", "rejected"]),
+  reason: Schema.Literals([
+    "missing",
+    "spawn",
+    "timeout",
+    "exit",
+    "invalid",
+    "rejected",
+    "unsupported",
+  ]),
   timeoutMs: Schema.optional(Schema.Number),
   exitCode: Schema.optional(Schema.Number),
   /** The RPC failure message for `rejected`. */
@@ -121,6 +154,8 @@ export class OmpControlError extends Schema.TaggedError<OmpControlError>()("OmpC
         return `OMP ${this.operation} returned output Ompanel could not read.`;
       case "rejected":
         return `OMP ${this.operation} failed${this.detail === undefined ? "" : `: ${this.detail}`}.`;
+      case "unsupported":
+        return `OMP ${this.operation} needs a newer OMP${this.detail === undefined ? "" : `: ${this.detail}`}.`;
     }
   }
 }
@@ -132,14 +167,38 @@ const ReadyFrame = Schema.Struct({
 });
 const decodeReadyFrame = Schema.decodeUnknownEffect(ReadyFrame);
 
+/**
+ * `LoginProvider`; `apiKey`, `source` and `envVar` arrive from contract 1.6.0 on and are absent
+ * from older servers, which list OAuth providers only.
+ */
 const LoginProviderSchema = Schema.Struct({
   id: Schema.String,
   name: Schema.String,
   available: Schema.Boolean,
   authenticated: Schema.Boolean,
+  apiKey: Schema.optionalKey(Schema.Boolean),
+  source: Schema.optionalKey(Schema.Literals(["runtime", "config", "oauth", "api_key", "env"])),
+  envVar: Schema.optionalKey(Schema.String),
 });
+export type OmpLoginProvider = typeof LoginProviderSchema.Type;
 const decodeLoginProviders = Schema.decodeUnknownEffect(
   Schema.Struct({ providers: Schema.Array(LoginProviderSchema) }),
+);
+
+const LogoutAccountSchema = Schema.Struct({
+  credentialId: Schema.Int,
+  provider: Schema.String,
+  label: Schema.String,
+  detail: Schema.String,
+  type: Schema.Literals(["api_key", "oauth"]),
+  active: Schema.Boolean,
+});
+export type OmpLogoutAccount = typeof LogoutAccountSchema.Type;
+const decodeLogoutAccounts = Schema.decodeUnknownEffect(
+  Schema.Struct({ accounts: Schema.Array(LogoutAccountSchema) }),
+);
+const decodeLogoutResult = Schema.decodeUnknownEffect(
+  Schema.Struct({ remainingSource: Schema.optionalKey(Schema.String) }),
 );
 
 const ResponseFrame = Schema.Struct({
@@ -190,10 +249,26 @@ export type OmpProbeResult =
       readonly status: "ready";
       readonly version: string | null;
       readonly ready: Pick<ReadyEvent, "protocolVersion" | "contractVersion">;
-      /** OAuth providers and whether each is signed in; `null` when OMP refused the request. */
-      readonly loginProviders: ReadonlyArray<LoginProvider> | null;
+      /** Login providers and whether each is signed in; `null` when OMP refused the request. */
+      readonly loginProviders: ReadonlyArray<OmpLoginProvider> | null;
     }
   | ({ readonly status: "failed"; readonly version: string | null } & OmpProbeFailure);
+
+/** The login providers and the contract of the omp that listed them. */
+export interface OmpLoginProviderList {
+  readonly contractVersion: string | undefined;
+  readonly providers: ReadonlyArray<OmpLoginProvider>;
+}
+
+export interface OmpLoginOptions {
+  /**
+   * Answer to the flow's first prompt (an API key), written into the `login` command on the
+   * process's stdin. Needs {@link OMP_LOGIN_INPUT_CONTRACT}.
+   */
+  readonly input?: Redacted.Redacted<string>;
+  /** The handler masks `input` requests marked `secret`. Needs {@link OMP_LOGIN_INPUT_CONTRACT}. */
+  readonly secretInput?: boolean;
+}
 
 /** Answers one extension UI request of a login session; `undefined` sends nothing. */
 export type OmpLoginUiHandler = (
@@ -211,16 +286,30 @@ export interface OmpControlService {
   /** RPC `get_login_providers` in a fresh server (10 s), uncached. */
   readonly loginProviders: (
     target: OmpControlTarget,
-  ) => Effect.Effect<ReadonlyArray<LoginProvider>, OmpControlError>;
+  ) => Effect.Effect<OmpLoginProviderList, OmpControlError>;
   /**
    * RPC `login` (60 s). The server asks the host to open the authorization URL and may ask for
-   * a pasted code; `onUiRequest` answers those. Success drops this instance's cache.
+   * a pasted code or a key; `onUiRequest` answers those. `options` need contract
+   * {@link OMP_LOGIN_INPUT_CONTRACT}; an older omp fails `unsupported` before anything is sent.
+   * Success drops this instance's cache.
    */
   readonly login: (
     target: OmpControlTarget,
     providerId: string,
     onUiRequest: OmpLoginUiHandler,
+    options?: OmpLoginOptions,
   ) => Effect.Effect<void, OmpControlError>;
+  /** RPC `get_logout_accounts` (10 s): the stored credentials sign-out can remove. */
+  readonly logoutAccounts: (
+    target: OmpControlTarget,
+    providerId: string,
+  ) => Effect.Effect<ReadonlyArray<OmpLogoutAccount>, OmpControlError>;
+  /** RPC `logout` (10 s); drops this instance's cache. `remainingSource` names auth that still applies. */
+  readonly logout: (
+    target: OmpControlTarget,
+    providerId: string,
+    credentialId: number,
+  ) => Effect.Effect<{ readonly remainingSource?: string }, OmpControlError>;
   /** Status probe: `--version`, then `ready` and `get_login_providers`. Cached 30 s. */
   readonly probe: (target: OmpControlTarget) => Effect.Effect<OmpProbeResult>;
   /** Drops every cached result of this instance. */
@@ -536,7 +625,14 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
       "login_providers",
       "ready",
       openRpcSession("login_providers", target).pipe(
-        Effect.flatMap((session) => readLoginProviders("login_providers", session)),
+        Effect.flatMap((session) =>
+          readLoginProviders("login_providers", session).pipe(
+            Effect.map((providers): OmpLoginProviderList => ({
+              contractVersion: session.ready.contractVersion,
+              providers,
+            })),
+          ),
+        ),
       ),
     );
   });
@@ -564,7 +660,7 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
       Effect.gen(function* () {
         const session = yield* openRpcSession("rpc", target);
         const providers = yield* readLoginProviders("rpc", session).pipe(
-          Effect.map((list): ReadonlyArray<LoginProvider> | null => list),
+          Effect.map((list): ReadonlyArray<OmpLoginProvider> | null => list),
           // A refused or unreadable list leaves auth unknown; the server itself is fine.
           Effect.catchIf(
             (error) => error.reason === "rejected" || error.reason === "invalid",
@@ -600,23 +696,110 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
     target: OmpControlTarget,
     providerId: string,
     onUiRequest: OmpLoginUiHandler,
+    options: OmpLoginOptions = {},
   ) {
+    const input = options.input === undefined ? undefined : Redacted.value(options.input);
     yield* withDeadline(
       "login",
       "login",
       Effect.gen(function* () {
         const session = yield* openRpcSession("login", target);
-        yield* session.request({ type: "login", providerId }, (frame) => {
-          if (!isUiRequestFrame(frame)) return Effect.void;
-          return onUiRequest(frame as ExtensionUiRequest).pipe(
-            Effect.flatMap((response) =>
-              response === undefined ? Effect.void : session.send(response),
+        const supported = ompContractAtLeast(
+          session.ready.contractVersion,
+          OMP_LOGIN_INPUT_CONTRACT,
+        );
+        // An older omp would ignore `input` and ask for the key unmasked: refuse before sending.
+        if (input !== undefined && !supported) {
+          return yield* new OmpControlError({
+            operation: "login",
+            reason: "unsupported",
+            detail: `API-key sign-in needs RPC contract ${OMP_LOGIN_INPUT_CONTRACT}; this OMP reports ${session.ready.contractVersion ?? "none"}`,
+          });
+        }
+        yield* session
+          .request(
+            {
+              type: "login",
+              providerId,
+              // The key travels only here: inside the command on the process's stdin.
+              ...(input === undefined ? {} : { input }),
+              // Older servers never send secret prompts; they fail the login instead.
+              ...(options.secretInput === true && supported ? { secretInput: true } : {}),
+            },
+            (frame) => {
+              if (!isUiRequestFrame(frame)) return Effect.void;
+              return onUiRequest(frame as ExtensionUiRequest).pipe(
+                Effect.flatMap((response) =>
+                  response === undefined ? Effect.void : session.send(response),
+                ),
+              );
+            },
+          )
+          .pipe(
+            // OMP's failure text could quote what it was given; never pass the key on.
+            Effect.mapError((error) =>
+              input !== undefined && input !== "" && error.detail?.includes(input) === true
+                ? new OmpControlError({
+                    operation: error.operation,
+                    reason: error.reason,
+                    detail: error.detail.replaceAll(input, "[redacted]"),
+                  })
+                : error,
             ),
           );
-        });
       }),
     );
     yield* invalidate;
+  });
+
+  /** One RPC command in a fresh server under the 10 s budget. */
+  const rpcCommand = <A>(
+    operation: "logout_accounts" | "logout",
+    target: OmpControlTarget,
+    command: { readonly type: string } & Record<string, unknown>,
+    decode: (data: unknown) => Effect.Effect<A, Schema.SchemaError>,
+  ) =>
+    withDeadline(
+      operation,
+      "ready",
+      openRpcSession(operation, target).pipe(
+        Effect.flatMap((session) => session.request(command)),
+        Effect.flatMap((data) =>
+          decode(data).pipe(
+            Effect.mapError(
+              (cause) => new OmpControlError({ operation, reason: "invalid", cause }),
+            ),
+          ),
+        ),
+      ),
+    );
+
+  const logoutAccounts = Effect.fn("OmpControl.logoutAccounts")(function* (
+    target: OmpControlTarget,
+    providerId: string,
+  ) {
+    const data = yield* rpcCommand(
+      "logout_accounts",
+      target,
+      { type: "get_logout_accounts", providerId },
+      decodeLogoutAccounts,
+    );
+    return data.accounts;
+  });
+
+  const logout = Effect.fn("OmpControl.logout")(function* (
+    target: OmpControlTarget,
+    providerId: string,
+    credentialId: number,
+  ) {
+    const result = yield* rpcCommand(
+      "logout",
+      target,
+      { type: "logout", providerId, credentialId },
+      decodeLogoutResult,
+    );
+    yield* invalidate;
+    return result;
   });
 
   interface CacheEntry {
@@ -670,6 +853,8 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
       ),
     loginProviders,
     login,
+    logoutAccounts,
+    logout,
     probe: (target) => cached(["probe", targetKey(target)].join("\0"), probeUncached(target)),
     invalidate,
     configList,

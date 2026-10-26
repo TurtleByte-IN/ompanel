@@ -94,8 +94,9 @@ function probeFailureMessage(failure: Extract<OmpProbeResult, { status: "failed"
 }
 
 /**
- * `get_login_providers` lists OAuth providers only, so API keys and environment credentials are
- * invisible here: no signed-in OAuth provider means "unknown", never "unauthenticated".
+ * Before RPC contract 1.6.0 `get_login_providers` lists OAuth providers only, and no version lists
+ * every credential source (ambient cloud credentials, extension providers), so no signed-in
+ * provider means "unknown", never "unauthenticated".
  */
 function ompAuthFromLoginProviders(
   providers: Extract<OmpProbeResult, { status: "ready" }>["loginProviders"],

@@ -101,6 +101,11 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverLogoutAcpRegistry]: AuthProvidersManageScope,
   // Reads come back with credentials redacted by OMP.
   [WS_METHODS.serverReadOmpSettings]: AuthOrchestrationReadScope,
+  // Which OMP providers are signed in, and from which source; no credential values.
+  [WS_METHODS.serverListOmpAccounts]: AuthOrchestrationReadScope,
+  // A running sign-in shows its prompts; stored accounts carry emails.
+  [WS_METHODS.serverSubscribeOmpSignIn]: AuthProvidersManageScope,
+  [WS_METHODS.serverListOmpSignOutAccounts]: AuthProvidersManageScope,
   [WS_METHODS.serverDiscoverSourceControl]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetTraceDiagnostics]: AuthDiagnosticsReadScope,
   [WS_METHODS.serverGetProcessDiagnostics]: AuthDiagnosticsReadScope,

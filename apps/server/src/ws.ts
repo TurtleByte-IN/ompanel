@@ -23,6 +23,7 @@ import { subscribeChatGptHandoff } from "./provider/CodexChatGptHandoff.ts";
 import { subscribeCodexAuthCallback } from "./provider/CodexAuthCallback.ts";
 import {
   AcpRegistryOperationError,
+  OmpAccountsOperationError,
   OmpSettingsOperationError,
   CommandId,
   authScopeResponse,
@@ -1498,6 +1499,25 @@ export const layerWsRpc = (
         }
       });
 
+      const ompAccountsController = Effect.fn("ws.ompAccounts.controller")(function* (
+        instanceId: ProviderInstanceId,
+      ) {
+        const instance = yield* providerInstances.getInstance(instanceId);
+        if (instance === undefined) {
+          return yield* new OmpAccountsOperationError({
+            reason: "instance_not_found",
+            message: `Provider instance ${instanceId} was not found.`,
+          });
+        }
+        if (instance.ompAccounts === undefined) {
+          return yield* new OmpAccountsOperationError({
+            reason: "unsupported",
+            message: `Provider instance ${instanceId} has no OMP accounts.`,
+          });
+        }
+        return instance.ompAccounts;
+      });
+
       const importedAcpThreadId = (input: {
         readonly driver: ProviderDriverKind;
         readonly instanceId: ProviderInstanceId;
@@ -2454,6 +2474,71 @@ export const layerWsRpc = (
                 yield* ompSettingsThread(input.threadId);
                 return yield* settings.clearThreadOverride(input);
               }),
+            ),
+          ),
+        [WS_METHODS.serverListOmpAccounts]: (input) =>
+          Effect.annotateCurrentSpan({ "provider.instance_id": input.instanceId }).pipe(
+            Effect.andThen(
+              Effect.gen(function* () {
+                const accounts = yield* ompAccountsController(input.instanceId);
+                const cwd = yield* ompSettingsCwd(input.projectId).pipe(
+                  Effect.mapError(
+                    (error) =>
+                      new OmpAccountsOperationError({
+                        reason: "project_not_found",
+                        message: error.message,
+                      }),
+                  ),
+                );
+                return yield* accounts.list({ cwd });
+              }),
+            ),
+          ),
+        // Payloads carrying keys are `Redacted`; only provider ids go on spans.
+        [WS_METHODS.serverStartOmpSignIn]: (input) =>
+          Effect.annotateCurrentSpan({
+            "provider.instance_id": input.instanceId,
+            "omp.provider": input.providerId,
+          }).pipe(
+            Effect.andThen(ompAccountsController(input.instanceId)),
+            Effect.flatMap((accounts) =>
+              accounts.start({ providerId: input.providerId, apiKey: input.apiKey }),
+            ),
+          ),
+        [WS_METHODS.serverAnswerOmpSignIn]: (input) =>
+          ompAccountsController(input.instanceId).pipe(
+            Effect.flatMap((accounts) =>
+              accounts.answer({
+                flowId: input.flowId,
+                promptId: input.promptId,
+                value: input.value,
+              }),
+            ),
+          ),
+        [WS_METHODS.serverCancelOmpSignIn]: (input) =>
+          ompAccountsController(input.instanceId).pipe(
+            Effect.flatMap((accounts) => accounts.cancel),
+          ),
+        [WS_METHODS.serverSubscribeOmpSignIn]: (input) =>
+          Stream.unwrap(
+            ompAccountsController(input.instanceId).pipe(
+              Effect.map((accounts) => accounts.subscribe),
+            ),
+          ),
+        [WS_METHODS.serverListOmpSignOutAccounts]: (input) =>
+          ompAccountsController(input.instanceId).pipe(
+            Effect.flatMap((accounts) =>
+              accounts.signOutAccounts({ providerId: input.providerId }),
+            ),
+          ),
+        [WS_METHODS.serverOmpSignOut]: (input) =>
+          Effect.annotateCurrentSpan({
+            "provider.instance_id": input.instanceId,
+            "omp.provider": input.providerId,
+          }).pipe(
+            Effect.andThen(ompAccountsController(input.instanceId)),
+            Effect.flatMap((accounts) =>
+              accounts.signOut({ providerId: input.providerId, credentialId: input.credentialId }),
             ),
           ),
         [WS_METHODS.serverRefreshProviders]:
