@@ -28,6 +28,8 @@ const mergeProviderModels = (
 };
 
 const BUILT_IN_DRIVER_ORDER: ReadonlyArray<string> = [
+  // Ompanel's own provider leads the list.
+  "omp",
   "codex",
   "claudeAgent",
   "cursor",

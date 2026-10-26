@@ -10,9 +10,11 @@ import { cursorClient } from "@t3tools/provider-cursor/client";
 import { grokClient } from "@t3tools/provider-grok/client";
 import { museClient } from "@t3tools/provider-muse/client";
 import { openCodeClient } from "@t3tools/provider-opencode/client";
+import { ompClient } from "@t3tools/provider-omp/client";
 import { piClient } from "@t3tools/provider-pi/client";
 
 export const providerClients = makeProviderClientRegistry([
+  ompClient,
   {
     driverKind: ProviderDriverKind.make("codex"),
     label: "Codex",

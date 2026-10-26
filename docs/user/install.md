@@ -127,6 +127,7 @@ computer.
 
 | Provider    | Install and authenticate                                                                                                                                  |
 | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| OMP         | Preview: enable [OMP](./providers-omp.md) in Settings → Providers; Ompanel finds its pinned OMP sidecar.                                                  |
 | Codex       | [Connect with ChatGPT](./providers-codex.md#connect-with-chatgpt), or install [Codex CLI](https://developers.openai.com/codex/cli) and run `codex login`. |
 | Claude      | Install [Claude Code](https://claude.com/product/claude-code), then run `claude auth login`.                                                              |
 | Cursor      | Install [Cursor CLI](https://cursor.com/cli), then run `agent login`.                                                                                     |
@@ -140,7 +141,8 @@ Provider CLIs must be on the server's `PATH`. If Ompanel cannot find one, set it
 **Binary path** in provider settings, especially when using a version manager.
 Cursor's executable is `cursor-agent`, although its login command is
 `agent login`. Codex connected through ChatGPT and Antigravity can use their
-managed runtimes without a `PATH` entry.
+managed runtimes without a `PATH` entry. OMP never uses `PATH`; Ompanel runs its
+pinned sidecar or the absolute binary path you set.
 
 Ompanel warns when a provider version has known compatibility problems with your
 release. Check **Settings → Providers** on that environment for the recommended
@@ -161,10 +163,10 @@ instance can have its own environment variables, such as API keys or a custom
 base URL. Mark secret values as sensitive; after saving, Ompanel does not display
 their original values.
 
-For provider-specific setup and accounts, see [Codex](./providers-codex.md),
-[Claude](./providers-claude.md), [OpenCode](./providers-opencode.md),
-[Antigravity](./providers-antigravity.md), [Pi](./providers-pi.md), and
-[Muse Code](./providers-muse.md).
+For provider-specific setup and accounts, see [OMP](./providers-omp.md),
+[Codex](./providers-codex.md), [Claude](./providers-claude.md),
+[OpenCode](./providers-opencode.md), [Antigravity](./providers-antigravity.md),
+[Pi](./providers-pi.md), and [Muse Code](./providers-muse.md).
 
 ## Moving from T3 Code
 

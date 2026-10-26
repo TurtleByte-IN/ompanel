@@ -50,7 +50,23 @@ The server never looks up `omp` on `PATH`. It takes the first of:
 1. The instance's binary path, if set. It must be an absolute path (a leading
    `~` is expanded). Ompanel runs it as given, without a sha256 check, and fails
    if it does not exist rather than falling back.
-2. The sidecar the desktop app ships, if its sha256 matches `omp.lock`.
-3. `<tag>/<asset>` in the download cache, if its sha256 matches `omp.lock`.
+2. The sidecar the desktop app ships, which it names by absolute path in the
+   server's `OMPANEL_OMP_BUNDLED_PATH` environment variable, if its sha256
+   matches `omp.lock`. A relative path or bare name there is an error.
+3. `tools/omp/<tag>/<asset>` under the server's base directory (the download
+   cache), if its sha256 matches `omp.lock`.
 
 A bundled or cached file whose sha256 differs is never run.
+
+## Status checks
+
+An enabled OMP instance runs `omp --version` (4 s limit), then starts
+`omp --mode rpc --no-session --no-tools --no-extensions --no-skills --no-rules
+--no-lsp --no-title` (plus `--profile <name>` when the instance sets one) and
+reads its first frame, which must be `ready` (10 s limit). The process is
+stopped right after. `--no-tools` also keeps MCP servers from starting. The
+result is cached for 30 s per instance, binary, profile and working directory.
+
+The instance is ready only when `ready.contractVersion` equals
+`contract.version` in `omp.lock`; a sidecar that reports another version, or
+none, is shown as an error.
