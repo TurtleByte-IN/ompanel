@@ -334,6 +334,7 @@ export function ApprovalModeEditor({ field, onWrite }: EditorProps) {
       <ToggleGroup
         aria-label={field.key}
         variant="segmented"
+        className="max-w-full flex-wrap"
         disabled={field.readOnly}
         value={current === undefined ? [] : [current]}
         onValueChange={(next) => {

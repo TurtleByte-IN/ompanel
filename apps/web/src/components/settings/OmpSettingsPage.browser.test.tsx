@@ -6,6 +6,11 @@ import { userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 
+import {
+  elementsPastViewport,
+  settingsContentColumn,
+  usePhoneViewport,
+} from "../../../test/phoneViewport";
 import { render } from "../../../test/render";
 
 // What the pinned OMP registers for the pages, plus one key no page shows.
@@ -771,4 +776,32 @@ describe("OMP settings pages", () => {
     ).toContain("Terminal-only");
     expect(commands.write).not.toHaveBeenCalled();
   });
+});
+
+describe("OMP settings pages at phone width", () => {
+  it.each(Object.values(OMP_SETTINGS_PAGES))(
+    "$title fits the settings column of a 390px viewport without sideways scrolling",
+    async (page) => {
+      resetEngine();
+      // Long values and agent files exercise wrapping, not just the default form.
+      engine.global.set("contextFiles.extra", [
+        "/a/very/long/path/to/some/context/file.md".repeat(3),
+      ]);
+      files.set("WATCHDOG.yml", "rules: []\n");
+      files.set("agents/reviewer-with-a-rather-long-name.md", "# Reviewer\n");
+      await using _viewport = await usePhoneViewport();
+      expect(document.documentElement.clientWidth).toBe(390);
+      await using screen = await render(
+        <OmpSettingsPageBody
+          environmentId={environmentId}
+          instanceId={instanceId}
+          pageId={page.id}
+        />,
+        { container: settingsContentColumn() },
+      );
+      await expect.poll(() => document.querySelector("[data-setting]")).not.toBeNull();
+      expect(elementsPastViewport(screen.container)).toEqual([]);
+      expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(390);
+    },
+  );
 });
