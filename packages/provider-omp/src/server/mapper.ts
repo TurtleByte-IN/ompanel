@@ -80,6 +80,16 @@ export interface OmpFrameResult {
   readonly settled: OmpTurnOutcome | null;
 }
 
+/** Where a runtime request OMP raised belongs: the active turn, or only the thread. */
+export interface OmpRequestPlacement {
+  readonly threadId: ThreadId;
+  readonly runId: OrchestrationV2ExecutionNode["runId"];
+  readonly rootNodeId: OrchestrationV2ExecutionNode["parentNodeId"];
+  readonly providerThreadId: OrchestrationV2ExecutionNode["providerThreadId"];
+  readonly providerTurnId: OrchestrationV2ExecutionNode["providerTurnId"];
+  readonly ordinal: number;
+}
+
 interface StreamItem {
   readonly nativeItemId: string;
   readonly kind: "assistant_message" | "reasoning";
@@ -392,6 +402,33 @@ export class OmpThreadMapper {
     return this.#turn?.providerTurn.id ?? null;
   }
 
+  /**
+   * Where request `nativeItemId` goes: into the active turn, after the items before it, or onto
+   * the thread alone when OMP asks between turns.
+   */
+  requestPlacement(nativeItemId: string, fallbackThreadId: ThreadId): OmpRequestPlacement {
+    const turn = this.#turn;
+    if (turn !== null) {
+      return {
+        threadId: turn.input.threadId,
+        runId: turn.input.runId,
+        rootNodeId: turn.input.rootNodeId,
+        providerThreadId: turn.input.providerThread.id,
+        providerTurnId: turn.providerTurn.id,
+        ordinal: this.#itemOrdinal(turn, nativeItemId),
+      };
+    }
+    const thread = this.#thread?.providerThread ?? null;
+    return {
+      threadId: thread?.appThreadId ?? fallbackThreadId,
+      runId: null,
+      rootNodeId: null,
+      providerThreadId: thread?.id ?? null,
+      providerTurnId: null,
+      ordinal: 0,
+    };
+  }
+
   setSessionStatus(
     status: OrchestrationV2ProviderSession["status"],
     lastError: string | null,
@@ -648,6 +685,44 @@ export class OmpThreadMapper {
             );
           }
         }
+        // A link OMP wants opened (an MCP or provider sign-in) and text an extension put in the
+        // editor have no T surface of their own; both become notifications that carry them.
+        if (turn !== null && f["method"] === "open_url") {
+          const url = stringField(f, "url")?.trim();
+          if (url !== undefined && url.length > 0) {
+            const instructions = stringField(f, "instructions")?.trim() ?? "";
+            events.push(
+              ...this.#oneShotItem(turn, "open-url", now, {
+                title: null,
+                type: "notification",
+                source: { kind: "system" },
+                outcome: "updated",
+                summary: (instructions.split("\n")[0] || "OMP asks you to open a link").slice(
+                  0,
+                  200,
+                ),
+                detail: instructions.length > 0 ? `${instructions}\n\n${url}` : url,
+              }),
+            );
+          }
+        }
+        if (turn !== null && f["method"] === "set_editor_text") {
+          const text = stringField(f, "text") ?? "";
+          if (text.trim().length > 0) {
+            events.push(
+              ...this.#oneShotItem(turn, "editor-text", now, {
+                title: null,
+                type: "notification",
+                source: { kind: "system" },
+                outcome: "updated",
+                summary: "OMP suggested a message",
+                detail: text,
+              }),
+            );
+          }
+        }
+        // `setStatus`, `setWidget` and `setTitle` style OMP's own TUI (footer, widgets, terminal
+        // title); T has no such surface and keeps its own thread title. Dialogs are the adapter's.
         break;
       default:
         break;
