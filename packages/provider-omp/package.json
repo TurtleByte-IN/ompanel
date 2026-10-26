@@ -30,6 +30,10 @@
     "./sidecar": {
       "types": "./src/sidecar.ts",
       "import": "./src/sidecar.ts"
+    },
+    "./server/usage": {
+      "types": "./src/server/usage.ts",
+      "import": "./src/server/usage.ts"
     }
   },
   "scripts": {

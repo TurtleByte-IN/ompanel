@@ -43,6 +43,8 @@ import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { isModelPickerOpen } from "../../modelPickerVisibility";
 import { shortcutLabelForCommand } from "../../keybindings";
 import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
+import { useEnvironmentProviders } from "../../state/environments";
+import { OmpUsageSection } from "./OmpUsageSection";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
   enumerateDays,
@@ -95,6 +97,7 @@ import {
 } from "./usageBreakdown";
 import {
   METRIC_OPTIONS,
+  OMP_METRIC_OPTION,
   WINDOW_OPTIONS,
   resolveUsageShortcut,
   type UsageMetric,
@@ -107,7 +110,9 @@ import {
 } from "./usagePagePreferences";
 
 function isUsageMetric(value: string | null | undefined): value is UsageMetric {
-  return METRIC_OPTIONS.some((option) => option.value === value);
+  return (
+    value === OMP_METRIC_OPTION.value || METRIC_OPTIONS.some((option) => option.value === value)
+  );
 }
 
 function isUsageWindowDays(value: number): value is UsagePagePreferences["windowDays"] {
@@ -194,6 +199,10 @@ export function UsagePage() {
   }));
   const metric = preferences.metric;
   const showingLimits = metric === "limits";
+  const showingOmp = metric === "omp";
+  // The tabs other than Cost and Tokens show no time window.
+  const windowless = showingLimits || showingOmp;
+  const [ompRefreshKey, setOmpRefreshKey] = useState(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [limitsNow, setLimitsNow] = useState(() => Date.now());
   const refreshingRef = useRef(false);
@@ -214,12 +223,25 @@ export function UsagePage() {
   const merged = shown?.merged ?? answeredUsage;
   const shownWindow = shown?.window ?? window;
   const shownHourly = shownWindow.resolution === "hour";
-  const refreshingUsage = isRefreshing && !showingLimits;
+  const refreshingUsage = isRefreshing && !windowless;
   const showingKept = shown !== null && shown.window !== window;
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
   const presentationsWithProviders = useAtomValue(
     environmentPresentations.presentationsWithProvidersAtom,
   );
+  const providersByEnvironment = useEnvironmentProviders();
+  const selectedEnvironmentIdList = selectedEnvironments.map(
+    (environment) => environment.environmentId,
+  );
+  // Kept while selected, so the tab does not vanish under the user when OMP is removed.
+  const showOmpTab =
+    showingOmp ||
+    selectedEnvironmentIdList.some((environmentId) =>
+      (providersByEnvironment.get(environmentId) ?? []).some(
+        (provider) => provider.driver === "omp",
+      ),
+    );
+  const metricOptions = showOmpTab ? [...METRIC_OPTIONS, OMP_METRIC_OPTION] : METRIC_OPTIONS;
   const cursorAccessEnvironments = hiddenProviders.has("cursor")
     ? []
     : cursorKeychainAccessEnvironments(selectedEnvironments);
@@ -286,7 +308,7 @@ export function UsagePage() {
     event.preventDefault();
     event.stopPropagation();
     if (metricOption) selectMetric(metricOption.value);
-    if (periodOption && !showingLimits) selectWindow(periodOption.days);
+    if (periodOption && !windowless) selectWindow(periodOption.days);
   });
 
   useEffect(() => {
@@ -297,6 +319,10 @@ export function UsagePage() {
   const refreshWindow = () => {
     if (refreshingRef.current) return;
 
+    if (showingOmp) {
+      setOmpRefreshKey((key) => key + 1);
+      return;
+    }
     if (showingLimits) {
       refreshingRef.current = true;
       setIsRefreshing(true);
@@ -369,7 +395,7 @@ export function UsagePage() {
             selectedEnvironments={selectedEnvironments}
             selectedEnvironmentIds={selectedEnvironmentIds}
             onSelectionChange={setSelectedEnvironmentIds}
-            showUsageStatus={!showingLimits}
+            showUsageStatus={!windowless}
             refreshing={refreshingUsage}
             isPartial={isPartial}
             duplicateSources={merged.duplicateSources}
@@ -385,7 +411,7 @@ export function UsagePage() {
           />
         </WorkspaceBreadcrumbItem>
       </WorkspaceBreadcrumb>
-      {!showingLimits ? (
+      {!windowless ? (
         <span className="hidden min-w-0 truncate text-xs text-muted-foreground @7xl/usage-header:block">
           {windowLabel}
         </span>
@@ -400,8 +426,12 @@ export function UsagePage() {
             if (isUsageMetric(value)) selectMetric(value);
           }}
         >
-          {METRIC_OPTIONS.map((option) => (
-            <Toggle key={option.value} value={option.value} title={shortcutTitle(option)}>
+          {metricOptions.map((option) => (
+            <Toggle
+              key={option.value}
+              value={option.value}
+              title={"command" in option ? shortcutTitle(option) : option.label}
+            >
               {option.label}
             </Toggle>
           ))}
@@ -410,7 +440,7 @@ export function UsagePage() {
           aria-label="Usage period"
           variant="segmented"
           value={[String(windowDays)]}
-          disabled={showingLimits}
+          disabled={windowless}
           onValueChange={(next) => {
             const value = next[0];
             if (value) selectWindow(Number(value));
@@ -424,9 +454,11 @@ export function UsagePage() {
         </ToggleGroup>
         <Button
           onClick={refreshWindow}
-          aria-label={showingLimits ? "Refresh limits" : "Refresh usage"}
+          aria-label={
+            showingOmp ? "Refresh OMP usage" : showingLimits ? "Refresh limits" : "Refresh usage"
+          }
           aria-busy={isRefreshing}
-          disabled={isRefreshing || (!showingLimits && !canReadDiagnostics)}
+          disabled={isRefreshing || (!windowless && !canReadDiagnostics)}
           size="icon-sm"
           variant="ghost"
         >
@@ -447,12 +479,16 @@ export function UsagePage() {
             className="w-auto min-w-0"
           >
             <SelectValue>
-              {METRIC_OPTIONS.find((option) => option.value === metric)?.label}
+              {metricOptions.find((option) => option.value === metric)?.label}
             </SelectValue>
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
-            {METRIC_OPTIONS.map((option) => (
-              <SelectItem key={option.value} value={option.value} title={shortcutTitle(option)}>
+            {metricOptions.map((option) => (
+              <SelectItem
+                key={option.value}
+                value={option.value}
+                title={"command" in option ? shortcutTitle(option) : option.label}
+              >
                 {option.label}
               </SelectItem>
             ))}
@@ -460,7 +496,7 @@ export function UsagePage() {
         </Select>
         <Select
           value={String(windowDays)}
-          disabled={showingLimits}
+          disabled={windowless}
           onValueChange={(value) => selectWindow(Number(value))}
         >
           <SelectTrigger
@@ -487,9 +523,11 @@ export function UsagePage() {
         </Select>
         <Button
           onClick={refreshWindow}
-          aria-label={showingLimits ? "Refresh limits" : "Refresh usage"}
+          aria-label={
+            showingOmp ? "Refresh OMP usage" : showingLimits ? "Refresh limits" : "Refresh usage"
+          }
           aria-busy={isRefreshing}
-          disabled={isRefreshing || (!showingLimits && !canReadDiagnostics)}
+          disabled={isRefreshing || (!windowless && !canReadDiagnostics)}
           size="icon-sm"
           variant="ghost"
         >
@@ -515,6 +553,11 @@ export function UsagePage() {
                   ? `Connect an environment to see ${showingLimits ? "limits" : "usage"}.`
                   : `Select an environment to see ${showingLimits ? "limits" : "usage"}.`}
               </p>
+            ) : showingOmp ? (
+              <OmpUsageSection
+                environmentIds={selectedEnvironmentIdList}
+                refreshKey={ompRefreshKey}
+              />
             ) : showingLimits ? (
               <UsageLimitsSection
                 selectedEnvironmentIds={selectedEnvironmentIds}
@@ -567,7 +610,7 @@ export function UsagePage() {
           </WorkspacePageContainer>
         </ScrollArea>
       </div>
-      {showingLimits ? null : (
+      {windowless ? null : (
         <UsageModelDialogHost
           models={merged.models}
           environments={selectedEnvironments}

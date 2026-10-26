@@ -47,6 +47,8 @@ import { OMP_BUNDLED_SIDECAR_ENV } from "./sidecar.ts";
 import { makeOmpSidecarProvisioner } from "./sidecarInstall.ts";
 import { buildInitialOmpProviderSnapshot, ompProviderSnapshot } from "./status.ts";
 import { makeOmpTextGeneration } from "./textGeneration.ts";
+import { ompUsageReader, type OmpUsageReaderEnv } from "./usage.ts";
+import { makeOmpUsageController } from "./usageController.ts";
 
 const DRIVER_KIND = ProviderDriverKind.make("omp");
 const decodeOmpSettings = Schema.decodeSync(OmpSettings);
@@ -63,13 +65,14 @@ export type OmpDriverEnv =
   | FileSystem.FileSystem
   | Path.Path;
 
-export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
+export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv, OmpUsageReaderEnv> = {
   driverKind: DRIVER_KIND,
   metadata: {
     displayName: "OMP",
     supportsMultipleInstances: true,
   },
   configSchema: OmpSettings,
+  usage: ompUsageReader,
   defaultConfig: (): OmpSettings => decodeOmpSettings({}),
   create: Effect.fn("OmpDriver.create")(function* ({
     instanceId,
@@ -304,6 +307,12 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
         control,
         target: controlTarget,
         globalCwd: stateDirs.launcher,
+      }),
+      ompUsage: makeOmpUsageController({
+        control,
+        target: controlTarget,
+        globalCwd: stateDirs.launcher,
+        sessions: threadSessions,
       }),
     } satisfies ProviderInstance;
   }),
