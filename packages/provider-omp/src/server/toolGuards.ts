@@ -12,7 +12,7 @@ import { contractAtLeast } from "./hostTools.ts";
 type OmpGuardedKey = (typeof OMP_GUARDED_KEYS)[number];
 
 /** The contract whose OMP honours `workspace.trusted` and reports the guard in `get_state`. */
-export const OMP_WORKSPACE_TRUST_CONTRACT = "1.9.0";
+const OMP_WORKSPACE_TRUST_CONTRACT = "1.9.0";
 
 export const ompWorkspaceTrustAvailable = (contractVersion: string): boolean =>
   contractAtLeast(contractVersion, OMP_WORKSPACE_TRUST_CONTRACT);
