@@ -20,9 +20,31 @@ session's journal; entries carry the session id changes (`/fresh`, rewind).
 
 Each process that runs the thread appends one segment, which starts with an
 `open` line. Lines reach the file in batches every 100 ms and when the session
-closes; a crash loses at most the last batch. When a process opens a journal
-over 32 MiB, it first moves it to `journal.1.ndjson` (replacing the one before),
-so every file starts at a segment.
+closes; a crash loses at most the last batch. A crash mid-write can leave a torn
+last line: the next process ends it with a newline before writing, so its own
+`open` line stays whole.
+
+## How big it gets
+
+- A journal over 32 MiB moves to `journal.1.ndjson` (replacing the one before),
+  when a process opens it and while a process writes it. The new file starts
+  with the writing process's `open` line. A thread's journal therefore stays
+  under about 64 MiB on disk.
+- A replay from a file that rotated mid-process starts from the rotation: the
+  turn in progress then is missing its start, and its lines are skipped.
+- Opening a thread reads the last segment only, back from the end of the file
+  in 1 MiB chunks, never the whole file.
+- Frames that arrive outside a turn are not written, except
+  `session_info_update` (the only one that changes anything there). A parked
+  background job keeps updating its tool for hours after the turn; none of that
+  reaches the journal, unless the frames belong to a run OMP started on its own
+  (see Background runs).
+- A running tool's `tool_execution_update` carries all its output so far, and
+  bash sends one every 250 ms. The journal keeps one update per tool call every
+  5 s, and always the last one, written before the call's end or the turn's end.
+  The tool card then ends as it did live; only superseded snapshots, and the
+  live-only output deltas computed from them, are not replayed. A run held for
+  a turn keeps only the latest update of each tool, in memory and on disk.
 
 ## What a line holds
 
@@ -45,7 +67,8 @@ session used as "now":
 
 Frames are kept as the mapping reads them. A `message_update` carries the whole
 partial message on every delta; the journal keeps the delta and the one content
-block's type. `agent_end` keeps how its last assistant message stopped;
+block's type. `message_end` keeps the message's role and usage (an advisor note
+stays whole); `agent_end` how its last assistant message stopped;
 `message_start` its role and id; `agent_start`, `turn_start`, `turn_end` only
 their type. Every other frame, including types this build does not know, is
 kept as it came. Frames the host-tool bridge answers (`host_tool_call`, ...)
@@ -56,11 +79,13 @@ are not journaled: they change nothing a client shows.
 `replayOmpJournal(entries)` feeds each segment through a fresh mapper,
 subagent tracker and dialog set, in order, and returns the events. Every input
 that changes those objects is a line, and every output depends only on the
-inputs and the recorded times, so the replay emits the events the live
-sessions emitted, in the same order. Unknown frame types map to nothing, as
-they did live. `parseOmpJournal` skips lines that are not JSON or not a known
-kind (a torn last line, a newer build's kinds); the replay skips entries it
-cannot decode or apply. Neither ever fails on them.
+inputs and the recorded times, so the replay rebuilds the thread view the live
+sessions left: every turn, message, item, card and request as it last was. It
+emits the live events in order, less those of thinned tool updates. Unknown
+frame types map to nothing, as they did live. `parseOmpJournal` skips lines
+that are not JSON or not a known kind (a torn last line, a newer build's
+kinds); the replay skips entries it cannot decode or apply. Neither ever fails
+on them.
 
 T3's own tabs reattach from the server: the orchestration event store keeps
 every event the server ingested, and a client switching to a thread resumes
@@ -108,8 +133,9 @@ interrupted, since the process that ran it is gone.
 
 PRD §9: replaying a 10k-frame session takes under 200 ms. The benchmark,
 `journal.perf.test.ts`, records a session of 10,088 frames (104 turns, each a
-streamed answer of 80 deltas, a tool call with 8 updates, flushes and usage;
-11,130 lines, 2.1 MB), writes it to disk, and holds the median of five replays,
+streamed answer of 80 deltas, a tool call with 8 updates 5 s apart so none is
+thinned, flushes and usage; 11,130 lines, 2.1 MB), writes it to disk, and holds
+the median of five replays,
 from reading the file to the last event, to 200 ms. It also checks the replay
 reproduces the live thread view.
 

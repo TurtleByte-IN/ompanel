@@ -53,10 +53,15 @@ const OMP_JOURNAL_VERSION = 1;
 const OMP_JOURNAL_FILE = "journal.ndjson";
 /** The previous journal, kept once when the current one is rotated. */
 const OMP_JOURNAL_PREVIOUS_FILE = "journal.1.ndjson";
-/** A journal this large is rotated when the next process opens it. */
+/** A journal this large moves to `journal.1.ndjson`, while a process writes it or at open. */
 const OMP_JOURNAL_ROTATE_BYTES = 32 * 1024 * 1024;
 /** Lines are written in batches; a crash loses at most this much of the tail. */
 const OMP_JOURNAL_FLUSH_MS = 100;
+/**
+ * A running tool's updates carry all its output so far (bash polls every 250 ms). The journal
+ * keeps one per tool call this often, and always the last one before the call ends.
+ */
+const OMP_JOURNAL_TOOL_UPDATE_MS = 5_000;
 
 /** A frame as recorded: the parts of it the mapping reads (see `ompJournalFrame`). */
 export type OmpJournalFrame = { readonly type: string } & Readonly<Record<string, unknown>>;
@@ -230,6 +235,20 @@ export function ompJournalFrame(frame: { readonly type: string }): OmpJournalFra
         message: { role },
       };
     }
+    case "message_end": {
+      const message = asRecord(f["message"]);
+      const role = message?.["role"];
+      // Advisor notes are read whole; of any other message only its usage and role.
+      if (role === "custom" && message?.["customType"] === "advisor")
+        return frame as OmpJournalFrame;
+      return {
+        type: frame.type,
+        message:
+          role === "assistant"
+            ? { role, usage: message?.["usage"] }
+            : { role, customType: message?.["customType"] },
+      };
+    }
     case "agent_start":
     case "turn_start":
     case "turn_end":
@@ -301,6 +320,8 @@ export function ompRunOutcome(agentEnd: { readonly type: string }): OmpTurnOutco
  */
 export class OmpDetachedRun {
   #frames: Array<{ readonly type: string }> = [];
+  /** Where each running tool's latest update sits: a newer one replaces it. */
+  readonly #updates = new Map<string, number>();
   #previousProcess = false;
 
   get pending(): boolean {
@@ -315,6 +336,18 @@ export class OmpDetachedRun {
   push(frame: { readonly type: string }): void {
     // A run this process started can go on, whatever an earlier process left behind.
     if (frame.type === "agent_start") this.#previousProcess = false;
+    const toolCallId = ompToolCallId(frame);
+    if (toolCallId !== undefined && frame.type === "tool_execution_update") {
+      // Updates are cumulative: a parked job's would otherwise pile up for as long as it runs.
+      const index = this.#updates.get(toolCallId);
+      if (index !== undefined) {
+        this.#frames[index] = frame;
+        return;
+      }
+      this.#updates.set(toolCallId, this.#frames.length);
+    } else if (toolCallId !== undefined && frame.type === "tool_execution_end") {
+      this.#updates.delete(toolCallId);
+    }
     this.#frames.push(frame);
   }
 
@@ -334,8 +367,60 @@ export class OmpDetachedRun {
   } {
     const taken = { frames: this.#frames, fromPreviousProcess: this.#previousProcess };
     this.#frames = [];
+    this.#updates.clear();
     this.#previousProcess = false;
     return taken;
+  }
+}
+
+const ompToolCallId = (frame: { readonly type: string }): string | undefined => {
+  const id = (frame as Record<string, unknown>)["toolCallId"];
+  return typeof id === "string" && id.length > 0 ? id : undefined;
+};
+
+/**
+ * Thins the journal lines of running tools: one update per tool call every 5 s, the latest held
+ * back until then, and the held one written right before the call's end (or the turn's). A
+ * replay then misses only superseded snapshots; each tool card ends as it did live.
+ */
+export class OmpToolUpdateCoalescer {
+  readonly #calls = new Map<string, { lastAt: number; held: OmpJournalEntry | undefined }>();
+
+  /** The lines to write now for `entry`, the line of `frame` at `at`. */
+  admit(
+    frame: { readonly type: string },
+    entry: OmpJournalEntry,
+    at: number,
+  ): ReadonlyArray<OmpJournalEntry> {
+    const toolCallId = ompToolCallId(frame);
+    if (toolCallId === undefined) return [entry];
+    const call = this.#calls.get(toolCallId);
+    switch (frame.type) {
+      case "tool_execution_start":
+        this.#calls.set(toolCallId, { lastAt: at, held: undefined });
+        return [entry];
+      case "tool_execution_update":
+        if (call !== undefined && at - call.lastAt < OMP_JOURNAL_TOOL_UPDATE_MS) {
+          call.held = entry;
+          return [];
+        }
+        this.#calls.set(toolCallId, { lastAt: at, held: undefined });
+        return [entry];
+      case "tool_execution_end":
+        this.#calls.delete(toolCallId);
+        return call?.held === undefined ? [entry] : [call.held, entry];
+      default:
+        return [entry];
+    }
+  }
+
+  /** The held updates, in call order; nothing is held afterwards. */
+  drain(): ReadonlyArray<OmpJournalEntry> {
+    const held = [...this.#calls.values()].flatMap((call) =>
+      call.held === undefined ? [] : [call.held],
+    );
+    this.#calls.clear();
+    return held;
   }
 }
 
@@ -358,6 +443,11 @@ export class OmpJournalRecorder {
 
   run<A>(entry: () => OmpJournalEntry, apply: () => A): A {
     if (this.#depth === 0) this.#sink(entry());
+    return this.quiet(apply);
+  }
+
+  /** Applies without recording anything, for inputs already recorded or not worth a line. */
+  quiet<A>(apply: () => A): A {
     this.#depth += 1;
     try {
       return apply();
@@ -370,6 +460,7 @@ export class OmpJournalRecorder {
 /** `OmpThreadMapper` that journals every input before applying it. */
 export class OmpJournaledMapper extends OmpThreadMapper {
   readonly #recorder: OmpJournalRecorder;
+  readonly #toolUpdates = new OmpToolUpdateCoalescer();
 
   constructor(options: OmpThreadMapperOptions, recorder: OmpJournalRecorder) {
     super(options);
@@ -435,10 +526,15 @@ export class OmpJournaledMapper extends OmpThreadMapper {
   }
 
   override handleFrame(frame: { readonly type: string }, now: DateTime.Utc): OmpFrameResult {
-    return this.#recorder.run(
-      () => ({ k: "frame", at: millis(now), frame: ompJournalFrame(frame) }),
-      () => super.handleFrame(frame, now),
-    );
+    // Outside a turn only `session_info_update` changes anything; every other frame maps to
+    // nothing (a parked background job's tool updates keep coming for hours).
+    if (!this.hasActiveTurn && frame.type !== "session_info_update") {
+      return this.#recorder.quiet(() => super.handleFrame(frame, now));
+    }
+    const at = millis(now);
+    const entry: OmpJournalEntry = { k: "frame", at, frame: ompJournalFrame(frame) };
+    for (const line of this.#toolUpdates.admit(frame, entry, at)) this.#recorder.record(line);
+    return this.#recorder.quiet(() => super.handleFrame(frame, now));
   }
 
   override flushStreaming(now: DateTime.Utc): Array<Event> {
@@ -453,6 +549,8 @@ export class OmpJournaledMapper extends OmpThreadMapper {
     refresh: OmpTurnRefresh,
     now: DateTime.Utc,
   ): Array<Event> {
+    // Each tool card ends with the last update the turn saw.
+    for (const line of this.#toolUpdates.drain()) this.#recorder.record(line);
     return this.#recorder.run(
       () => ({ k: "finalize", at: millis(now), outcome, refresh }),
       () => super.finalizeTurn(outcome, refresh, now),
@@ -599,16 +697,6 @@ export function parseOmpJournal(text: string): OmpJournalParse {
     start = end + 1;
   }
   return { entries, skipped };
-}
-
-/** The entries of the last process segment (from its `open`); the whole list when there is none. */
-export function lastOmpJournalSegment(
-  entries: ReadonlyArray<OmpJournalEntry>,
-): ReadonlyArray<OmpJournalEntry> {
-  for (let index = entries.length - 1; index >= 0; index -= 1) {
-    if (entries[index]!.k === "open") return entries.slice(index);
-  }
-  return [];
 }
 
 /**
@@ -760,11 +848,63 @@ export function replayOmpJournal(entries: Iterable<OmpJournalEntry>): OmpJournal
 export const ompJournalPath = (path: Path.Path, threadsDir: string, threadId: string): string =>
   path.join(threadsDir, encodeURIComponent(threadId), OMP_JOURNAL_FILE);
 
-/** The thread's journal; empty when it has none or it cannot be read. */
-export const readOmpJournal = Effect.fn("readOmpJournal")(function* (file: string) {
+/** How a segment's first line starts (`k` is the first key `JSON.stringify` writes). */
+const OPEN_LINE = new TextEncoder().encode('{"k":"open"');
+const TAIL_CHUNK_BYTES = 1024 * 1024;
+
+/** Whether the bytes at `index` start an `open` line: at the start, or right after a newline. */
+const opensSegment = (bytes: Uint8Array, index: number): boolean => {
+  if (index > 0 && bytes[index - 1] !== 0x0a) return false;
+  for (let offset = 0; offset < OPEN_LINE.length; offset += 1) {
+    if (bytes[index + offset] !== OPEN_LINE[offset]) return false;
+  }
+  return true;
+};
+
+/**
+ * The entries of the journal's last process segment, read back from the end of the file in
+ * 1 MiB chunks, never the whole file. Empty when there is no journal, no segment within twice
+ * the rotation size, or the file cannot be read.
+ */
+export const readOmpJournalTail = Effect.fn("readOmpJournalTail")(function* (file: string) {
   const fileSystem = yield* FileSystem.FileSystem;
-  const text = yield* fileSystem.readFileString(file).pipe(Effect.orElseSucceed(() => ""));
-  return parseOmpJournal(text);
+  const empty: OmpJournalParse = { entries: [], skipped: 0 };
+  return yield* Effect.gen(function* () {
+    const handle = yield* fileSystem.open(file, { flag: "r" });
+    const size = Number((yield* handle.stat).size);
+    const readAt = Effect.fnUntraced(function* (position: number, length: number) {
+      const buffer = new Uint8Array(length);
+      let filled = 0;
+      while (filled < length) {
+        const read = yield* handle.read(buffer.subarray(filled), {
+          position: BigInt(position + filled),
+        });
+        if (read === 0) break;
+        filled += read;
+      }
+      return buffer.subarray(0, filled);
+    });
+    let start = -1;
+    let end = size;
+    while (start === -1 && end > 0 && size - end < OMP_JOURNAL_ROTATE_BYTES * 2) {
+      const from = Math.max(0, end - TAIL_CHUNK_BYTES);
+      // The window runs a line start past `end`. A line at a window's index 0 needs the byte
+      // before it, so the next window back, which ends there, checks it.
+      const window = yield* readAt(from, Math.min(size, end + OPEN_LINE.length) - from);
+      for (let index = end - from; index >= (from === 0 ? 0 : 1); index -= 1) {
+        if (opensSegment(window, index)) {
+          start = from + index;
+          break;
+        }
+      }
+      end = from;
+    }
+    if (start === -1) return empty;
+    return parseOmpJournal(new TextDecoder().decode(yield* readAt(start, size - start)));
+  }).pipe(
+    Effect.scoped,
+    Effect.orElseSucceed(() => empty),
+  );
 });
 
 export interface OmpJournalWriter {
@@ -776,52 +916,78 @@ export interface OmpJournalWriter {
 
 /**
  * Appends to the thread's journal for the life of the scope. A journal over the rotation size
- * moves to `journal.1.ndjson` first (replacing the one before), so every file starts at a
- * process segment. Write failures are logged and never fail the session: the journal is a
- * record, the session goes on without it.
+ * (at open, or as this process writes it) moves to `journal.1.ndjson`, replacing the one before;
+ * the new file starts with this process's `open` line, so the tail reader finds its segment. A
+ * torn last line (a crash mid-write) is ended first, so it cannot swallow the next line. Write
+ * failures are logged and never fail the session: the journal is a record.
  */
-export const makeOmpJournalWriter = Effect.fn("makeOmpJournalWriter")(function* (file: string) {
+export const makeOmpJournalWriter = Effect.fn("makeOmpJournalWriter")(function* (
+  file: string,
+  options: { readonly rotateBytes?: number } = {},
+) {
+  const rotateBytes = options.rotateBytes ?? OMP_JOURNAL_ROTATE_BYTES;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const ready = yield* fileSystem
+  const previous = path.join(path.dirname(file), OMP_JOURNAL_PREVIOUS_FILE);
+  const lastByte = (size: number) =>
+    fileSystem.open(file, { flag: "r" }).pipe(
+      Effect.flatMap((handle) => {
+        const byte = new Uint8Array(1);
+        return handle.read(byte, { position: BigInt(size - 1) }).pipe(Effect.as(byte[0]));
+      }),
+      Effect.scoped,
+    );
+  const opened = yield* fileSystem
     .makeDirectory(path.dirname(file), { recursive: true, mode: 0o700 })
     .pipe(
       Effect.andThen(
         fileSystem.stat(file).pipe(
-          Effect.flatMap((info) =>
-            Number(info.size) > OMP_JOURNAL_ROTATE_BYTES
-              ? fileSystem.rename(file, path.join(path.dirname(file), OMP_JOURNAL_PREVIOUS_FILE))
-              : Effect.void,
-          ),
+          Effect.map((info) => Number(info.size)),
           Effect.catchTags({
             PlatformError: (error) =>
-              error.reason._tag === "NotFound" ? Effect.void : Effect.fail(error),
+              error.reason._tag === "NotFound" ? Effect.succeed(0) : Effect.fail(error),
           }),
         ),
       ),
-      Effect.as(true),
+      Effect.flatMap((size) =>
+        size > rotateBytes
+          ? fileSystem.rename(file, previous).pipe(Effect.as({ size: 0, torn: false }))
+          : size === 0
+            ? Effect.succeed({ size, torn: false })
+            : lastByte(size).pipe(Effect.map((byte) => ({ size, torn: byte !== 0x0a }))),
+      ),
+      Effect.map((state) => state as { readonly size: number; readonly torn: boolean } | null),
       Effect.catch((error) =>
         Effect.logWarning("omp journal unavailable", { detail: error.message }).pipe(
-          Effect.as(false),
+          Effect.as(null),
         ),
       ),
     );
+  let bytes = opened?.size ?? 0;
+  let prefix = opened?.torn === true ? "\n" : "";
+  let openLine: string | undefined;
   let queued: Array<string> = [];
   const permit = yield* Semaphore.make(1);
   const flush = permit
     .withPermits(1)(
-      Effect.suspend(() => {
-        if (!ready || queued.length === 0) return Effect.void;
-        const text = queued.join("");
+      Effect.gen(function* () {
+        if (opened === null || queued.length === 0) return;
+        let text = prefix + queued.join("");
         queued = [];
-        return fileSystem
-          .writeFileString(file, text, { flag: "a", mode: 0o600 })
-          .pipe(
-            Effect.catch((error) =>
-              Effect.logWarning("omp journal write failed", { detail: error.message }),
-            ),
-          );
-      }),
+        prefix = "";
+        if (bytes > 0 && bytes + text.length > rotateBytes) {
+          yield* fileSystem.rename(file, previous);
+          bytes = 0;
+          text = text.startsWith("\n") ? text.slice(1) : text;
+          if (openLine !== undefined && !text.startsWith(openLine)) text = openLine + text;
+        }
+        yield* fileSystem.writeFileString(file, text, { flag: "a", mode: 0o600 });
+        bytes += text.length;
+      }).pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("omp journal write failed", { detail: error.message }),
+        ),
+      ),
     )
     .pipe(Effect.uninterruptible);
   // Added before the periodic writer, so it runs after that writer stops: the last lines land.
@@ -833,7 +999,10 @@ export const makeOmpJournalWriter = Effect.fn("makeOmpJournalWriter")(function* 
   );
   return {
     record: (entry: OmpJournalEntry) => {
-      if (ready) queued.push(`${JSON.stringify(entry)}\n`);
+      if (opened === null) return;
+      const line = `${JSON.stringify(entry)}\n`;
+      if (entry.k === "open") openLine = line;
+      queued.push(line);
     },
     flush,
   } satisfies OmpJournalWriter;

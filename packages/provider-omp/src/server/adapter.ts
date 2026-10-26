@@ -42,7 +42,6 @@ import type { OmpCommandHooks } from "./commands.ts";
 import { makeOmpHostBridge } from "./hostTools.ts";
 import {
   isOmpRunYield,
-  lastOmpJournalSegment,
   makeOmpJournalWriter,
   ompJournalDetachedEntry,
   ompJournalDetachedTail,
@@ -55,7 +54,8 @@ import {
   OmpJournaledSubagents,
   OmpJournaledUiRequests,
   OmpJournalRecorder,
-  readOmpJournal,
+  OmpToolUpdateCoalescer,
+  readOmpJournalTail,
 } from "./journal.ts";
 import { ompApprovalModeFor } from "./launch.ts";
 import { OMP_PROVIDER, type OmpTurnOutcome } from "./mapper.ts";
@@ -364,11 +364,9 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
     // no turn was attached, and no turn took, is carried over for this process's next turn.
     const journalFile = ompJournalPath(path, options.dirs.threads, input.threadId);
     const carried = ompJournalDetachedTail(
-      lastOmpJournalSegment(
-        (yield* readOmpJournal(journalFile).pipe(
-          Effect.provideService(FileSystem.FileSystem, fileSystem),
-        )).entries,
-      ),
+      (yield* readOmpJournalTail(journalFile).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+      )).entries,
     );
     const journal = yield* makeOmpJournalWriter(journalFile).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -423,8 +421,16 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
     );
     /** A run OMP started with no turn attached, waiting for one (see `offerWake`). */
     const detached = new OmpDetachedRun();
+    /** A parked job keeps updating its tool while the run waits: those lines are thinned. */
+    const detachedUpdates = new OmpToolUpdateCoalescer();
+    const recordDetached = (frame: { readonly type: string }, at: DateTime.Utc) => {
+      const entry = ompJournalDetachedEntry(frame, at);
+      for (const line of detachedUpdates.admit(frame, entry, DateTime.toEpochMillis(at))) {
+        journal.record(line);
+      }
+    };
     detached.adopt(carried);
-    for (const frame of carried) recorder.record(ompJournalDetachedEntry(frame, now));
+    for (const frame of carried) recordDetached(frame, now);
     /** The continuation T3 was asked for, until a turn takes the run or T3 declines it. */
     let wake: object | null = null;
     /** The last `prompt_result` said a background job can still wake the session. */
@@ -691,7 +697,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       // A run OMP started with no turn attached waits for one instead of being dropped.
       if (!mapper.hasActiveTurn && !sessionChanging && detached.accepts(frame)) {
         detached.push(frame);
-        journal.record(ompJournalDetachedEntry(frame, yield* DateTime.now));
+        recordDetached(frame, yield* DateTime.now);
         if (frame.type === "agent_start") yield* offerWake();
         return;
       }
@@ -1140,6 +1146,8 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
           // A continuation has no prompt; the run's yield, replayed here or still to come, ends it.
           wake = null;
           const run = detached.take();
+          // The turn records the frames it takes; held detached lines are not needed any more.
+          detachedUpdates.drain();
           autonomousTurn = isContinuation;
           let replayed = 0;
           while (replayed < run.frames.length && mapper.activeProviderTurnId === turnId) {
@@ -1155,7 +1163,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
             const rest = run.frames.slice(next);
             if (run.fromPreviousProcess) detached.adopt(rest);
             else for (const frame of rest) detached.push(frame);
-            for (const frame of rest) journal.record(ompJournalDetachedEntry(frame, now));
+            for (const frame of rest) recordDetached(frame, now);
             yield* offerWake();
           }
           if (isContinuation && mapper.activeProviderTurnId === turnId) {

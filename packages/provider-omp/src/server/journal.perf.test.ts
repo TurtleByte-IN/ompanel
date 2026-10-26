@@ -109,6 +109,8 @@ const recordSession = () => {
     const toolCallId = `call-${ordinal}`;
     frame({ type: "tool_execution_start", toolCallId, toolName: "bash", args: { command: "ls" } });
     for (let index = 0; index < 8; index += 1) {
+      // 5 s apart, so the journal keeps every one (it thins faster updates).
+      clock += 5_000;
       frame({
         type: "tool_execution_update",
         toolCallId,
@@ -146,6 +148,8 @@ describe.runIf(process.env.OMP_JOURNAL_BENCH === "1")("OMP journal replay perfor
     Effect.gen(function* () {
       const { entries, live, frames } = recordSession();
       assert.isAtLeast(frames, FRAMES);
+      // Every frame is replayed, none thinned away.
+      assert.isAtLeast(entries.filter((entry) => entry.k === "frame").length, FRAMES);
       const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "omp-journal-bench-"));
       yield* Effect.addFinalizer(() =>
         Effect.sync(() => NodeFS.rmSync(dir, { recursive: true, force: true })),
@@ -169,7 +173,6 @@ describe.runIf(process.env.OMP_JOURNAL_BENCH === "1")("OMP journal replay perfor
       // The timed replay is the real one: it rebuilds what the live session showed.
       const replay = replayFromDisk();
       assert.strictEqual(replay.skipped, 0);
-      assert.strictEqual(replay.events.length, live.length);
       assert.deepStrictEqual(ompThreadView(replay.events), ompThreadView(live));
     }).pipe(Effect.scoped),
   );

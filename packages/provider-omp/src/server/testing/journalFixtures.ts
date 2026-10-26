@@ -106,20 +106,16 @@ const rowKey = (event: ProviderAdapter.ProviderAdapterV2Event): string => {
 };
 
 /**
- * What a client showing the thread holds after applying `events`: every entity's latest state
- * (JSON-encoded, so dates compare as text) and the streamed command output, by key.
+ * What a client showing the thread keeps after applying `events`: every entity's latest state,
+ * JSON-encoded so dates compare as text. `command_output.delta` is left out: it is live-only
+ * (never persisted), and the card's whole output arrives with its `turn_item.updated`.
  */
 export function ompThreadView(
   events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>,
 ): Record<string, unknown> {
   const rows = new Map<string, unknown>();
   for (const event of events) {
-    const key = rowKey(event);
-    if (event.type === "command_output.delta") {
-      rows.set(key, `${(rows.get(key) as string | undefined) ?? ""}${event.chunk}`);
-    } else {
-      rows.set(key, encodeEvent(event));
-    }
+    if (event.type !== "command_output.delta") rows.set(rowKey(event), encodeEvent(event));
   }
   return Object.fromEntries([...rows].toSorted(([left], [right]) => left.localeCompare(right)));
 }
