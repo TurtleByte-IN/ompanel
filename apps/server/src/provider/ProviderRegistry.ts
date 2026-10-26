@@ -422,21 +422,14 @@ export const layer = Layer.effect(
     const providersRef = yield* Ref.make<ReadonlyArray<ServerProvider>>(
       cachedProviders.map((provider) => classifyCompatibility(provider, initialManifest)),
     );
-    // Subscribers keep the last list published. Updates persist between changing the list and
-    // publishing it, so publishing the list an update computed let an older update land after a
-    // newer one and leave every client on a stale list (OMP stuck on "Checking the OMP
-    // sidecar..." until its next probe). Every publish sends the current list instead, in order,
-    // and only when it differs from the last one sent.
+    // Updates persist between changing the list and publishing it; publishing the list each one
+    // computed let an older update land last and leave clients on a stale list. Publish the
+    // current list instead, one at a time.
     const publishSemaphore = yield* Semaphore.make(1);
-    const lastPublishedRef = yield* Ref.make(yield* Ref.get(providersRef));
     const publishCurrentProviders = publishSemaphore.withPermits(1)(
-      Effect.gen(function* () {
-        const providers = yield* Ref.get(providersRef);
-        const previous = yield* Ref.getAndSet(lastPublishedRef, providers);
-        if (haveProvidersChanged(previous, providers)) {
-          yield* PubSub.publish(changesPubSub, providers);
-        }
-      }),
+      Ref.get(providersRef).pipe(
+        Effect.flatMap((providers) => PubSub.publish(changesPubSub, providers)),
+      ),
     );
     const workspaceRefreshesRef = yield* Ref.make<
       ReadonlyMap<ProviderInstance, ReadonlyMap<string, Deferred.Deferred<void>>>

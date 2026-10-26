@@ -723,9 +723,7 @@ const layerConfigRpcTest = Layer.mergeAll(
 
 it.effect("a provider change made as a client's provider stream starts reaches the client", () =>
   Effect.gen(function* () {
-    // Issue #150: the stream read the providers and only then subscribed to their changes, so
-    // OMP's probe finishing in between never reached the client, which kept showing "Checking
-    // the OMP sidecar..." until the next probe minutes later.
+    // A change published right after the stream reads the providers must still reach the client.
     const checking: ServerProvider = {
       instanceId: ProviderInstanceId.make("omp"),
       driver: ProviderDriverKind.make("omp"),

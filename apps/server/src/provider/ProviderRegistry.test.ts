@@ -1711,9 +1711,7 @@ it.layer(
 
     it.effect("never publishes an older provider list after a newer one", () =>
       Effect.gen(function* () {
-        // Issue #150: one instance's update was still persisting when another instance's newer
-        // update published, then published the list it had computed before that update, so every
-        // client went back to OMP's "Checking the OMP sidecar..." and stayed there.
+        // A slower update that publishes after a newer one must not send clients an older list.
         const makeSnapshot = (driver: string, checkedAt: string): ServerProvider => ({
           instanceId: ProviderInstanceId.make(driver),
           driver: ProviderDriverKind.make(driver),
