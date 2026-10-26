@@ -189,8 +189,9 @@ through the web app. Its steps run in order on one page, every page opened
 with a full page load:
 
 1. OMP settings pages and the Usage page's OMP tab show OMP's data on a full
-   page load, after the client has cached the environment's providers
-   (ompanel#128: the pages read OMP before the connection was up);
+   page load, once the client's IndexedDB `server-config` cache lists OMP (ompanel#128:
+   the pages read OMP before the connection was up; they now wait for it and show the
+   connection's status meanwhile, so a failed environment shows why);
 2. `/wt <branch>` in an OMP thread makes a T3 worktree (`git worktree list`),
    the thread list and git panel show the branch, and the next message runs
    OMP with `--cwd` in the worktree;
