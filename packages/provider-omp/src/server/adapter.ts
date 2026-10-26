@@ -4,6 +4,7 @@ import type {
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderHostTools from "@t3tools/provider-core/server/ProviderHostTools";
@@ -36,6 +37,15 @@ import {
   switchOmpSession,
 } from "./sessionBinding.ts";
 import { ompHistoryMessages, readOmpHistoryPages } from "./sessionHistory.ts";
+import {
+  ompBranchTree,
+  ompDroppedTurns,
+  ompSessionEntries,
+  ompTurnUserEntry,
+  resolveOmpCut,
+  readOmpBranchTree,
+  resolveOmpForkEntry,
+} from "./sessionBranches.ts";
 import type { OmpThreadSessions } from "./threadSessions.ts";
 import type { OmpSidecarError } from "./sidecar.ts";
 import {
@@ -60,6 +70,10 @@ const SIDE_REQUEST_TIMEOUT_MS = 2_000;
 const SUBAGENT_REQUEST_TIMEOUT_MS = 30_000;
 /** Reviving rebuilds a subagent session from its transcript (models, tools, extensions). */
 const SUBAGENT_REVIVE_TIMEOUT_MS = 60_000;
+/** Session switches, rewinds and forks load, index and copy the whole transcript. */
+const SESSION_CHANGE_TIMEOUT_MS = 60_000;
+/** Reads of the session tree for a rewind or fork, which list user messages or entries. */
+const TREE_READ_TIMEOUT_MS = 30_000;
 
 /**
  * `revive_subagent` (RPC contract 1.4.0) is newer than the pinned contract's typed command
@@ -73,9 +87,9 @@ type OmpReviveRequest = (
 ) => Effect.Effect<{ readonly revived: boolean }, OmpRpcRequestError>;
 
 /**
- * What an `omp --mode rpc-ui` session supports. Rollback and fork map to OMP's `branch` and
- * `switch_session`; delegation reaches T3's provider-agnostic thread MCP through OMP's own
- * subagents.
+ * What an `omp --mode rpc-ui` session supports. Rollback maps to OMP's `branch`, a fork to
+ * `fork` (docs/omp/sessions.md); delegation reaches T3's provider-agnostic thread MCP through
+ * OMP's own subagents.
  */
 const OMP_PROVIDER_CAPABILITIES = {
   runtimePolicy: { enforcement: "client-boundary" },
@@ -205,6 +219,21 @@ const protocolError = (detail: string, reason?: ProviderAdapter.ProviderAdapterF
     detail,
     ...(reason === undefined ? {} : { reason }),
   });
+
+/** A rewind or fork refused because the session is still being written (PRD §12). */
+const busyError = (action: string) =>
+  protocolError(
+    `Cannot ${action} while the OMP session is busy: a turn is still running. Wait for it to finish or stop it, then try again`,
+    "previous_turn_active",
+  );
+
+/** OMP's `session_busy` refusal reads like Ompanel's own; anything else keeps OMP's words. */
+const sessionChangeError = (action: string) => (error: OmpRpcRequestError) =>
+  error._tag === "OmpRpcCommandError" && error.code === "session_busy"
+    ? busyError(action)
+    : protocolError(
+        `OMP could not ${action}: ${error._tag === "OmpRpcCommandError" ? error.detail : error.message}`,
+      );
 
 /**
  * OMP's orchestration adapter. Opening a session starts the thread's `omp --mode rpc-ui`
@@ -344,6 +373,44 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       });
     });
 
+    /**
+     * The session's leaf after the last turn this process saw, so the next turn lists only its
+     * own entries (`get_entries {since}`); undefined until read and after the session changed.
+     */
+    let sessionLeaf: string | null | undefined;
+    /** When the active turn started, in epoch milliseconds, for a listing without a leaf. */
+    let turnStartedAt = 0;
+    /** A rewind or fork is moving the session to another file. */
+    let sessionChanging = false;
+    /** The user message entry the turn's prompt wrote (sessionBranches.ts); undefined: unread. */
+    const captureTurnEntry = Effect.fnUntraced(function* () {
+      const previous = sessionLeaf;
+      sessionLeaf = undefined;
+      const list = (since: string | undefined) =>
+        process
+          .request("get_entries", since === undefined ? {} : { since }, {
+            timeoutMs: SIDE_REQUEST_TIMEOUT_MS,
+          })
+          .pipe(Effect.option);
+      let known = previous;
+      let listing = yield* list(previous ?? undefined);
+      // An unknown cursor means the session moved under the turn (`/new`, a switch).
+      if (Option.isNone(listing) && typeof previous === "string") {
+        known = undefined;
+        listing = yield* list(undefined);
+      }
+      if (Option.isNone(listing)) return undefined;
+      const entries = ompSessionEntries(listing.value.entries);
+      if (entries === null) return undefined;
+      sessionLeaf = listing.value.leafId;
+      return ompTurnUserEntry({
+        entries,
+        leafId: listing.value.leafId,
+        previousLeafId: known,
+        turnStartedAt,
+      });
+    });
+
     const finalize = Effect.fnUntraced(function* (outcome: OmpTurnOutcome, refresh: boolean) {
       // Usage and todos live in the session, not in `prompt_result`: read them once per turn.
       const read = <A, E>(effect: Effect.Effect<A, E>) =>
@@ -354,12 +421,14 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       const stats = yield* read(
         process.request("get_session_stats", undefined, { timeoutMs: SIDE_REQUEST_TIMEOUT_MS }),
       );
+      const turnEntryId = refresh ? yield* captureTurnEntry() : undefined;
       yield* emit(
         mapper.finalizeTurn(
           outcome,
           {
             ...(Option.isSome(state) ? { state: state.value } : {}),
             ...(Option.isSome(stats) ? { stats: stats.value } : {}),
+            ...(turnEntryId === undefined ? {} : { turnEntryId }),
           },
           yield* DateTime.now,
         ),
@@ -546,6 +615,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
           }),
         );
       }),
+      isBusy: () => mapper.hasActiveTurn || sessionChanging,
     });
     // Before the first turn, so its tools and directory handling are in place.
     yield* hostBridge.setup;
@@ -668,6 +738,13 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
           if (mapper.hasActiveTurn) {
             return yield* protocolError("OMP turn ownership changed before it could start");
           }
+          if (sessionChanging) {
+            return yield* protocolError(
+              "OMP is rewinding or forking this session; start the turn once it is done",
+              "previous_turn_active",
+            );
+          }
+          turnStartedAt = DateTime.toEpochMillis(yield* DateTime.now);
           yield* emit(mapper.startTurn(turnInput, yield* DateTime.now));
           return mapper.activeProviderTurnId;
         }),
@@ -797,13 +874,266 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
         snapshotInput.providerThread.appThreadId ?? input.threadId,
         state.sessionId,
       );
+      const branchTree = yield* readOmpBranchTree(process, TREE_READ_TIMEOUT_MS).pipe(
+        Effect.option,
+      );
       return {
         providerThread: mapper.providerThread ?? snapshotInput.providerThread,
         providerTurns: [],
         messages,
         runtimeRequests: [],
-        providerPayload: { sessionId: state.sessionId, sessionFile: state.sessionFile ?? null },
+        providerPayload: {
+          sessionId: state.sessionId,
+          sessionFile: state.sessionFile ?? null,
+          branchTree: Option.getOrNull(branchTree),
+        },
       } satisfies ProviderAdapter.ProviderAdapterV2ThreadSnapshot;
+    });
+
+    /** A rewind or fork is changing the session; turns and other changes wait for it. */
+    const claimSessionChange = (action: string) =>
+      exclusive(
+        Effect.suspend(() => {
+          if (mapper.hasActiveTurn) return Effect.fail(busyError(action));
+          if (sessionChanging) {
+            return Effect.fail(
+              protocolError(`Cannot ${action}: another rewind or fork is running`),
+            );
+          }
+          sessionChanging = true;
+          return Effect.void;
+        }),
+      );
+    const releaseSessionChange = Effect.sync(() => {
+      sessionChanging = false;
+    });
+    /** OMP's own view: a turn T3 did not start (a wake-up) or a compaction also writes the file. */
+    const assertSessionIdle = (action: string, target: Pick<typeof process, "request"> = process) =>
+      target.request("get_state", undefined, { timeoutMs: SIDE_REQUEST_TIMEOUT_MS }).pipe(
+        Effect.mapError((error) => protocolError(`OMP session state unreadable: ${error.message}`)),
+        Effect.filterOrFail(
+          (state) => state.isStreaming !== true && state.isCompacting !== true,
+          () => busyError(action),
+        ),
+      );
+    const treeError = (action: string) => (error: { readonly message: string }) =>
+      protocolError(`OMP could not ${action}: ${error.message}`);
+
+    /**
+     * Rewinds to the end of the target turn: `branch` to the user message of the first turn left
+     * out, which moves the session onto a new file holding everything before it. The thread
+     * follows the new file, and the conversation is re-read from it.
+     */
+    const rollbackThread = Effect.fnUntraced(function* (
+      rollbackInput: ProviderAdapter.ProviderAdapterV2RollbackThreadInput,
+    ) {
+      const bound = mapper.providerThread;
+      if (bound === null || bound.id !== rollbackInput.providerThread.id) {
+        return yield* protocolError("OMP rewind requested for a thread this session does not run");
+      }
+      const target = rollbackInput.target;
+      const dropped = ompDroppedTurns(
+        target.type === "thread_start" ? 0 : target.providerTurn.ordinal,
+        rollbackInput.providerThreadTurns.filter((turn) => turn.providerThreadId === bound.id),
+      );
+      yield* claimSessionChange("rewind");
+      return yield* Effect.gen(function* () {
+        yield* assertSessionIdle("rewind");
+        const cut = yield* resolveOmpCut({
+          process,
+          dropped,
+          timeoutMs: TREE_READ_TIMEOUT_MS,
+        }).pipe(Effect.mapError(treeError("find the turn to rewind to")));
+        let restoredText: string | null = null;
+        if (cut.entryId !== null) {
+          const result = yield* process
+            .request("branch", { entryId: cut.entryId }, { timeoutMs: SESSION_CHANGE_TIMEOUT_MS })
+            .pipe(Effect.mapError(sessionChangeError("rewind")));
+          if (result.cancelled) {
+            return yield* protocolError("An OMP extension cancelled the rewind");
+          }
+          restoredText = result.text;
+          sessionLeaf = undefined;
+        }
+        const state = yield* process
+          .request("get_state", undefined, { timeoutMs: SIDE_REQUEST_TIMEOUT_MS })
+          .pipe(Effect.mapError(treeError("read the rewound session")));
+        yield* exclusive(
+          Effect.gen(function* () {
+            yield* emit(mapper.adoptSession(state.sessionId, yield* DateTime.now));
+          }),
+        );
+        yield* recordSession(state);
+        const kept = yield* process
+          .request("get_branch_messages", undefined, { timeoutMs: TREE_READ_TIMEOUT_MS })
+          .pipe(Effect.mapError(treeError("list the rewound session's messages")));
+        if (
+          cut.entryId !== null &&
+          kept.messages.some((message) => message.entryId === cut.entryId)
+        ) {
+          return yield* protocolError(`OMP kept message ${cut.entryId} the rewind was to remove`);
+        }
+        const tree = yield* process
+          .request("get_tree", undefined, { timeoutMs: TREE_READ_TIMEOUT_MS })
+          .pipe(Effect.option);
+        if (Option.isSome(tree)) sessionLeaf = tree.value.leafId;
+        const messages = yield* readHistory(input.threadId, state.sessionId).pipe(
+          Effect.mapError(treeError("re-read the rewound conversation")),
+        );
+        return {
+          providerThread: mapper.providerThread ?? bound,
+          providerTurns: [],
+          messages,
+          runtimeRequests: [],
+          providerPayload: {
+            sessionId: state.sessionId,
+            sessionFile: state.sessionFile ?? null,
+            /** The user message the rewind removed, for the composer to offer again. */
+            restoredText,
+            /** The user messages the session keeps, each a point a later rewind can go back to. */
+            branchMessages: kept.messages,
+            branchTree: Option.isSome(tree) ? ompBranchTree(tree.value) : null,
+          },
+        } satisfies ProviderAdapter.ProviderAdapterV2ThreadSnapshot;
+      }).pipe(Effect.ensuring(releaseSessionChange));
+    });
+
+    /**
+     * Forks another thread's session into this one, which T3 opened for the fork and has not run
+     * yet. The process opens the source's file and `fork` writes a new file holding the source
+     * through the fork turn, in the same bucket; the source thread and its file stay as they were.
+     */
+    const forkThread = Effect.fnUntraced(function* (
+      forkInput: ProviderAdapter.ProviderAdapterV2ForkThreadInput,
+    ) {
+      if (forkInput.targetThreadId !== input.threadId) {
+        return yield* protocolError(
+          "An OMP fork must go into the thread this session was opened for",
+        );
+      }
+      if (mapper.providerThread !== null) {
+        return yield* protocolError("This OMP session already runs a thread; a fork needs its own");
+      }
+      const source = forkInput.sourceProviderThread;
+      const sourceSessionId = source.nativeThreadRef?.nativeId;
+      if (sourceSessionId == null) {
+        return yield* protocolError("The thread to fork has no OMP session yet");
+      }
+      const sourceTurns = (forkInput.sourceProviderTurns ?? []).filter(
+        (turn) => turn.providerThreadId === source.id,
+      );
+      const forkTurn = sourceTurns.find((turn) => turn.id === forkInput.providerTurnId);
+      if (forkInput.providerTurnId !== undefined && forkTurn === undefined) {
+        return yield* protocolError(
+          `The turn to fork from (${forkInput.providerTurnId}) is unknown`,
+        );
+      }
+      // The source's own process writes its file while a turn runs there.
+      const sourceThreadId = source.appThreadId ?? undefined;
+      const live =
+        sourceThreadId === undefined ? undefined : options.threadSessions.get(sourceThreadId);
+      if (live?.isBusy() === true) return yield* busyError("fork");
+      if (live !== undefined) yield* assertSessionIdle("fork", live.process);
+
+      yield* claimSessionChange("fork");
+      const forked = Effect.gen(function* () {
+        const opened = yield* withFiles(
+          switchOmpSession({
+            ...binding,
+            threadId: sourceThreadId ?? input.threadId,
+            sessionId: sourceSessionId,
+          }),
+        ).pipe(Effect.mapError(treeError(`open the session ${sourceSessionId} to fork`)));
+        const dropped =
+          forkTurn === undefined ? [] : ompDroppedTurns(forkTurn.ordinal, sourceTurns);
+        const cut = yield* resolveOmpCut({
+          process,
+          dropped,
+          timeoutMs: TREE_READ_TIMEOUT_MS,
+        }).pipe(Effect.mapError(treeError("find the turn to fork from")));
+        const forkEntry =
+          cut.entryId === null
+            ? undefined
+            : yield* resolveOmpForkEntry({
+                process,
+                cut: { ...cut, entryId: cut.entryId },
+                timeoutMs: TREE_READ_TIMEOUT_MS,
+              }).pipe(Effect.mapError(treeError("find where to fork")));
+        const { cancelled } =
+          forkEntry === null
+            ? // Nothing before the cut: the fork starts empty, as a child of the source.
+              yield* process
+                .request(
+                  "new_session",
+                  { parentSession: opened.sessionFile ?? sourceSessionId },
+                  { timeoutMs: SESSION_CHANGE_TIMEOUT_MS },
+                )
+                .pipe(Effect.mapError(sessionChangeError("fork")))
+            : yield* process
+                .request("fork", forkEntry === undefined ? {} : { entryId: forkEntry }, {
+                  timeoutMs: SESSION_CHANGE_TIMEOUT_MS,
+                })
+                .pipe(Effect.mapError(sessionChangeError("fork")));
+        if (cancelled) return yield* protocolError("An OMP extension cancelled the fork");
+        const state = yield* process
+          .request("get_state", undefined, { timeoutMs: SIDE_REQUEST_TIMEOUT_MS })
+          .pipe(Effect.mapError(treeError("read the forked session")));
+        if (state.sessionId === opened.sessionId || state.sessionFile === opened.sessionFile) {
+          return yield* protocolError("OMP did not write a new session file for the fork");
+        }
+        return state;
+      }).pipe(
+        // Never leave this process on the source's file: two processes would write it.
+        Effect.onError(() =>
+          process
+            .request("new_session", {}, { timeoutMs: SESSION_CHANGE_TIMEOUT_MS })
+            .pipe(Effect.ignore),
+        ),
+      );
+      return yield* Effect.gen(function* () {
+        const state = yield* forked;
+        sessionLeaf = undefined;
+        const now = yield* DateTime.now;
+        const result = yield* exclusive(
+          Effect.gen(function* () {
+            const bound = mapper.bindThread(
+              {
+                threadId: forkInput.targetThreadId,
+                state,
+                existing: {
+                  ...source,
+                  id: IdAllocator.derive.providerThread({
+                    driver: OMP_PROVIDER,
+                    nativeThreadId: state.sessionId,
+                  }),
+                  appThreadId: forkInput.targetThreadId,
+                  providerSessionId: input.providerSessionId,
+                  providerInstanceId: options.instanceId,
+                  ownerNodeId: forkInput.ownerNodeId ?? null,
+                  nativeConversationHeadRef: null,
+                  firstRunOrdinal: null,
+                  lastRunOrdinal: null,
+                  handoffIds: [],
+                  pendingBackgroundTasks: [],
+                  forkedFrom: {
+                    providerThreadId: source.id,
+                    ...(forkInput.providerTurnId === undefined
+                      ? {}
+                      : { providerTurnId: forkInput.providerTurnId }),
+                  },
+                  createdAt: now,
+                  updatedAt: now,
+                },
+              },
+              now,
+            );
+            yield* emit(bound.events);
+            return bound.providerThread;
+          }),
+        );
+        yield* recordSession(state);
+        return result;
+      }).pipe(Effect.ensuring(releaseSessionChange));
     });
 
     return {
@@ -880,8 +1210,29 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
               }),
           ),
         ),
-      rollbackThread: () => unavailable("rollback"),
-      forkThread: () => unavailable("fork"),
+      rollbackThread: (rollbackInput) =>
+        rollbackThread(rollbackInput).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProviderAdapter.ProviderAdapterRollbackThreadError({
+                driver: OMP_PROVIDER,
+                providerThreadId: rollbackInput.providerThread.id,
+                checkpointId: rollbackInput.target.checkpointId,
+                cause,
+              }),
+          ),
+        ),
+      forkThread: (forkInput) =>
+        forkThread(forkInput).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProviderAdapter.ProviderAdapterForkThreadError({
+                driver: OMP_PROVIDER,
+                providerThreadId: forkInput.sourceProviderThread.id,
+                cause,
+              }),
+          ),
+        ),
     } satisfies ProviderAdapter.ProviderAdapterV2SessionRuntime;
   });
 

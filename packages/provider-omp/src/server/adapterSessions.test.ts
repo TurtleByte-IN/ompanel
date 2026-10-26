@@ -230,7 +230,14 @@ posixOnly("OMP thread sessions", () => {
       );
       assert.strictEqual((yield* readOmpSessionHead(sessionFile))?.sessionId, sessionId);
       assert.deepStrictEqual(snapshotText(snapshot), ["user:hello", "assistant:pong"]);
-      assert.deepStrictEqual(snapshot.providerPayload, { sessionId, sessionFile });
+      const payload = snapshot.providerPayload as {
+        readonly sessionId: string;
+        readonly sessionFile: string;
+        readonly branchTree: { readonly activePath: ReadonlyArray<string> } | null;
+      };
+      assert.deepStrictEqual([payload.sessionId, payload.sessionFile], [sessionId, sessionFile]);
+      // The branch view's tree (sessionBranches.ts): the turn's two messages, on the active path.
+      assert.lengthOf(payload.branchTree?.activePath ?? [], 2);
       const listed = yield* listOmpSessions(state.sessions, work);
       assert.deepStrictEqual(
         listed.map((session) => [session.sessionId, session.firstMessage]),

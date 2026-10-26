@@ -51,18 +51,27 @@ function makeStore(root) {
       timestamp,
       file: NodePath.join(bucket(cwd), `${timestamp.replace(/[:.]/g, "-")}_${id}.jsonl`),
       messages: [],
+      // Parallel to `messages`: each one's entry id and timestamp, kept by branch and fork.
+      entryIds: [],
+      entryTimes: [],
     };
   };
   const load = (file) => {
     let title = null;
     let header = null;
     const messages = [];
+    const entryIds = [];
+    const entryTimes = [];
     for (const line of NodeFS.readFileSync(file, "utf8").split("\n")) {
       if (line.trim() === "") continue;
       const entry = JSON.parse(line);
       if (entry.type === "title") title = entry.title;
       else if (entry.type === "session") header = entry;
-      else if (entry.type === "message") messages.push(entry.message);
+      else if (entry.type === "message") {
+        messages.push(entry.message);
+        entryIds.push(entry.id);
+        entryTimes.push(entry.timestamp);
+      }
     }
     return {
       id: header.id,
@@ -72,7 +81,20 @@ function makeStore(root) {
       timestamp: header.timestamp,
       file,
       messages,
+      entryIds,
+      entryTimes,
     };
+  };
+  /** Like OMP's branch and fork: a new file holding the first `count` entries, ids kept. */
+  const copyPrefix = (count) => {
+    const source = store.current;
+    const copy = fresh(source.cwd);
+    copy.title = source.title;
+    copy.messages = source.messages.slice(0, count);
+    copy.entryIds = source.entryIds.slice(0, count);
+    copy.entryTimes = source.entryTimes.slice(0, count);
+    store.current = copy;
+    store.persist();
   };
   const store = {
     current: fresh(startCwd),
@@ -95,15 +117,50 @@ function makeStore(root) {
       );
       let parentId = null;
       session.messages.forEach((message, index) => {
-        const id = `e${index}`;
-        lines.push(JSON.stringify({ type: "message", id, parentId, timestamp: "", message }));
+        const id = session.entryIds[index];
+        const timestamp = session.entryTimes[index];
+        lines.push(JSON.stringify({ type: "message", id, parentId, timestamp, message }));
         parentId = id;
       });
       NodeFS.writeFileSync(session.file, `${lines.join("\n")}\n`);
     },
     appendMessages(messages) {
-      store.current.messages.push(...messages);
+      const session = store.current;
+      for (const message of messages) {
+        session.messages.push(message);
+        session.entryIds.push(NodeCrypto.randomUUID().slice(0, 8));
+        session.entryTimes.push(new Date().toISOString());
+      }
       store.persist();
+    },
+    /** Raw `get_entries` entries: `message` entries chained by `parentId`. */
+    entries() {
+      const session = store.current;
+      return session.messages.map((message, index) => ({
+        type: "message",
+        id: session.entryIds[index],
+        parentId: index === 0 ? null : session.entryIds[index - 1],
+        timestamp: session.entryTimes[index],
+        message,
+      }));
+    },
+    /** `branch {entryId}` at a user message: a new file holding what came before it. */
+    branch(entryId) {
+      const index = store.current.entryIds.indexOf(entryId);
+      const message = store.current.messages[index];
+      if (message?.role !== "user") return null;
+      copyPrefix(index);
+      return userText(message);
+    },
+    /** `fork {entryId?}`: a new file holding everything through the entry. */
+    fork(entryId) {
+      const index =
+        entryId === undefined
+          ? store.current.messages.length - 1
+          : store.current.entryIds.indexOf(entryId);
+      if (entryId !== undefined && index < 0) return false;
+      copyPrefix(index + 1);
+      return true;
     },
     newSession() {
       store.current = fresh(store.current.cwd);
@@ -162,6 +219,15 @@ function makeStore(root) {
 
 const store = env.FAKE_OMP_SESSIONS_DIR ? makeStore(env.FAKE_OMP_SESSIONS_DIR) : null;
 
+function userText(message) {
+  return typeof message.content === "string"
+    ? message.content
+    : message.content
+        .filter((block) => block.type === "text")
+        .map((block) => block.text)
+        .join("");
+}
+
 /** The store's answer to an unscripted command, or `undefined` when it does not handle it. */
 function storeResponse(command) {
   const ok = (data) => ({ success: true, ...(data === undefined ? {} : { data }) });
@@ -192,6 +258,43 @@ function storeResponse(command) {
       store.current.title = command.name;
       store.persist();
       return ok(undefined);
+    case "get_entries": {
+      const entries = store.entries();
+      const leafId = entries.at(-1)?.id ?? null;
+      if (command.since === undefined) return ok({ entries, leafId });
+      const index = entries.findIndex((entry) => entry.id === command.since);
+      return index < 0
+        ? {
+            success: false,
+            error: `Unknown entries cursor: ${command.since}`,
+            code: "unknown_since",
+          }
+        : ok({ entries: entries.slice(index + 1), leafId });
+    }
+    case "get_tree": {
+      // A linear session: each entry the only child of the one before.
+      const entries = store.entries();
+      let tree = [];
+      for (const entry of entries.toReversed()) tree = [{ entry, children: tree }];
+      return ok({ tree, leafId: entries.at(-1)?.id ?? null });
+    }
+    case "get_branch_messages":
+      return ok({
+        messages: store
+          .entries()
+          .filter((entry) => entry.message.role === "user")
+          .map((entry) => ({ entryId: entry.id, text: userText(entry.message) })),
+      });
+    case "branch": {
+      const text = store.branch(command.entryId);
+      return text === null
+        ? { success: false, error: "Invalid entry ID for branching" }
+        : ok({ text, cancelled: false });
+    }
+    case "fork":
+      return store.fork(command.entryId)
+        ? ok({ cancelled: false })
+        : { success: false, error: `Invalid entry ID for forking: ${command.entryId}` };
     default:
       return undefined;
   }
