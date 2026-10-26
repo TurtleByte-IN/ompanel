@@ -199,6 +199,152 @@ describe("AgentActivityPublisher", () => {
     );
   });
 
+  it.effect("routes a new agent message to FCM and APNs once, only while the agent works", () => {
+    const android = { ...target("android"), platform: "android" as const, ios_major_version: null };
+    const ios = target("ios");
+    const message = { id: "item-1", text: "Tests pass", sentAt: state.updatedAt };
+    const withMessage: RelayAgentActivityState = { ...state, agentMessage: message };
+    let stored: RelayAgentActivityState | null = null;
+    const fcmCalls: Array<Parameters<FcmDeliveries.FcmDeliveries["Service"]["enqueue"]>[0]> = [];
+    const appleMessages: Array<
+      Parameters<ApnsDeliveries.ApnsDeliveries["Service"]["sendAgentMessageForTarget"]>[0]
+    > = [];
+    return Effect.gen(function* () {
+      const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
+      const publish = (next: RelayAgentActivityState) =>
+        publisher.publish({
+          environmentId: next.environmentId,
+          environmentPublicKey: "key",
+          threadId: next.threadId,
+          state: next,
+        });
+      // New message: both platforms alert.
+      yield* publish(withMessage);
+      // The same message again (a later state change): no second alert.
+      yield* publish({ ...withMessage, headline: "Still running" });
+      // A newer message after the thread stops working: the terminal alert covers it.
+      yield* publish({
+        ...withMessage,
+        phase: "completed",
+        agentMessage: { ...message, id: "item-2" },
+      });
+
+      expect(fcmCalls.map((call) => call.agentMessageId)).toEqual(["item-1", undefined, undefined]);
+      expect(appleMessages).toEqual([{ target: ios, state: withMessage, message }]);
+    }).pipe(
+      Effect.provide(
+        AgentActivityPublisher.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.succeed(
+                AgentActivityRows.AgentActivityRows,
+                makeAgentActivityRows({
+                  upsert: (input) =>
+                    Effect.sync(() => {
+                      const previous = stored;
+                      stored = input.state;
+                      return previous;
+                    }),
+                }),
+              ),
+              Layer.succeed(EnvironmentLinks.EnvironmentLinks, makeEnvironmentLinks()),
+              Layer.succeed(
+                LiveActivities.LiveActivities,
+                makeLiveActivities({ listTargets: () => Effect.succeed([android, ios]) }),
+              ),
+              Layer.succeed(
+                ApnsDeliveries.ApnsDeliveries,
+                makeApnsDeliveries({
+                  sendAgentMessageForTarget: (input) =>
+                    Effect.sync(() => {
+                      appleMessages.push(input);
+                      return null;
+                    }),
+                }),
+              ),
+              Layer.succeed(FcmDeliveries.FcmDeliveries, {
+                enqueue: (input) =>
+                  Effect.sync(() => {
+                    fcmCalls.push(input);
+                    return null;
+                  }),
+                process: () => Effect.void,
+              }),
+            ),
+          ),
+        ),
+      ),
+    );
+  });
+
+  it.effect("sends no agent message alert to a user with notifications off", () => {
+    const android = { ...target("android"), platform: "android" as const, ios_major_version: null };
+    const fcmCalls: Array<Parameters<FcmDeliveries.FcmDeliveries["Service"]["enqueue"]>[0]> = [];
+    let appleMessages = 0;
+    return Effect.gen(function* () {
+      const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
+      yield* publisher.publish({
+        environmentId: state.environmentId,
+        environmentPublicKey: "key",
+        threadId: state.threadId,
+        state: {
+          ...state,
+          agentMessage: { id: "item-1", text: "Tests pass", sentAt: state.updatedAt },
+        },
+      });
+      expect(fcmCalls).toHaveLength(1);
+      expect(fcmCalls[0]?.agentMessageId).toBeUndefined();
+      expect(appleMessages).toBe(0);
+    }).pipe(
+      Effect.provide(
+        AgentActivityPublisher.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.succeed(AgentActivityRows.AgentActivityRows, makeAgentActivityRows()),
+              Layer.succeed(
+                EnvironmentLinks.EnvironmentLinks,
+                makeEnvironmentLinks({
+                  listDeliveryUsersForEnvironment: () =>
+                    Effect.succeed([
+                      {
+                        userId: "dev:julius",
+                        notificationsEnabled: false,
+                        liveActivitiesEnabled: true,
+                      },
+                    ]),
+                }),
+              ),
+              Layer.succeed(
+                LiveActivities.LiveActivities,
+                makeLiveActivities({
+                  listTargets: () => Effect.succeed([android, target("ios")]),
+                }),
+              ),
+              Layer.succeed(
+                ApnsDeliveries.ApnsDeliveries,
+                makeApnsDeliveries({
+                  sendAgentMessageForTarget: () =>
+                    Effect.sync(() => {
+                      appleMessages += 1;
+                      return null;
+                    }),
+                }),
+              ),
+              Layer.succeed(FcmDeliveries.FcmDeliveries, {
+                enqueue: (input) =>
+                  Effect.sync(() => {
+                    fcmCalls.push(input);
+                    return null;
+                  }),
+                process: () => Effect.void,
+              }),
+            ),
+          ),
+        ),
+      ),
+    );
+  });
+
   it.effect("replays the latest aggregate when a Live Activity token registers", () => {
     const registeredTarget: LiveActivities.TargetRow = {
       ...target("device-1"),

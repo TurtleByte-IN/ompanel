@@ -1,10 +1,37 @@
 import { WORKING_EXIT_GRACE_MS } from "@t3tools/client-runtime/state/thread-inbox";
+import { TurnItemId, type OrchestrationV2AgentNotificationSummary } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   createThreadNotificationGate,
+  newAgentMessage,
   type ThreadNotificationObservation,
 } from "./ThreadNotificationCoordinator.logic";
+
+const agentMessage = (itemId: string): OrchestrationV2AgentNotificationSummary => ({
+  itemId: TurnItemId.make(itemId),
+  summary: `Message ${itemId}`,
+  notifiedAt: "2026-10-27T10:00:00.000Z",
+});
+
+describe("newAgentMessage", () => {
+  it("announces a message the thread did not have before", () => {
+    const next = agentMessage("item-1");
+    expect(newAgentMessage(null, next)).toBe(next);
+    expect(newAgentMessage(undefined, next)).toBe(next);
+  });
+
+  it("announces a newer message that replaced the previous one", () => {
+    const next = agentMessage("item-2");
+    expect(newAgentMessage(agentMessage("item-1"), next)).toBe(next);
+  });
+
+  it("stays quiet when the same message is seen again or the thread has none", () => {
+    expect(newAgentMessage(agentMessage("item-1"), agentMessage("item-1"))).toBeNull();
+    expect(newAgentMessage(agentMessage("item-1"), null)).toBeNull();
+    expect(newAgentMessage(null, undefined)).toBeNull();
+  });
+});
 
 const working: ThreadNotificationObservation = {
   attention: null,

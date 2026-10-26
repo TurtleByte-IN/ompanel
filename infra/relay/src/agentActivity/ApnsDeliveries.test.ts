@@ -746,6 +746,132 @@ describe("ApnsDeliveries", () => {
     );
   });
 
+  it.effect("queues an agent message as a plain push in the agent's own words", () => {
+    const queuedJobs: Array<SignedApnsDeliveryJob> = [];
+    const message = { id: "item-1", text: "Tests pass, opening the PR", sentAt: state.updatedAt };
+    const pushTarget = { ...target, push_token: "apns-device-token" };
+    return Effect.gen(function* () {
+      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+      const result = yield* deliveries.sendAgentMessageForTarget({
+        target: pushTarget,
+        state,
+        message,
+      });
+      expect(result?.kind).toBe("push_notification");
+      expect(queuedJobs).toMatchObject([
+        {
+          payload: {
+            kind: "push_notification",
+            target: { token: "apns-device-token" },
+            notification: {
+              title: "Thread",
+              body: "Tests pass, opening the PR",
+              environmentId: "env",
+              threadId: "thread",
+              updatedAt: state.updatedAt,
+              agentMessageId: "item-1",
+            },
+          },
+        },
+      ]);
+      expect(queuedJobs[0]?.payload.notification?.phase).toBeUndefined();
+
+      // Muted by preference, or no device token: nothing is queued.
+      expect(
+        yield* deliveries.sendAgentMessageForTarget({
+          target: {
+            ...pushTarget,
+            preferences_json: JSON.stringify({
+              ...JSON.parse(enabledPreferences),
+              notifyOnAgentMessage: false,
+            }),
+          },
+          state,
+          message,
+        }),
+      ).toBeNull();
+      expect(
+        yield* deliveries.sendAgentMessageForTarget({
+          target: { ...pushTarget, push_token: null },
+          state,
+          message,
+        }),
+      ).toBeNull();
+      expect(queuedJobs).toHaveLength(1);
+    }).pipe(Effect.provide(layerFor({ attempts: [], queuedJobs })));
+  });
+
+  it.effect.each([
+    { case: "fresh and allowed", sentAt: state.updatedAt, muted: false, sends: true },
+    { case: "muted after it was queued", sentAt: state.updatedAt, muted: true, sends: false },
+    {
+      case: "older than the alert window",
+      sentAt: "1969-12-31T23:57:00.000Z",
+      muted: false,
+      sends: false,
+    },
+  ])("rechecks a queued agent message push when $case", ({ sentAt, muted, sends }) => {
+    const requests: HttpClientRequest.HttpClientRequest[] = [];
+    const signed = signApnsDeliveryJob({
+      secret: config.apnsDeliveryJobSigningSecret,
+      payload: makeApnsDeliveryJobPayload({
+        kind: "push_notification",
+        userId: target.user_id,
+        deviceId: target.device_id,
+        token: "apns-device-token",
+        aggregate: null,
+        notification: {
+          title: "Thread",
+          body: "Tests pass",
+          environmentId: "env",
+          threadId: "thread",
+          deepLink: "/",
+          updatedAt: sentAt,
+          agentMessageId: "item-1",
+        },
+        createdAt: state.updatedAt,
+        expiresAt: "1970-01-01T00:10:00.000Z",
+        jobId: `job-agent-message-${muted}-${sentAt}`,
+      }),
+    });
+    return Effect.gen(function* () {
+      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+      const result = yield* deliveries.processSignedJob(signed);
+      expect(result.kind).toBe("push_notification");
+      expect(requests).toHaveLength(sends ? 1 : 0);
+      if (sends) {
+        const request = requests[0]!;
+        expect(request.url).toBe("https://api.sandbox.push.apple.com/3/device/apns-device-token");
+        expect(request.body._tag).toBe("Uint8Array");
+        if (request.body._tag === "Uint8Array") {
+          const { aps } = JSON.parse(new TextDecoder().decode(request.body.body));
+          expect(aps.alert).toMatchObject({ title: "Thread", body: "Tests pass" });
+        }
+      }
+    }).pipe(
+      Effect.provide(
+        layerFor({
+          attempts: [],
+          config: signingConfig,
+          currentTargets: [
+            {
+              ...target,
+              push_token: "apns-device-token",
+              preferences_json: muted
+                ? JSON.stringify({ ...JSON.parse(enabledPreferences), notifyOnAgentMessage: false })
+                : enabledPreferences,
+            },
+          ],
+          execute: (request) =>
+            Effect.sync(() => {
+              requests.push(request);
+              return HttpClientResponse.fromWeb(request, new Response("", { status: 200 }));
+            }),
+        }),
+      ),
+    );
+  });
+
   it.effect("skips duplicate signed queue jobs before calling APNs", () => {
     const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
     let executeCount = 0;

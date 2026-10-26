@@ -286,6 +286,23 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     });
   });
 
+  it("registers agent message alerts on unless the user turned them off", () => {
+    const register = (preferences: { readonly agentMessageNotificationsEnabled?: boolean }) =>
+      makeRelayDeviceRegistrationRequest({
+        deviceId: "device-1",
+        label: "Julius's iPhone",
+        iosMajorVersion: 18,
+        appVersion: "1.0.0",
+        pushToken: "apns-token",
+        notificationsEnabled: true,
+        preferences,
+      }).preferences.notifyOnAgentMessage;
+
+    expect(register({})).toBe(true);
+    expect(register({ agentMessageNotificationsEnabled: true })).toBe(true);
+    expect(register({ agentMessageNotificationsEnabled: false })).toBe(false);
+  });
+
   it.effect("registers one push-token listener per Live Activity across wrappers", () => {
     registerAgentAwarenessConnection(savedConnection());
     const addPushTokenListener = vi.fn();
