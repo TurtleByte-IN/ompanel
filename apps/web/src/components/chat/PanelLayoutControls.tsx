@@ -1,4 +1,4 @@
-import { PanelBottomIcon, PanelRightIcon, SquareMenuIcon } from "lucide-react";
+import { BotIcon, PanelBottomIcon, PanelRightIcon, SquareMenuIcon } from "lucide-react";
 import { Maximize2, Minimize2 } from "lucide";
 import { MorphIcon } from "~/components/MorphIcon";
 import { memo, type ReactElement, type ReactNode } from "react";
@@ -28,6 +28,11 @@ export interface PanelLayoutControlsProps {
   onToggleTerminal: () => void;
   onToggleThreadPanel: () => void;
   onToggleRightPanel: () => void;
+  showAgentsControl?: boolean;
+  /** The thread has subagents to show; the toggle is hidden otherwise. */
+  agentsAvailable?: boolean;
+  agentsOpen?: boolean;
+  onToggleAgents?: () => void;
 }
 
 export const PanelLayoutControls = memo(function PanelLayoutControls({
@@ -48,6 +53,10 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
   onToggleTerminal,
   onToggleThreadPanel,
   onToggleRightPanel,
+  showAgentsControl = true,
+  agentsAvailable = false,
+  agentsOpen = false,
+  onToggleAgents,
 }: PanelLayoutControlsProps) {
   const threadPanelToggle = (
     <Toggle
@@ -105,6 +114,26 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
               ? `Toggle terminal drawer${terminalShortcutLabel ? ` (${terminalShortcutLabel})` : ""}`
               : "Terminal drawer is unavailable"}
           </TooltipPopup>
+        </Tooltip>
+      ) : null}
+      {showAgentsControl && agentsAvailable && onToggleAgents ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Toggle
+                className="shrink-0 [-webkit-app-region:no-drag]"
+                pressed={agentsOpen}
+                onPressedChange={onToggleAgents}
+                aria-label="Toggle agents panel"
+                data-agents-panel-toggle
+                variant="ghost"
+                size="sm"
+              >
+                <BotIcon className="size-4" />
+              </Toggle>
+            }
+          />
+          <TooltipPopup side="bottom">Toggle agents panel</TooltipPopup>
         </Tooltip>
       ) : null}
       {showRightPanelControl ? (
@@ -170,7 +199,12 @@ export function ThreadPanelHeaderControl(props: PanelLayoutControlsProps) {
       className="absolute top-[var(--workspace-controls-top)] right-[calc(env(safe-area-inset-right)+0.75rem)] z-50 flex h-[var(--workspace-topbar-height)] items-center [-webkit-app-region:no-drag]"
       data-workspace-titlebar-controls
     >
-      <PanelLayoutControls {...props} showTerminalControl={false} showRightPanelControl={false} />
+      <PanelLayoutControls
+        {...props}
+        showTerminalControl={false}
+        showRightPanelControl={false}
+        showAgentsControl={false}
+      />
     </div>
   );
 }
