@@ -1,0 +1,94 @@
+name: OMP live
+
+# The OMP live suite (docs/omp/testing.md, "Live suite"): one OMP thread through the web app
+# against an omp built from the omp.lock tag and a real Anthropic model. Nightly, on demand, and
+# on pull requests that change the suite. The model key comes from the repository secret
+# OMPANEL_LIVE_ANTHROPIC_API_KEY and reaches the test step's environment only. Without the
+# secret the run passes with a notice and runs nothing, unless the model is `scripted` (the
+# suite against the scripted local model, no key).
+
+on:
+  schedule:
+    # Daily 03:00 UTC.
+    - cron: "0 3 * * *"
+  pull_request:
+    paths:
+      - .github/workflows/omp-live.yml
+      - .github/actions/setup-omp-e2e/**
+      - apps/web/e2e/omp/**
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "OMP model: anthropic/<id>, or scripted (no key). Empty: the suite's default."
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: omp-live-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  live:
+    name: OMP live
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ubuntu-24.04
+    # A cold omp build takes most of this; later runs restore it from the OMP E2E cache.
+    timeout-minutes: 60
+    steps:
+      - name: Check for the model key
+        id: key
+        env:
+          KEY: ${{ secrets.OMPANEL_LIVE_ANTHROPIC_API_KEY }}
+          MODEL: ${{ inputs.model }}
+        run: |
+          if [[ "$MODEL" != scripted && -z "$KEY" ]]; then
+            message="Skipped: the repository secret OMPANEL_LIVE_ANTHROPIC_API_KEY is not set. See docs/omp/testing.md (Live suite)."
+            echo "::notice title=OMP live suite skipped::$message"
+            printf '### OMP live suite skipped\n\n%s\n' "$message" >> "$GITHUB_STEP_SUMMARY"
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout
+        if: steps.key.outputs.run == 'true'
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+            !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        if: steps.key.outputs.run == 'true'
+        uses: ./.github/actions/setup-ci-deps
+        with:
+          task-cache-read-token: ${{ secrets.T3_TASK_CACHE_READ_TOKEN }}
+
+      - name: Setup omp and Chromium
+        if: steps.key.outputs.run == 'true'
+        uses: ./.github/actions/setup-omp-e2e
+
+      - name: Test
+        if: steps.key.outputs.run == 'true'
+        env:
+          OMPANEL_LIVE_ANTHROPIC_API_KEY: ${{ secrets.OMPANEL_LIVE_ANTHROPIC_API_KEY }}
+          OMPANEL_LIVE_MODEL: ${{ inputs.model }}
+        run: OMPANEL_E2E_OMP_BINARY="$HOME/omp-e2e/omp" vp run --filter @t3tools/web test:e2e:live
+
+      - name: Upload screenshots, traces and report
+        if: always() && steps.key.outputs.run == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: omp-live
+          path: |
+            apps/web/.playwright/
+            apps/web/playwright-report/
+          include-hidden-files: true
+          if-no-files-found: ignore

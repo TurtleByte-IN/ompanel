@@ -4,9 +4,9 @@
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
-import { type BrowserContext, expect, type Page, test } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 
-import { type OmpStack, startOmpStack } from "./ompStack.ts";
+import { useOmpSuite } from "./ompSuite.ts";
 import { COMMIT_SUBJECT, STREAMED_PARAGRAPHS, TOOL_REPLY_PREFIX } from "./scriptedModel.ts";
 
 /** Screenshots and per-step traces; point it at the gate's evidence directory to keep them. */
@@ -16,112 +16,19 @@ const ARTIFACTS =
 
 test.describe.configure({ mode: "serial" });
 
-let stack: OmpStack;
-let context: BrowserContext;
-let page: Page;
+const suite = useOmpSuite({ artifacts: ARTIFACTS });
 let threadId: string;
 
-const slug = (title: string) =>
-  title
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "");
-
-const screenshot = async (name: string) => {
-  const path = NodePath.join(ARTIFACTS, `${name}.png`);
-  await page.screenshot({ path });
-  await test.info().attach(name, { path, contentType: "image/png" });
-};
-
-const send = async (text: string) => {
-  await page.getByRole("textbox", { name: /^Message / }).fill(text);
-  await page.getByRole("button", { name: "Submit message" }).click();
-};
-
-const selectRuntimeMode = async (label: "Supervised" | "Full access") => {
-  const mode = page.getByRole("combobox", { name: "Runtime mode" });
-  await mode.click();
-  await page.getByRole("option", { name: new RegExp(`^${label}`) }).click();
-  await expect(mode).toHaveText(label);
-};
-
-const assistantSays = (text: string) =>
-  page.getByRole("main").getByRole("paragraph").getByText(text, { exact: true });
-
-const approvalCard = () => page.getByRole("group", { name: "Command approval" });
-
-/**
- * Whether the thread ever contained `include` (without `exclude`) after this call, checked on
- * every DOM change; the flag lives in a `data-*` attribute on `<html>`.
- */
-const watchFor = async (key: string, matches: { include: string; exclude?: string }) => {
-  await page.evaluate(
-    ({ key, include, exclude }) => {
-      const flags = document.documentElement.dataset;
-      flags[key] = "false";
-      const observer = new MutationObserver(() => {
-        const text = document.querySelector("main")?.textContent ?? "";
-        if (text.includes(include) && (exclude === undefined || !text.includes(exclude))) {
-          flags[key] = "true";
-          observer.disconnect();
-        }
-      });
-      observer.observe(document.body, { subtree: true, childList: true, characterData: true });
-    },
-    { key, ...matches },
-  );
-  return async () =>
-    (await page.evaluate((key) => document.documentElement.dataset[key], key)) === "true";
-};
-
-const threadProcesses = () => stack.ompProcesses().filter((entry) => entry.threadId === threadId);
-
-test.beforeAll(async ({ browser }) => {
-  NodeFS.mkdirSync(ARTIFACTS, { recursive: true });
-  stack = await startOmpStack();
-  context = await browser.newContext({ viewport: { width: 1400, height: 900 } });
-  page = await context.newPage();
-  // Through `location` rather than `page.goto`, so the report's step titles never show the
-  // pairing token; tracing starts after pairing for the same reason.
-  await page.evaluate((url) => window.location.assign(url), stack.pairingUrl);
-  await page.waitForURL((url) => url.protocol === "http:" && !url.pathname.startsWith("/pair"));
-  await context.tracing.start({ screenshots: true, snapshots: true, sources: true });
-});
-
-test.beforeEach(async () => {
-  await context.tracing.startChunk({ title: test.info().title });
-});
-
-test.afterEach(async () => {
-  const path = NodePath.join(ARTIFACTS, `trace-${slug(test.info().title)}.zip`);
-  await context.tracing.stopChunk({ path });
-  await test.info().attach("trace", { path, contentType: "application/zip" });
-});
-
-test.afterAll(async () => {
-  NodeFS.writeFileSync(NodePath.join(ARTIFACTS, "server.log"), stack?.serverLog() ?? "");
-  await context?.tracing.stop();
-  await context?.close();
-  await stack?.stop();
-});
+const threadProcesses = () => suite.current().threadProcesses(threadId);
 
 test("creates an OMP thread", async () => {
-  await page.getByRole("button", { name: "New thread", exact: true }).click();
-  await expect(page.getByRole("heading", { name: /What should we build in/ })).toBeVisible();
-
-  const picker = page.locator('[data-chat-provider-model-picker="true"]');
-  await picker.click();
-  await page
-    .getByRole("toolbar", { name: "Providers" })
-    .getByRole("button", { name: "OMP" })
-    .click();
-  await page.getByRole("option", { name: /^OMP default/ }).click();
-  await expect(picker).toHaveAccessibleName(/^OMP/);
-  await selectRuntimeMode("Supervised");
+  const { createOmpThread, screenshot } = suite.current();
+  await createOmpThread("Supervised");
   await screenshot("01-new-omp-thread");
 });
 
 test("streams a reply", async () => {
+  const { assistantSays, screenshot, send, threadId: openThreadId, watchFor } = suite.current();
   const [first, second] = STREAMED_PARAGRAPHS;
   const sawPartial = await watchFor("partial", { include: first, exclude: second });
   await send("hello from G1");
@@ -131,7 +38,7 @@ test("streams a reply", async () => {
   // The first paragraph rendered while the model was still streaming the second.
   expect(await sawPartial()).toBe(true);
 
-  threadId = decodeURIComponent(new URL(page.url()).pathname.split("/").at(-1) ?? "");
+  threadId = openThreadId();
   const processes = threadProcesses();
   expect(processes).toHaveLength(1);
   expect(processes[0]?.args).toContain("--mode rpc-ui --approval-mode always-ask");
@@ -139,6 +46,7 @@ test("streams a reply", async () => {
 });
 
 test("approves a bash call in Supervised", async () => {
+  const { approvalCard, assistantSays, page, screenshot, send, stack } = suite.current();
   await send("run: echo g1-supervised");
   // T3 runs OMP's shell commands through its `terminal` host tool (docs/omp/host-tools.md).
   await expect(approvalCard()).toBeVisible();
@@ -149,12 +57,15 @@ test("approves a bash call in Supervised", async () => {
   await expect(assistantSays(`${TOOL_REPLY_PREFIX}g1-supervised`)).toBeVisible();
   await expect(approvalCard()).toHaveCount(0);
   expect(
-    stack.model.calls.some((call) => "tool" in call.reply && call.reply.tool === "terminal"),
+    stack.model.calls.some(
+      (call) => "calls" in call.reply && call.reply.calls.some(({ tool }) => tool === "terminal"),
+    ),
   ).toBe(true);
   await screenshot("03b-approved-command-ran");
 });
 
 test("switches to Full access mid-thread without restarting omp", async () => {
+  const { assistantSays, screenshot, selectRuntimeMode, send, stack, watchFor } = suite.current();
   const before = threadProcesses().map((entry) => entry.pid);
   expect(before).toHaveLength(1);
 
@@ -172,38 +83,27 @@ test("switches to Full access mid-thread without restarting omp", async () => {
   await screenshot("04-full-access-no-restart");
 });
 
-/** A sent user message in the timeline (not the composer, which a rewind refills). */
-const userSaid = (text: string) =>
-  page.locator('[data-user-message-body="true"]').getByText(text, { exact: true });
-
 /**
  * The user messages of the model request that answered `prompt`: what OMP sent as history,
  * without the `<system-reminder>` OMP prepends to a session's first message.
  */
 const historyFor = (prompt: string) =>
   (
-    stack.model.calls.findLast((call) => call.lastRole === "user" && call.lastText === prompt)
+    suite
+      .current()
+      .stack.model.calls.findLast((call) => call.lastRole === "user" && call.lastText === prompt)
       ?.userTexts ?? []
   ).map((text) => text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, ""));
 
 test("rewinds the thread to an earlier turn", async () => {
+  const { assistantSays, page, rewindLastMessage, screenshot, send, userSaid } = suite.current();
   const kept = "run: echo g1-supervised";
   const removed = "run: echo g1-full-access > g1.txt && echo wrote-g1";
   const before = threadProcesses().map((entry) => entry.pid);
   await expect(userSaid(removed)).toBeVisible();
 
   // "Edit from here" on the last user message: OMP `branch`es before it on the live session.
-  // A message gets its button only once the turn before it has a ready checkpoint, and the
-  // buttons stay disabled while the thread is still finishing a turn. Until every user message
-  // has one, `.last()` is an earlier message's button and the rewind drops one turn too many.
-  const editFromHere = page.getByRole("button", { name: "Edit from here" });
-  await expect(editFromHere).toHaveCount(
-    await page.locator('[data-user-message-body="true"]').count(),
-  );
-  await expect(editFromHere.last()).toBeEnabled();
-  await editFromHere.last().click();
-  const confirm = page.getByRole("alertdialog", { name: "Edit from here?" });
-  await confirm.getByRole("button", { name: "Revert and keep changes" }).click();
+  await rewindLastMessage();
   await expect(userSaid(removed)).toHaveCount(0);
   await expect(assistantSays(`${TOOL_REPLY_PREFIX}wrote-g1`)).toHaveCount(0);
   await expect(userSaid(kept)).toBeVisible();
@@ -222,6 +122,15 @@ test("rewinds the thread to an earlier turn", async () => {
 });
 
 test("forks the thread from a response", async () => {
+  const {
+    assistantSays,
+    page,
+    screenshot,
+    send,
+    stack,
+    threadId: openThreadId,
+    userSaid,
+  } = suite.current();
   const sourceUrl = page.url();
   const sourceThreadId = threadId;
   const sourcePids = threadProcesses().map((entry) => entry.pid);
@@ -229,7 +138,7 @@ test("forks the thread from a response", async () => {
   // The first response: the fork holds only the first exchange.
   await page.getByRole("button", { name: "Fork from this response" }).first().click();
   await page.waitForURL((url) => !url.pathname.endsWith(encodeURIComponent(sourceThreadId)));
-  const forkThreadId = decodeURIComponent(new URL(page.url()).pathname.split("/").at(-1) ?? "");
+  const forkThreadId = openThreadId();
   await expect(userSaid("hello from G1")).toBeVisible();
   await expect(userSaid("after rewind")).toHaveCount(0);
   await screenshot("06a-fork-opened");
@@ -254,15 +163,9 @@ test("forks the thread from a response", async () => {
 });
 
 test("generates a commit message", async () => {
-  // The Commit item is disabled until the thread's git status shows a working-tree change; that
-  // status refreshes asynchronously after the turn that wrote g1.txt and after navigation.
-  // Clicking the disabled item opens nothing.
-  await expect(page.getByRole("button", { name: /^Changes \+1\b/ })).toBeVisible();
-  await page.getByRole("button", { name: "Git action options" }).click();
-  const commit = page.getByRole("menuitem", { name: "Commit" });
-  await expect(commit).toBeEnabled();
-  await commit.click();
-  const dialog = page.getByRole("dialog", { name: "Commit changes" });
+  const { openCommitDialog, page, screenshot, stack } = suite.current();
+  // The turn that wrote g1.txt is the only change.
+  const dialog = await openCommitDialog(/^Changes \+1\b/);
   await expect(dialog.getByRole("textbox")).toHaveValue("");
   await screenshot("07a-commit-dialog");
 
@@ -275,6 +178,7 @@ test("generates a commit message", async () => {
 });
 
 test("stops a running turn", async () => {
+  const { assistantSays, page, screenshot, send, stack } = suite.current();
   // The scripted model streams a few words, then hangs until OMP aborts the request.
   await send("stall: g1-stop");
   const stop = page.getByRole("button", { name: "Stop generation" });

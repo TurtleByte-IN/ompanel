@@ -1,7 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off globalTimers:off globalDate:off - a loopback HTTP fixture.
-// A scripted OpenAI-compatible chat model for the OMP end-to-end test: no account, no API key.
+// A scripted OpenAI-compatible chat model for the OMP end-to-end tests: no account, no API key.
 // Adapted from the fork's `packages/coding-agent/test/rpc-wire/fake-openai-server.ts`, like the
-// replay recorder's model (`apps/server/scripts/record-omp-rpc-replay-fixture.ts`).
+// replay recorder's model (`apps/server/scripts/record-omp-rpc-replay-fixture.ts`). The live
+// suite's prompts are written so that this model and a real one both answer them.
 import * as NodeFS from "node:fs";
 import * as NodeHttp from "node:http";
 import * as NodePath from "node:path";
@@ -11,6 +12,15 @@ const STALL_PREFIX = "stall:";
 const STALLED_REPLY = "Working on it, slowly.";
 /** A user message containing `run: <command>` makes the model call the shell tool with it. */
 const RUN_PREFIX = "run: ";
+/** `fanout: a, b` makes the model start one subagent per name with OMP's `task` tool. */
+const FANOUT_PREFIX = "fanout: ";
+/** A subagent (offered OMP's `yield` tool) yields this as its result. */
+const SUBAGENT_RESULT = "subagent done";
+/** The text after this marker comes back verbatim. */
+export const VERBATIM_MARKER = "Reply with exactly these two paragraphs and nothing else:";
+/** This question is answered with every `code word: <word>` the conversation holds. */
+export const CODE_WORD_QUESTION = "List every code word I asked you to remember";
+const CODE_WORD = /code word: (\S+?)\.?(?:\s|$)/g;
 /**
  * The streamed reply to any other user message, one delta per word. Two paragraphs: Ompanel's
  * default `responseStreamingMode` ("paragraph") shows streamed text a finished paragraph at a time.
@@ -32,12 +42,20 @@ interface ChatMessage {
 interface ChatRequest {
   readonly stream?: boolean;
   readonly messages?: ReadonlyArray<ChatMessage>;
-  readonly tools?: ReadonlyArray<{ readonly function?: { readonly name?: string } }>;
+  readonly tools?: ReadonlyArray<{
+    readonly function?: {
+      readonly name?: string;
+      readonly parameters?: { readonly properties?: Record<string, unknown> };
+    };
+  }>;
 }
 
-type Reply =
-  | { readonly text: string }
-  | { readonly tool: string; readonly args: Record<string, unknown> };
+interface ToolCall {
+  readonly tool: string;
+  readonly args: Record<string, unknown>;
+}
+
+type Reply = { readonly text: string } | { readonly calls: ReadonlyArray<ToolCall> };
 
 /** One served chat request, for assertions. */
 export interface ScriptedModelCall {
@@ -81,12 +99,34 @@ const jsonReply = (prompt: string): string | undefined => {
   );
 };
 
+/**
+ * One `task` call per subagent, or one batch call when OMP's `task.batch` shape is offered
+ * (`{ context, tasks[] }`).
+ */
+const fanoutCalls = (request: ChatRequest, names: ReadonlyArray<string>): Array<ToolCall> => {
+  const task = (request.tools ?? []).find((tool) => tool.function?.name === "task");
+  const item = (name: string) => ({
+    name,
+    task: `Reply with ${name}-done.`,
+    solutionSpace: "one fixed answer",
+  });
+  if (task?.function?.parameters?.properties?.tasks !== undefined) {
+    return [{ tool: "task", args: { context: "Scripted fan-out.", tasks: names.map(item) } }];
+  }
+  return names.map((name) => ({ tool: "task", args: { agent: "task", ...item(name) } }));
+};
+
 const scriptedReply = (request: ChatRequest): Reply => {
   const messages = request.messages ?? [];
   const last = messages.at(-1);
+  const offered = new Set((request.tools ?? []).map((tool) => tool.function?.name));
   if (last?.role === "tool") {
     const firstLine = messageText(last.content).trim().split("\n")[0] ?? "";
     return { text: `${TOOL_REPLY_PREFIX}${firstLine}` };
+  }
+  // Only a subagent is offered `yield`; it finishes its task by yielding.
+  if (last?.role === "user" && offered.has("yield")) {
+    return { calls: [{ tool: "yield", args: { data: SUBAGENT_RESULT } }] };
   }
   const prompt = messages.map((message) => messageText(message.content)).join("\n");
   const json = jsonReply(prompt);
@@ -99,10 +139,29 @@ const scriptedReply = (request: ChatRequest): Reply => {
         .slice(runAt + RUN_PREFIX.length)
         .split("\n")[0]
         ?.trim() ?? "";
-    const offered = new Set((request.tools ?? []).map((tool) => tool.function?.name));
     // T3 replaces OMP's `bash` with its `terminal` host tool (docs/omp/host-tools.md).
     const tool = offered.has("terminal") ? "terminal" : "bash";
-    return { tool, args: { command } };
+    return { calls: [{ tool, args: { command } }] };
+  }
+  const fanoutAt = userText.indexOf(FANOUT_PREFIX);
+  if (fanoutAt !== -1 && offered.has("task")) {
+    const names = (userText.slice(fanoutAt + FANOUT_PREFIX.length).split("\n")[0] ?? "")
+      .split(",")
+      .map((name) => name.trim())
+      .filter((name) => name !== "");
+    return { calls: fanoutCalls(request, names) };
+  }
+  const verbatimAt = userText.indexOf(VERBATIM_MARKER);
+  if (verbatimAt !== -1)
+    return { text: userText.slice(verbatimAt + VERBATIM_MARKER.length).trim() };
+  if (userText.includes(CODE_WORD_QUESTION)) {
+    const words = messages
+      .slice(0, -1)
+      .filter((message) => message.role === "user")
+      .flatMap((message) =>
+        [...messageText(message.content).matchAll(CODE_WORD)].map((match) => match[1]),
+      );
+    return { text: words.length === 0 ? "NONE" : words.join(" ") };
   }
   if (userText.includes(STALL_PREFIX)) return { text: STALLED_REPLY };
   return { text: STREAMED_PARAGRAPHS.join("\n\n") };
@@ -154,14 +213,12 @@ const streamReply = async (response: NodeHttp.ServerResponse, reply: Reply) => {
   } else {
     const delta = {
       role: "assistant",
-      tool_calls: [
-        {
-          index: 0,
-          id: `call_${Date.now()}`,
-          type: "function",
-          function: { name: reply.tool, arguments: JSON.stringify(reply.args) },
-        },
-      ],
+      tool_calls: reply.calls.map((call, index) => ({
+        index,
+        id: `call_${Date.now()}_${index}`,
+        type: "function",
+        function: { name: call.tool, arguments: JSON.stringify(call.args) },
+      })),
     };
     response.write(sse({ ...BASE, choices: [{ index: 0, delta, finish_reason: null }] }));
   }
@@ -185,13 +242,11 @@ const completionBody = (reply: Reply) => ({
           : {
               role: "assistant",
               content: null,
-              tool_calls: [
-                {
-                  id: "call_g1",
-                  type: "function",
-                  function: { name: reply.tool, arguments: JSON.stringify(reply.args) },
-                },
-              ],
+              tool_calls: reply.calls.map((call, index) => ({
+                id: `call_g1_${index}`,
+                type: "function",
+                function: { name: call.tool, arguments: JSON.stringify(call.args) },
+              })),
             },
       finish_reason: "text" in reply ? "stop" : "tool_calls",
     },
