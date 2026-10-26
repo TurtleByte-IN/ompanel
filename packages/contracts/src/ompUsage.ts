@@ -48,7 +48,7 @@ export const OmpStatsTotals = Schema.Struct({
 });
 export type OmpStatsTotals = typeof OmpStatsTotals.Type;
 
-/** Totals over every session file of the instance's profile, from `omp stats --json`. */
+/** Totals over the last 24 hours of the profile's sessions: `omp stats --json` has no range flag. */
 export const OmpStatsSummary = Schema.Struct({
   overall: OmpStatsTotals,
   byModel: Schema.Array(

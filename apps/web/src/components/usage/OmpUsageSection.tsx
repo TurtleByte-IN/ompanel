@@ -269,8 +269,8 @@ function OmpUsageView({
       </SourceCard>
 
       <SourceCard
-        title="All sessions"
-        description="Totals over every OMP session of this profile (omp stats)."
+        title="Last 24 hours"
+        description="Totals over the last 24 hours of this profile's OMP sessions (omp stats)."
         source={stats}
         loadingText="OMP is reading its session history…"
       >

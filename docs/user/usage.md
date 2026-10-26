@@ -63,8 +63,8 @@ When a selected environment runs OMP, **Usage → OMP** shows one OMP instance, 
 there are several:
 
 - **Account limits**: each signed-in account's quota windows, from `omp usage --json`.
-- **All sessions**: requests, tokens and cost over every session of the instance's profile, from
-  `omp stats --json`. OMP first reads any new session history into its stats database, so the first
+- **Last 24 hours**: requests, tokens and cost over the last 24 hours of the instance's profile, from
+  `omp stats --json` (OMP's default range; the command has no option for a longer one). OMP first reads any new session history into its stats database, so the first
   load after a lot of work can take up to a minute.
 - **Running threads**: each running OMP thread's own messages, tokens, cost and context use.
 

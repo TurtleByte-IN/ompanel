@@ -1,6 +1,6 @@
 /**
- * The Usage page's OMP tab (PRD FR-14): account quotas from `omp usage --json`, totals over every
- * session file from `omp stats --json`, and RPC `get_session_stats` of each running thread. Each
+ * The Usage page's OMP tab (PRD FR-14): account quotas from `omp usage --json`, totals over the
+ * last 24 hours from `omp stats --json` (its fixed default range), and RPC `get_session_stats` of each running thread. Each
  * source fails on its own, so a slow `omp stats` never hides the account quotas.
  */
 import {

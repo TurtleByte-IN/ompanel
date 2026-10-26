@@ -362,7 +362,10 @@ export interface OmpControlService {
     target: OmpControlTarget,
     options?: { readonly provider?: string },
   ) => Effect.Effect<OmpUsageReport, OmpControlError>;
-  /** `omp stats --json` (60 s), cached 30 s: totals over every session file of the profile. */
+  /**
+   * `omp stats --json` (60 s), cached 30 s: totals over the rolling last 24 hours, OMP's default
+   * range; the pinned CLI has no range flag.
+   */
   readonly stats: (target: OmpControlTarget) => Effect.Effect<OmpStatsReport, OmpControlError>;
   /** RPC `get_login_providers` in a fresh server (10 s), uncached. */
   readonly loginProviders: (

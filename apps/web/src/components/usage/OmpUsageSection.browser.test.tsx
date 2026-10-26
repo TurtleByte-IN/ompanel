@@ -107,10 +107,12 @@ describe("Usage → OMP tab", () => {
     expect(section("Account limits")?.textContent).toContain("me@example.com");
     expect(section("Account limits")?.textContent).toContain("25%");
     expect(section("Account limits")?.textContent).toContain("resets in 2 h");
-    await expect.poll(() => section("All sessions")?.dataset.ompUsageSource).toBe("ok");
-    expect(section("All sessions")?.textContent).toContain("$3.50");
-    expect(section("All sessions")?.textContent).toContain("1.50M");
-    expect(section("All sessions")?.textContent).toContain("anthropic/claude-sonnet-4-5");
+    await expect.poll(() => section("Last 24 hours")?.dataset.ompUsageSource).toBe("ok");
+    expect(section("Last 24 hours")?.querySelector("h2")?.textContent).toBe("Last 24 hours");
+    expect(section("Last 24 hours")?.textContent).toContain("last 24 hours");
+    expect(section("Last 24 hours")?.textContent).toContain("$3.50");
+    expect(section("Last 24 hours")?.textContent).toContain("1.50M");
+    expect(section("Last 24 hours")?.textContent).toContain("anthropic/claude-sonnet-4-5");
     await expect.poll(() => section("Running threads")?.dataset.ompUsageSource).toBe("ok");
     expect(section("Running threads")?.textContent).toContain("7 tool calls");
     expect(section("Running threads")?.textContent).toContain("context 10%");
@@ -148,7 +150,7 @@ describe("Usage → OMP tab", () => {
     expect(section("Account limits")?.querySelector("[role=alert]")?.textContent).toContain(
       "timed out",
     );
-    expect(section("All sessions")?.dataset.ompUsageSource).toBe("loading");
+    expect(section("Last 24 hours")?.dataset.ompUsageSource).toBe("loading");
     await expect.poll(() => section("Running threads")?.dataset.ompUsageSource).toBe("ok");
     expect(section("Running threads")?.querySelector("[role=alert]")?.textContent).toContain(
       "5000 ms",
