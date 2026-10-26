@@ -263,7 +263,8 @@ test("opens Share live with the pairing warning, gated on the collab RPC", async
     await expect(start).toBeDisabled();
   }
   await screenshot("11-share-live-dialog");
-  await dialog.getByRole("button", { name: "Close" }).click();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
 });
 
 // PRD §9: what a collector receives about OMP is driver kind, version, error class and frame
