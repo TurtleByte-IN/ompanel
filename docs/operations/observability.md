@@ -424,7 +424,7 @@ the relay forwarded, the span also goes to the Ompanel Connect trace export as a
 span; requests that reach the environment directly never join a sender's trace.
 
 The OMP driver has its own families, labelled only with `provider` (`omp`), `ompVersion` (the
-pinned fork tag such as `18.12.6-ompanel.3`, or `custom` for a configured binary path) and
+pinned fork tag such as `18.12.6-ompanel.4`, or `custom` for a configured binary path) and
 `ompContract` (the RPC contract the sidecar reported):
 
 - `t3_omp_sessions_total` by `outcome` (`started`, `failed`) and, for failures, `errorClass`

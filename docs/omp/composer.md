@@ -90,10 +90,10 @@ vibe mode while plan or goal mode is on, refuses a new goal while vibe mode is o
 `new_session` and `fork` (Fork thread) while it is on; rewind (`branch`) and session switches
 keep vibe mode as the target session recorded it. A refused trait is logged and the turn runs.
 
-`set_vibe_mode` is newer than the pinned sidecar: it arrives with RPC contract
-`OMP_VIBE_CONTRACT` (1.8.0, `packages/provider-omp/src/server/vibe.ts`). Until `omp.lock` pins
-that contract the composer does not offer the trait and the adapter never sends the command;
-`/vibe` stays in OMP's TUI.
+`set_vibe_mode` arrives with RPC contract `OMP_VIBE_CONTRACT` (1.8.0,
+`packages/provider-omp/src/server/vibe.ts`); the pinned sidecar (`v18.12.6-ompanel.4`) has it.
+Below that contract the composer does not offer the trait and the adapter never sends the
+command; `/vibe` stays in OMP's TUI.
 
 Each worker is an OMP subagent, shown in the thread's Agents panel tree under the `vibe_spawn`
 call that started it (see [subagents.md](./subagents.md#vibe-workers)).
