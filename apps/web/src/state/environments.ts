@@ -1,12 +1,14 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   connectionCatalogDisplayUrl,
+  connectionStatusText,
   hasRelayRoute,
   type EnvironmentPresentation as BaseEnvironmentPresentation,
 } from "@t3tools/client-runtime/connection";
 import { Discovery } from "@t3tools/client-runtime/relay";
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
+import { useState } from "react";
 
 import { environmentCatalog } from "../connection/catalog";
 import {
@@ -104,4 +106,27 @@ export function useEnvironmentMachines() {
 
 export function useConnectedEnvironmentIds() {
   return useAtomValue(environmentSummaries.connectedEnvironmentIdsAtom);
+}
+
+/**
+ * Whether the environment has connected since this component started showing it. A full page
+ * load renders cached providers before the connection is up, and a command sent then fails with
+ * "not connected"; a later reconnect keeps this true, so what already loaded stays mounted.
+ */
+export function useEnvironmentHasConnected(environmentId: EnvironmentId | null): boolean {
+  const connected = useConnectedEnvironmentIds();
+  const [seen, setSeen] = useState<EnvironmentId | null>(null);
+  if (environmentId === null) return false;
+  const isConnected = connected.includes(environmentId);
+  if (isConnected && seen !== environmentId) setSeen(environmentId);
+  return isConnected || seen === environmentId;
+}
+
+/**
+ * What to show while {@link useEnvironmentHasConnected} is false: the connection's own status,
+ * so a failed, offline or unsupported environment shows why instead of waiting forever.
+ */
+export function useEnvironmentConnectionStatus(environmentId: EnvironmentId | null): string {
+  const { presentation } = useEnvironmentPresentation(environmentId);
+  return presentation === null ? "Connecting..." : connectionStatusText(presentation.connection);
 }

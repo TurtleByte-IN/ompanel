@@ -31,7 +31,7 @@ cancelled job fails it. Through it, every pull request is gated on:
   the generated GraphQL checks);
 - typecheck: `Build and Typecheck`;
 - unit tests: `Test`, `Test Web`, `Test Server 1`–`8` and `Rust`;
-- end-to-end: `OMP E2E` (gate G1, [testing.md](testing.md#end-to-end)), for
+- end-to-end: `OMP E2E` (gates G1 and G2, [testing.md](testing.md#end-to-end)), for
   changes that reach the web app or the server;
 - server boot: `Server Boot Smoke`, for changes that reach the server, web or
   desktop build. It builds the server as `pnpm dev:desktop` and releases do,

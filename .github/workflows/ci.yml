@@ -363,9 +363,9 @@ jobs:
       - name: Test
         run: vp run --filter @t3tools/web test
 
-  # Gate G1 (docs/omp/testing.md, "End-to-end"): one OMP thread through the built web app,
-  # against an omp built from the omp.lock tag and a scripted local model. No secrets: the
-  # fork is public and the model runs on loopback.
+  # Gates G1 and G2 (docs/omp/testing.md, "End-to-end"): an OMP thread and OMP's settings,
+  # sign-in and `/wt` through the built web app, against an omp built from the omp.lock tag and
+  # a scripted local model. No secrets: the fork is public and everything runs on loopback.
   e2e_omp:
     permissions:
       contents: read

@@ -16,7 +16,11 @@ import { useEffect, useState, type ReactNode } from "react";
 
 import { cn } from "../../lib/utils";
 import { serverEnvironment } from "../../state/server";
-import { useEnvironmentProviders } from "../../state/environments";
+import {
+  useEnvironmentConnectionStatus,
+  useEnvironmentHasConnected,
+  useEnvironmentProviders,
+} from "../../state/environments";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 
@@ -62,6 +66,8 @@ export function OmpUsageSection({
   );
   const [picked, setPicked] = useState<string | null>(null);
   const current = instances.find((instance) => instance.key === picked) ?? instances[0];
+  const hasConnected = useEnvironmentHasConnected(current?.environmentId ?? null);
+  const connectionStatus = useEnvironmentConnectionStatus(current?.environmentId ?? null);
 
   if (current === undefined) {
     return (
@@ -86,12 +92,20 @@ export function OmpUsageSection({
           </SelectPopup>
         </Select>
       ) : null}
-      {/* A refresh remounts the panel, so every source starts over from loading. */}
-      <OmpUsagePanel
-        key={`${current.key}:${refreshKey}`}
-        environmentId={current.environmentId}
-        instanceId={current.instanceId}
-      />
+      {/* A full page load shows the cached providers before the connection is up; the panel
+          reads OMP on mount, so it waits for the connection and shows its status meanwhile. A
+          refresh remounts the panel, so every source starts over from loading. */}
+      {hasConnected ? (
+        <OmpUsagePanel
+          key={`${current.key}:${refreshKey}`}
+          environmentId={current.environmentId}
+          instanceId={current.instanceId}
+        />
+      ) : (
+        <p role="status" className="py-12 text-center text-sm text-muted-foreground">
+          {connectionStatus}
+        </p>
+      )}
     </div>
   );
 }

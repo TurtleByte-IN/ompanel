@@ -9,6 +9,7 @@ import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import { type FakeSignInVendor, startFakeSignInVendor, writeFakeSignInOmp } from "./fakeSignIn.ts";
 import { type ScriptedModel, startScriptedModel } from "./scriptedModel.ts";
 
 const REPO_ROOT = NodePath.resolve(import.meta.dirname, "..", "..", "..", "..");
@@ -26,6 +27,8 @@ export interface OmpStackOptions {
    * live suite. Never on a command line; every value is redacted from `serverLog()`.
    */
   readonly secretEnvironment?: Readonly<Record<string, string>>;
+  /** Give OMP's control servers a fake login provider (`fakeSignIn.ts`); the G2 suite's sign-in. */
+  readonly fakeSignIn?: boolean;
 }
 
 export interface OmpProcess {
@@ -38,10 +41,16 @@ export interface OmpProcess {
 export interface OmpStack {
   readonly pairingUrl: string;
   readonly workspace: string;
+  /** The throwaway `HOME`: OMP's agent directory is `<home>/.omp/agent`. */
+  readonly home: string;
   readonly model: ScriptedModel;
   /** Live `omp` session processes, from the server's pidfiles. */
   readonly ompProcesses: () => ReadonlyArray<OmpProcess>;
   readonly git: (...args: ReadonlyArray<string>) => string;
+  /** Runs the real `omp` as the server's OMP instance would, in the workspace; returns stdout. */
+  readonly omp: (...args: ReadonlyArray<string>) => string;
+  /** The fake vendor and where the wrapper keeps its account, with `fakeSignIn`. */
+  readonly signIn: { readonly vendor: FakeSignInVendor; readonly accountFile: string } | null;
   /** The server's output, pairing token redacted. */
   readonly serverLog: () => string;
   readonly stop: () => Promise<void>;
@@ -100,13 +109,30 @@ export const startOmpStack = async (options: OmpStackOptions = {}): Promise<OmpS
     NodePath.join(agentDir, "config.yml"),
     `modelRoles:\n  default: ${options.defaultModel ?? "fake/fake-model"}\n`,
   );
-  // OMP enabled at the given binary; commit messages are generated through it.
+  const vendor = options.fakeSignIn === true ? await startFakeSignInVendor() : null;
+  const signIn =
+    vendor === null
+      ? null
+      : {
+          vendor,
+          ...writeFakeSignInOmp(
+            NodeFS.mkdtempSync(NodePath.join(root, "sign-in-")),
+            binary,
+            vendor,
+          ),
+        };
+  // OMP enabled at the given binary (or the fake sign-in wrapper around it); commit messages are
+  // generated through it.
   NodeFS.writeFileSync(
     NodePath.join(userdata, "settings.json"),
     `${JSON.stringify(
       {
         providerInstances: {
-          omp: { driver: "omp", enabled: true, config: { binaryPath: binary } },
+          omp: {
+            driver: "omp",
+            enabled: true,
+            config: { binaryPath: signIn?.binary ?? binary },
+          },
         },
         textGenerationModelSelection: { instanceId: "omp", model: "default" },
       },
@@ -114,6 +140,14 @@ export const startOmpStack = async (options: OmpStackOptions = {}): Promise<OmpS
       2,
     )}\n`,
   );
+
+  const omp = (...args: ReadonlyArray<string>) =>
+    NodeChildProcess.execFileSync(binary, args, {
+      cwd: workspace,
+      encoding: "utf8",
+      env: { PATH: process.env.PATH ?? "", HOME: home, TMPDIR: NodeOS.tmpdir(), PI_NO_PTY: "1" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
 
   const git = (...args: ReadonlyArray<string>) =>
     NodeChildProcess.execFileSync("git", ["-C", workspace, ...args], {
@@ -182,9 +216,12 @@ export const startOmpStack = async (options: OmpStackOptions = {}): Promise<OmpS
   return {
     pairingUrl,
     workspace,
+    home,
     model,
     ompProcesses,
     git,
+    omp,
+    signIn,
     serverLog: () =>
       secrets.reduce(
         (text, secret) => text.replaceAll(secret, "<redacted>"),
@@ -203,6 +240,7 @@ export const startOmpStack = async (options: OmpStackOptions = {}): Promise<OmpS
       }
       NodeFS.closeSync(log);
       await model.close();
+      await vendor?.close();
       NodeFS.rmSync(root, { recursive: true, force: true });
     },
   };
