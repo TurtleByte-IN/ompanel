@@ -29,12 +29,8 @@ function write(frame) {
 }
 
 /**
- * With FAKE_OMP_SESSIONS_DIR, sessions live on disk like OMP's:
- * `<dir>/<bucket of cwd>/<timestamp>_<id>.jsonl`, a title slot, the header, then `message`
- * entries, written once the session holds a message. `get_state`, `new_session`,
- * `switch_session`, `get_messages_page` and `set_session_name` then work on that store unless
- * scripted, a `prompt` records its user message and an emitted `agent_end` its messages, and an
- * accepted `host_cwd_change_result` moves the file into the new directory's bucket.
+ * FAKE_OMP_SESSIONS_DIR keeps sessions on disk like OMP (one bucket per cwd); unscripted session
+ * commands use it, and an accepted `host_cwd_change_result` moves the file (docs/omp/testing.md).
  * FAKE_OMP_AUTO_RESUME=1 starts on the bucket's newest session, like OMP's `autoResume`.
  */
 function makeStore(root) {

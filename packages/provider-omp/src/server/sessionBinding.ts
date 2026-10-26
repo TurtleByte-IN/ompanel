@@ -91,13 +91,14 @@ export const switchOmpSession = Effect.fn("switchOmpSession")(function* (
   const { cancelled } = yield* model === undefined
     ? plain
     : plain.pipe(
-        Effect.catchTag("OmpRpcCommandError", () =>
-          input.process.request(
-            "switch_session",
-            { sessionPath, provider: model.provider, modelId: model.id },
-            { timeoutMs: SESSION_SWITCH_TIMEOUT_MS },
-          ),
-        ),
+        Effect.catchTags({
+          OmpRpcCommandError: () =>
+            input.process.request(
+              "switch_session",
+              { sessionPath, provider: model.provider, modelId: model.id },
+              { timeoutMs: SESSION_SWITCH_TIMEOUT_MS },
+            ),
+        }),
       );
   if (cancelled) return yield* bindingError(`OMP declined to open session ${input.sessionId}`);
   const state = yield* readState(input.process);

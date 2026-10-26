@@ -244,8 +244,8 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
       }),
       // Unreadable buckets and files are skipped, so listing itself does not fail.
       ompSessions: {
-        list: ({ cwd }) =>
-          Effect.gen(function* () {
+        list: Effect.fn("OmpSessions.list")(
+          function* ({ cwd }: { readonly cwd: string }) {
             const owners = yield* readOmpThreadSessionRecords(stateDirs.threads);
             const sessions = yield* listOmpSessions(sessionsLocation, cwd);
             return sessions.map((session) => ({
@@ -257,10 +257,10 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
               updatedAt: session.updatedAt,
               threadId: owners.get(session.sessionId) ?? null,
             }));
-          }).pipe(
-            Effect.provideService(FileSystem.FileSystem, fileSystem),
-            Effect.provideService(Path.Path, path),
-          ),
+          },
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+        ),
       },
     } satisfies ProviderInstance;
   }),

@@ -1,17 +1,6 @@
 /**
- * OMP's session files on disk, as Ompanel finds, lists and remembers them (C-10;
- * docs/omp/sessions.md). Every path rule here follows the pinned fork:
- *
- * - Sessions live in `<agent dir>/sessions/<bucket>/<timestamp>_<sessionId>.jsonl`, one bucket per
- *   working directory (`session/session-paths.ts`, `session/session-manager.ts`); `/wt` moves a
- *   file into its worktree's bucket but keeps its name.
- * - The agent dir is `PI_CODING_AGENT_DIR`, else `~/.omp[/profiles/<p>]/agent`; a named profile
- *   ignores `PI_CODING_AGENT_DIR`. On Linux and macOS a default agent dir moves its data under
- *   `$XDG_DATA_HOME/omp[/profiles/<p>]` once that directory exists (`utils/src/dirs.ts`).
- * - `PI_CODING_AGENT_SESSION_DIR` puts every session in one directory, without buckets
- *   (`cli/args.ts`).
- * - A file opens with an optional fixed-width `{"type":"title"}` slot, then the
- *   `{"type":"session"}` header, then entries (docs/session.md).
+ * OMP's session files on disk, found by session id, listed per project and remembered per
+ * thread. The path rules follow the pinned fork; docs/omp/sessions.md lists them with sources.
  */
 import type { ThreadId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -26,7 +15,7 @@ const HEAD_BYTES = 64 * 1024;
 /** Longest title or first message the import list carries. */
 const PREVIEW_CHARS = 200;
 /** Most sessions one listing returns. */
-export const OMP_SESSION_LIST_LIMIT = 500;
+const OMP_SESSION_LIST_LIMIT = 500;
 
 const OMP_PROFILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
@@ -131,7 +120,7 @@ const preview = (text: string | null): string | null => {
     .map((part) => part.trim())
     .find((part) => part !== "");
   if (line === undefined) return null;
-  // oxlint-disable-next-line no-control-regex
+  // oxlint-disable-next-line no-control-regex -- titles must not carry terminal controls
   const clean = line.replace(/[\u0000-\u001F\u007F-\u009F]/g, "");
   return clean.length > PREVIEW_CHARS ? `${clean.slice(0, PREVIEW_CHARS - 1)}…` : clean;
 };
@@ -349,7 +338,7 @@ const encodeRecord = Schema.encodeEffect(OmpThreadSessionRecordJson);
 
 const RECORD_FILE = "session.json";
 
-export const ompThreadSessionRecordPath = (
+const ompThreadSessionRecordPath = (
   path: Path.Path,
   threadsDir: string,
   threadId: string,

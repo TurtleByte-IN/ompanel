@@ -15,7 +15,7 @@ import { ompMessageText } from "./ompSessions.ts";
 import type { OmpRpcProcess } from "./rpcProcess.ts";
 
 /** OMP's largest page. */
-export const OMP_HISTORY_PAGE_LIMIT = 256;
+const OMP_HISTORY_PAGE_LIMIT = 256;
 const PAGE_TIMEOUT_MS = 10_000;
 /** A session that keeps changing under the reader is read again at most this often. */
 const STALE_RETRIES = 2;
@@ -46,11 +46,12 @@ export const readOmpHistoryPages = Effect.fn("readOmpHistoryPages")(function* (
       return pages;
     });
     const result = yield* read.pipe(
-      Effect.catchTag("OmpRpcCommandError", (error) =>
-        error.code === "stale_cursor" && attempt < STALE_RETRIES
-          ? Effect.succeed(null)
-          : Effect.fail(error),
-      ),
+      Effect.catchTags({
+        OmpRpcCommandError: (error) =>
+          error.code === "stale_cursor" && attempt < STALE_RETRIES
+            ? Effect.succeed(null)
+            : Effect.fail(error),
+      }),
     );
     if (result !== null) return result;
     attempt += 1;

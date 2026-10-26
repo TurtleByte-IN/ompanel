@@ -525,9 +525,10 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
     // A process that is already gone settles the session as an error on its frame stream.
     if (!reopened) {
       yield* ensureFreshOmpSession(process).pipe(
-        Effect.catchTag("OmpRpcError", (error) =>
-          Effect.logWarning("omp session not checked", { detail: error.message }),
-        ),
+        Effect.catchTags({
+          OmpRpcError: (error) =>
+            Effect.logWarning("omp session not checked", { detail: error.message }),
+        }),
         Effect.mapError(openError),
       );
     }
