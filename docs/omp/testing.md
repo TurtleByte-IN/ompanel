@@ -77,7 +77,15 @@ Unscripted `get_state`, `new_session`, `switch_session`, `get_messages_page`
 records its user message and an emitted `agent_end` its messages; an accepted
 `host_cwd_change_result` moves the file into the new directory's bucket, as
 `/wt` does. `sessionStore(root, { autoResume: true })` starts on the bucket's
-newest session, like OMP's `autoResume`.
+newest session, like OMP's `autoResume`. Unscripted `export_html` writes a
+page of the stored session (title and message texts) to `outputPath`.
+
+With `FAKE_OMP_CONTRACT` at 1.7.0 or later the fake hosts one collab room like
+OMP's RPC (`collab_start`, `collab_status`, `collab_stop`, and a
+`collab_state` frame when the room starts or ends); an older contract answers
+them as unknown commands. Its links carry `FAKE_OMP_COLLAB_TOKEN`, so a test
+can check that the token reaches no journal or log
+(`threadMenuController.test.ts`).
 
 `fakeOmpFrames` builds contract-shaped frames: `promptTurn` (ack,
 `agent_start`, streamed thinking and text, an optional tool execution,
@@ -89,7 +97,8 @@ newest session, like OMP's `autoResume`.
 `testing/fakeOmpControl.fixture.mjs` stands in for the short-lived `omp`
 processes `OmpControlService` starts (`control.ts`): one-shot CLI commands
 (`--version`, `config list|set|reset|path`, `usage`, `stats`, `skill list`,
-`plugin list`, `agents unpack`, each with an optional `--profile`) and
+`plugin list`, `agents unpack`, `--export <session> <out>`, `share`, each with
+an optional `--profile`) and
 `--mode rpc` control servers (`get_login_providers`, `login`).
 `makeFakeOmpControl` in `testing/fakeOmpControl.ts` gives a scratch directory,
 an executable `omp`, a `workspace` and what the fake saw: `starts()` (pid,
@@ -113,7 +122,11 @@ const target = omp.target({
 });
 ```
 
-A CLI command prints `stdout`/`stderr` and exits with `exitCode`, or hangs.
+A CLI command prints `stdout`/`stderr` and exits with `exitCode`, or hangs;
+`--export` also writes its `html` to the output path. `target(script, { gh })`
+puts a fake GitHub CLI on the target's `PATH` whose `gh auth status` succeeds
+(`ready`) or fails (`signed_out`), or none (`missing`); the `PATH` then holds
+nothing else, so no test reaches a real `gh` or uploads anything.
 An RPC server runs `beforeReady`, writes `ready`, runs `afterReady` (the
 pinned `setWidget` and `available_commands_update` frames), then the steps of
 each command: `emit`, `respond`, `fail`, `raw`, `stderr`, `await` (a UI

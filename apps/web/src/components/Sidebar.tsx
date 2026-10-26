@@ -142,6 +142,7 @@ import { readEnvironmentScope } from "../state/session";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
 import { openGuestShareDialog } from "./chat/guestShareDialogState";
+import { readOmpThreadInstanceId, runOmpThreadMenuAction } from "./chat/OmpThreadMenu";
 import { buildThreadRouteParams, resolveActiveThreadRouteRef } from "../threadRoutes";
 import type { SidebarThreadSummary } from "../types";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
@@ -2420,6 +2421,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 titleRegeneration: supportsTitleRegeneration,
               },
               snoozePresets,
+              isOmpThread: readOmpThreadInstanceId(threadRef) !== null,
             }),
             position,
           ),
@@ -2510,6 +2512,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             return;
           case "share-guest":
             openGuestShareDialog(threadRef);
+            return;
+          case "omp":
+          case "omp-export-html":
+          case "omp-share-gist":
+          case "omp-share-live":
+          case "omp-stop-live":
+          case "omp-branch-tree":
+            await runOmpThreadMenuAction(clicked.value, threadRef);
             return;
           case "regenerate-title": {
             if (isRegeneratingTitle) return;

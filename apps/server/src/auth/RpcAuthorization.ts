@@ -108,6 +108,9 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverListOmpSignOutAccounts]: AuthProvidersManageScope,
   [WS_METHODS.serverListOmpSessions]: AuthOrchestrationReadScope,
   [WS_METHODS.serverImportOmpSession]: AuthOrchestrationOperateScope,
+  // The thread's own conversation, as a page or its branch tree: what reading the thread shows.
+  [WS_METHODS.serverExportOmpThreadHtml]: AuthOrchestrationReadScope,
+  [WS_METHODS.serverGetOmpThreadBranchTree]: AuthOrchestrationReadScope,
   // Agent prompts and advisor instructions are provider configuration, read only by its managers.
   [WS_METHODS.serverListOmpAgentFiles]: AuthProvidersManageScope,
   [WS_METHODS.serverReadOmpAgentFile]: AuthProvidersManageScope,
