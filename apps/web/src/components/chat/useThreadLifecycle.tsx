@@ -106,6 +106,8 @@ interface ThreadLifecycleInput {
     runtimeMode: RuntimeMode;
     interactionMode: ProviderInteractionMode;
   }) => Promise<AtomCommandResult<void, unknown>>;
+  /** Opens the goal panel, for threads that have one (OMP); null hides the banner's Open. */
+  readonly onOpenGoal: (() => void) | null;
 }
 
 /**
@@ -147,6 +149,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     scheduleComposerFocus,
     scrollToEnd,
     persistThreadSettingsForNextTurn,
+    onOpenGoal,
   } = input;
   const navigate = useNavigate();
   const router = useRouter();
@@ -522,6 +525,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
           goal: activeGoal,
           isWorking,
           onSendCommand: sendStandaloneCommandStable,
+          onOpenGoal,
         })
       : null;
 

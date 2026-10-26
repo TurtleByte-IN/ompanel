@@ -34,11 +34,13 @@ import * as DateTime from "effect/DateTime";
 import type {
   AssistantMessageEvent,
   ContextUsage,
+  Goal,
   SessionState,
   SessionStats,
   TodoPhase,
   Usage,
 } from "../../contract/src/wire.generated.ts";
+import { ompProviderGoal, ompStateGoal } from "./goal.ts";
 import {
   advisorNotice,
   cardOutput,
@@ -647,6 +649,8 @@ export class OmpThreadMapper {
             nativeThreadRef: providerRef(state.sessionId),
             nativeMetadata,
             ...(contextUsage === undefined ? {} : { contextUsage }),
+            // A contract without `get_state.goal` leaves the recorded goal alone.
+            ...(state.goal === undefined ? {} : { goal: ompStateGoal(state.goal, existing.goal) }),
             status: "idle",
             updatedAt: now,
           }
@@ -670,7 +674,7 @@ export class OmpThreadMapper {
             pendingBackgroundTasks: [],
             contextUsage: contextUsage ?? null,
             nativeMetadata,
-            goal: null,
+            goal: ompProviderGoal(state.goal?.goal),
             createdAt: now,
             updatedAt: now,
           };
@@ -683,6 +687,22 @@ export class OmpThreadMapper {
       providerThread,
       events: [{ type: "provider_thread.updated", driver: OMP_PROVIDER, providerThread }],
     };
+  }
+
+  /** OMP's goal changed (`goal_updated`); the thread shows it whether or not a turn runs. */
+  applyGoal(goal: Goal | null, now: DateTime.Utc): Array<Event> {
+    const thread = this.#thread;
+    if (thread === null) return [];
+    const next = ompProviderGoal(goal);
+    if (JSON.stringify(next) === JSON.stringify(thread.providerThread.goal ?? null)) return [];
+    thread.providerThread = { ...thread.providerThread, goal: next, updatedAt: now };
+    return [
+      {
+        type: "provider_thread.updated",
+        driver: OMP_PROVIDER,
+        providerThread: thread.providerThread,
+      },
+    ];
   }
 
   startTurn(input: ProviderAdapter.ProviderAdapterV2TurnInput, now: DateTime.Utc): Array<Event> {
@@ -728,6 +748,8 @@ export class OmpThreadMapper {
       ...input.providerThread,
       nativeThreadRef: thread.providerThread.nativeThreadRef,
       nativeMetadata: thread.providerThread.nativeMetadata,
+      // The live session's goal: a `/goal` turn sets it before the turn starts.
+      goal: thread.providerThread.goal ?? null,
       status: "active",
       firstRunOrdinal: input.providerThread.firstRunOrdinal ?? input.runOrdinal,
       lastRunOrdinal: input.runOrdinal,
@@ -1120,6 +1142,9 @@ export class OmpThreadMapper {
       ...thread.providerThread,
       status: "idle",
       ...(contextUsage === undefined ? {} : { contextUsage }),
+      ...(refresh.state?.goal === undefined
+        ? {}
+        : { goal: ompStateGoal(refresh.state.goal, thread.providerThread.goal) }),
       updatedAt: now,
     };
     events.push({

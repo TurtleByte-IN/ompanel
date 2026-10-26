@@ -143,6 +143,19 @@ function lineageOf(payload: Record<string, unknown>): {
   };
 }
 
+/** A vibe worker's lifecycle description (`vibe <cli> session` in OMP's vibe runtime). */
+const VIBE_WORKER_DESCRIPTION = /^vibe (fast|good) session$/;
+
+/**
+ * The record title: `<id>: <description>`, `<id> (<agent>)` without one, and `<id>: Vibe <cli>
+ * worker` for a vibe mode worker session (docs/omp/subagents.md#vibe-workers).
+ */
+function subagentTitle(id: string, agent: string, description: string | undefined): string {
+  if (description === undefined) return `${id} (${agent})`;
+  const vibe = VIBE_WORKER_DESCRIPTION.exec(description);
+  return vibe === null ? `${id}: ${description}` : `${id}: Vibe ${vibe[1]} worker`;
+}
+
 /** A tracked subagent, with what later frames need that the V2 record does not hold. */
 interface Tracked {
   readonly record: OrchestrationV2Subagent;
@@ -171,6 +184,20 @@ export class OmpSubagentTracker {
       driver: OMP_PROVIDER,
       nativeItemId: `${providerThreadId}:subagent:${id}`,
     });
+  }
+
+  /**
+   * The vibe workers still running here. Leaving vibe mode kills them all, and a killed worker
+   * may send no final frame, so the adapter ends them itself (docs/omp/subagents.md#vibe-workers).
+   */
+  liveVibeWorkerIds(): Array<string> {
+    return [...this.#subagents].flatMap(([id, tracked]) =>
+      tracked.description !== undefined &&
+      VIBE_WORKER_DESCRIPTION.test(tracked.description) &&
+      !isTerminal(tracked.record.status)
+        ? [id]
+        : [],
+    );
   }
 
   /** Maps one `subagent_lifecycle` or `subagent_progress` frame; other frames map to nothing. */
@@ -248,7 +275,7 @@ export class OmpSubagentTracker {
       childThreadId: null,
       nativeTaskRef: { driver: OMP_PROVIDER, nativeId: id, strength: "strong" },
       prompt: task ?? previous?.prompt ?? description ?? "",
-      title: description === undefined ? `${id} (${agent})` : `${id}: ${description}`,
+      title: subagentTitle(id, agent, description),
       model:
         stringOf(progress?.resolvedModel) ??
         stringOf(progress?.resolvedModelIdentity) ??

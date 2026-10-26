@@ -22,6 +22,7 @@ import { PullRequestDetailPanel } from "../pullRequest/PullRequestDetailPanel";
 import { PullRequestDetailGhost } from "../pullRequest/PullRequestGhosts";
 import { PullRequestsUnavailableState } from "../pullRequest/PullRequestsUnavailableState";
 import { ThreadPullRequestsPanel } from "../pullRequest/ThreadPullRequestsPanel";
+import type { GoalPanelProps } from "../goal/GoalPanel";
 
 const PreviewPanel = lazy(() =>
   import("../preview/PreviewPanel").then((module) => ({ default: module.PreviewPanel })),
@@ -33,6 +34,9 @@ const DevicePanel = lazy(() =>
 const FilePreviewPanel = lazy(() => import("../files/FilePreviewPanel"));
 const AgentsPanel = lazy(() =>
   import("../agents/AgentsPanel").then((module) => ({ default: module.AgentsPanel })),
+);
+const GoalPanel = lazy(() =>
+  import("../goal/GoalPanel").then((module) => ({ default: module.GoalPanel })),
 );
 
 export type RightPanelTerminalProps = Omit<
@@ -78,6 +82,7 @@ export function RightPanelSurfaceContent(props: {
   readonly terminal: RightPanelTerminalProps;
   readonly pullRequest: RightPanelPullRequestProps;
   readonly files: RightPanelFileProps;
+  readonly goal: GoalPanelProps;
 }) {
   const { surface, threadRef, visible } = props;
   if (surface === null) return null;
@@ -188,6 +193,12 @@ export function RightPanelSurfaceContent(props: {
       return (
         <Suspense fallback={null}>
           <AgentsPanel key={scopedThreadKey(threadRef)} threadRef={threadRef} />
+        </Suspense>
+      );
+    case "goal":
+      return (
+        <Suspense fallback={null}>
+          <GoalPanel {...props.goal} />
         </Suspense>
       );
     case "files":

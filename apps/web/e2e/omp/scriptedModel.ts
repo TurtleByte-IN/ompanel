@@ -16,6 +16,8 @@ const RUN_PREFIX = "run: ";
 const FANOUT_PREFIX = "fanout: ";
 /** A subagent (offered OMP's `yield` tool) yields this as its result. */
 const SUBAGENT_RESULT = "subagent done";
+/** A user message containing this, while OMP offers its `goal` tool, marks the goal complete. */
+export const GOAL_DONE_MARKER = "goal done:";
 /** The text after this marker comes back verbatim. */
 export const VERBATIM_MARKER = "Reply with exactly these two paragraphs and nothing else:";
 /** This question is answered with every `code word: <word>` the conversation holds. */
@@ -142,6 +144,9 @@ const scriptedReply = (request: ChatRequest): Reply => {
     // T3 replaces OMP's `bash` with its `terminal` host tool (docs/omp/host-tools.md).
     const tool = offered.has("terminal") ? "terminal" : "bash";
     return { calls: [{ tool, args: { command } }] };
+  }
+  if (userText.includes(GOAL_DONE_MARKER) && offered.has("goal")) {
+    return { calls: [{ tool: "goal", args: { op: "complete" } }] };
   }
   const fanoutAt = userText.indexOf(FANOUT_PREFIX);
   if (fanoutAt !== -1 && offered.has("task")) {

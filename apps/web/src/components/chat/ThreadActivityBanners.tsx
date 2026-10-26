@@ -55,8 +55,15 @@ export function goalBannerItem(input: {
   readonly goal: OrchestrationV2ProviderGoal;
   readonly isWorking: boolean;
   readonly onSendCommand: (text: string, failureMessage: string) => Promise<void>;
+  /** Opens the goal panel (OMP threads); without it the banner has no Open action. */
+  readonly onOpenGoal?: (() => void) | null;
 }): ComposerBannerStackItem {
-  const { isWorking, onSendCommand } = input;
+  const { isWorking, onSendCommand, onOpenGoal } = input;
+  const openAction = onOpenGoal ? (
+    <Button size="xs" variant="ghost" onClick={onOpenGoal}>
+      Open
+    </Button>
+  ) : null;
   const presentation = presentProviderGoal(input.goal, isWorking);
   return {
     id: `goal:${input.threadId}`,
@@ -68,8 +75,11 @@ export function goalBannerItem(input: {
         ? presentation.title
         : `${presentation.title} · ${presentation.usage}`,
     description: presentation.objective,
-    actions: isWorking ? undefined : (
+    actions: isWorking ? (
+      (openAction ?? undefined)
+    ) : (
       <>
+        {openAction}
         {presentation.canResume ? (
           <Button
             size="xs"

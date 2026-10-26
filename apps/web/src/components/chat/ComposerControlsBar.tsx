@@ -6,6 +6,13 @@ import { CircleAlertIcon } from "lucide-react";
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
 import { ComposerControl, ComposerControlSeparator } from "./ComposerControl";
 import {
+  ComposerGoalChip,
+  composerGoalChipLabel,
+  type ComposerGoalChipState,
+} from "./ComposerGoalChip";
+import { MagicKeywordChip } from "./MagicKeywordChip";
+import type { OmpMagicKeyword } from "@t3tools/provider-omp/composer";
+import {
   ComposerFooterModeControls,
   ComposerModelPicker,
   type RuntimeModeOption,
@@ -78,6 +85,10 @@ export function ComposerControlsBar(props: {
   onModelPickerOpenChange: (open: boolean) => void;
   modelPickerIconClassName: string | undefined;
   getModelDisabledReason: ChatComposerProps["getModelDisabledReason"];
+  /** An OMP thread's goal chip; null elsewhere. */
+  goalChip: ComposerGoalChipState | null;
+  /** OMP magic keywords the prompt contains, shown as chips. */
+  magicKeywords: ReadonlyArray<OmpMagicKeyword>;
 }) {
   const {
     environmentId,
@@ -127,6 +138,8 @@ export function ComposerControlsBar(props: {
     onModelPickerOpenChange,
     modelPickerIconClassName,
     getModelDisabledReason,
+    goalChip,
+    magicKeywords,
   } = props;
   const providerTraitsMenuContent = renderProviderTraitsMenuContent({
     provider: selectedProvider,
@@ -162,6 +175,35 @@ export function ComposerControlsBar(props: {
     hidden: composerControlsHidden || restingHiddenBlockCount > 1,
   });
   const restingBlockDefs = [
+    // First, so the overflow menu takes it last.
+    ...(goalChip
+      ? [
+          {
+            id: "goal",
+            content: (
+              <ComposerGoalChip chip={goalChip} size={composerControlsCollapsed ? "xs" : "sm"} />
+            ),
+          },
+        ]
+      : []),
+    ...(magicKeywords.length > 0
+      ? [
+          {
+            id: "magic-keywords",
+            content: (
+              <span
+                role="group"
+                className="flex items-center gap-1"
+                aria-label="Magic keywords in this prompt"
+              >
+                {magicKeywords.map((keyword) => (
+                  <MagicKeywordChip key={keyword.id} keyword={keyword} />
+                ))}
+              </span>
+            ),
+          },
+        ]
+      : []),
     ...(providerTraitsPicker
       ? [
           {
@@ -315,6 +357,11 @@ export function ComposerControlsBar(props: {
             traitsMenuContent={
               hiddenRestingBlockIds.includes("traits") ? providerTraitsMenuContent : undefined
             }
+            {...(goalChip && hiddenRestingBlockIds.includes("goal")
+              ? {
+                  goalItem: { label: composerGoalChipLabel(goalChip), onSelect: goalChip.onToggle },
+                }
+              : {})}
             onToggleInteractionMode={toggleInteractionMode}
             onRuntimeModeChange={handleRuntimeModeChange}
           />
