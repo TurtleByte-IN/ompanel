@@ -70,3 +70,23 @@ The provider card shows an error when:
 - OMP speaks a different version of the RPC protocol than this Ompanel release.
 
 OMP updates arrive with Ompanel updates. Ompanel does not update OMP on its own.
+**Settings → OMP → Plugins → Check for updates** runs `omp update --check`,
+which only says whether a newer OMP exists.
+
+## Plugins and Skills
+
+**Settings → OMP → Plugins** lists the plugins and marketplaces of this OMP
+profile. You can install a plugin (an npm package, `github:user/repo`, a git
+URL, a local path, or `name@marketplace` from **Browse**), enable, disable or
+uninstall it, and add or remove marketplaces. Before anything runs, Ompanel
+shows the exact `omp plugin` command and waits for you to confirm.
+
+Plugins are third-party code. An enabled plugin runs on your machine with your
+permissions in every OMP thread: its tools (the agent calls them as `xd://`
+devices), hooks, commands, skills and MCP servers. Install only what you trust.
+
+New threads load plugins when they start. **Reload plugins** also reloads them
+in running threads that are not in the middle of a response.
+
+**Settings → OMP → Skills** lists the skills a new thread loads, including
+those plugins bring, and opens any of them in your editor.

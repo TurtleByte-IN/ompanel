@@ -39,6 +39,8 @@ export type SettingsPath =
   | "/settings/omp-discovery"
   | "/settings/omp-mcp"
   | "/settings/omp-customization"
+  | "/settings/omp-plugins"
+  | "/settings/omp-skills"
   | "/settings/omp-terminal"
   | "/settings/integrations"
   | "/settings/scheduled-tasks"
@@ -116,6 +118,8 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/omp-discovery": "OMP Discovery",
   "/settings/omp-mcp": "OMP MCP",
   "/settings/omp-customization": "OMP Customization",
+  "/settings/omp-plugins": "OMP Plugins",
+  "/settings/omp-skills": "OMP Skills",
   "/settings/omp-terminal": "OMP Terminal prefs",
   "/settings/integrations": "Integrations",
   "/settings/scheduled-tasks": "Scheduled Tasks",
@@ -840,6 +844,20 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "omp-plugins",
+    title: "OMP plugins",
+    to: "/settings/omp-plugins",
+    searchTerms: [
+      "omp plugins install uninstall enable disable marketplace discover reload-plugins extensions third-party xd tools npm github update check version",
+    ],
+  },
+  {
+    id: "omp-skills",
+    title: "OMP skills",
+    to: "/settings/omp-skills",
+    searchTerms: ["omp skills skill list SKILL.md open in editor hidden plugin skills registry"],
+  },
+  {
     id: "omp-terminal",
     title: "OMP terminal prefs",
     to: "/settings/omp-terminal",
@@ -1225,6 +1243,8 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/omp-discovery": null,
   "/settings/omp-mcp": null,
   "/settings/omp-customization": null,
+  "/settings/omp-plugins": null,
+  "/settings/omp-skills": null,
   "/settings/omp-terminal": null,
   "/settings/integrations": null,
   "/settings/source-control": "environment-defaults",

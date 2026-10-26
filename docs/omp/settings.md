@@ -101,6 +101,13 @@ serves it over these RPC methods:
 | `server.setOmpThreadOverride`   | `orchestration:operate` |
 | `server.clearOmpThreadOverride` | `orchestration:operate` |
 
+Plugins and skills (`ompPlugins` on the instance) have their own methods, all
+`providers:manage`: `server.listOmpPlugins`, `server.runOmpPluginCommand`,
+`server.discoverOmpMarketplace`, `server.reloadOmpPlugins`,
+`server.checkOmpUpdate` and `server.listOmpSkills`. Their errors are
+`OmpPluginsOperationError` and never carry `omp` output, which can echo a spec
+or URL with credentials in it; spans record only the action.
+
 A `projectId` selects the project layer, at the project's workspace root.
 Without one, calls run in `<stateDir>/omp`, which has no project config. Errors
 are `OmpSettingsOperationError` and never carry `omp` output.
@@ -108,8 +115,8 @@ are `OmpSettingsOperationError` and never carry `omp` output.
 ## Settings pages
 
 Settings → OMP Models & Roles, Routing, Thinking, Advisor & Agents, Sampling,
-Approvals & Tools, Memory, Context, Modes, Runtime, Search, Discovery and
-Terminal prefs each show a slice of
+Approvals & Tools, Memory, Context, Modes, Runtime, Search, Discovery, Plugins,
+Skills and Terminal prefs each show a slice of
 the engine's form for the primary environment's OMP instance (a picker appears
 when it runs several). The pages write the global layer and add no write path
 of their own; env-set keys stay read-only and credentials reset-only. The key
@@ -137,6 +144,8 @@ Editing stays on web and desktop; OMP sign-in on mobile lives under Provider acc
 | Runtime           | `eval.*` (incl. `eval.py`, `eval.js`), `providers.tinyModelDevice`, `providers.tinyModelDtype`, plus a read-only PTY row                                                                                     |
 | Search            | `web_search.enabled`, `modelRoles` (`web` role only), `retry.fallbackChains` (`web` chain only), `providers.webSearchTimeoutSeconds`, `exa.*`, `searxng.*`                                                   |
 | Discovery         | `enabledProviders` / `disabledProviders` (read-only), `skills.enabled`, `skills.enable*` sources, `commands.enableClaudeUser/Project`, `mcp.enableProjectConfig`, `contextFiles.extra`                       |
+| Plugins           | `extensions`, `disabledExtensions`, `extensionHandlers.*`, `marketplace.*`, plus the plugin list, marketplaces and update check below                                                                        |
+| Skills            | `skills.registryUrl`, plus the resolved skill list below                                                                                                                                                     |
 | Terminal prefs    | `startup.*`, `theme.*`, `statusLine.*`, `tui.*`, `terminal.*`, all read-only and marked terminal-only, plus a `keybindings.yml` note                                                                         |
 
 `modelRoles` covers OMP's 16 roles: `default smol slow vision plan commit tiny
@@ -279,3 +288,50 @@ itself must resolve inside the agent directory (a folder linking out is not
 listed). New skills, rules and prompts can be created there; hooks and tools
 are code and are only opened. "Unpack bundled agents" runs
 `omp [--profile p] agents unpack --user --json`, which never overwrites a file.
+
+## Plugins and Skills
+
+Settings → OMP → Plugins runs the pinned `omp` in the instance's state
+directory (no project config, so everything is user scope):
+
+| What the page does           | Command                                                    | Deadline |
+| ---------------------------- | ---------------------------------------------------------- | -------- |
+| List installed plugins       | `omp [--profile p] plugin list --json`                     | 15 s     |
+| List marketplaces            | `omp [--profile p] plugin marketplace list` (text)         | 15 s     |
+| Browse one marketplace       | `omp [--profile p] plugin discover <name>` (text)          | 15 s     |
+| Install                      | `omp [--profile p] plugin install <spec>`                  | 180 s    |
+| Uninstall / enable / disable | `omp [--profile p] plugin uninstall\|enable\|disable <id>` | 180 s    |
+| Add / remove a marketplace   | `omp [--profile p] plugin marketplace add\|remove <x>`     | 180 s    |
+| Check for updates            | `omp [--profile p] update --check` (text)                  | 20 s     |
+
+The pinned omp prints `marketplace list`, `discover` and `update --check` as
+text only; Ompanel strips terminal escapes and reads the lines
+(`parseOmpMarketplaceList`, `parseOmpMarketplaceDiscover`,
+`parseOmpUpdateCheck` in `control.ts`).
+
+Every change goes through one confirmation dialog that shows the exact command
+line (`formatOmpCommandLine` over `ompPluginCommandArgs`, the same arguments
+the server runs). Install, enable and adding a marketplace also say the plugin
+or catalog is third-party code: a plugin runs with the user's permissions in
+every thread, and its tools reach the agent as `xd://` devices. A spec, name or
+source must be one argument with no control characters, surrounding space or
+leading `-` (`ompPluginTargetAllowed`), so it never reads as a flag. A command
+that exits non-zero reports only its exit code; run the shown command in a
+terminal to see OMP's message.
+
+**Reload plugins** sends OMP's builtin `/reload-plugins` as an RPC `prompt` to
+every running thread of the instance that is not mid-turn (OMP answers it
+locally, `agentInvoked: false`); busy threads are counted and left alone, and
+new threads load plugins when they start. Changes and reloads drop the
+instance's per-workspace command and skill catalog.
+
+The update check only reports. The sidecar is pinned, so a newer OMP reaches
+Ompanel with an app update; Ompanel never runs `omp update`.
+
+The MCP page carries the same third-party note for MCP servers, whose tools OMP
+mounts as `xd://` devices by default (`tools.xdev`).
+
+Settings → OMP → Skills lists `omp [--profile p] skill list <state dir> --json`:
+user skills, other agents' user skills and plugin skills, with OMP's `source`,
+the hidden flag and OMP's warnings. **Open in editor** opens the `SKILL.md` in
+the preferred editor. A repository's own skills show in its threads' `$` menu.
