@@ -15,6 +15,7 @@ import type {
   AnyProviderDriver,
   ProviderUsageReaderEnv,
 } from "@t3tools/provider-core/server/driver";
+import type { ProviderHostTools } from "@t3tools/provider-core/server/ProviderHostTools";
 
 export type BuiltInDriversEnv =
   | AcpRegistryDriverEnv
@@ -26,7 +27,8 @@ export type BuiltInDriversEnv =
   | OpenCodeDriverEnv
   | PiDriverEnv
   | OmpDriverEnv
-  | MuseDriverEnv;
+  | MuseDriverEnv
+  | ProviderHostTools;
 
 export const BUILT_IN_DRIVERS: ReadonlyArray<AnyProviderDriver<BuiltInDriversEnv>> = [
   CodexDriver,

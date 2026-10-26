@@ -22,6 +22,7 @@ import type {
   ExtensionUiRequest,
   ExtensionUiResponse,
 } from "../../contract/src/wire.generated.ts";
+import { OMP_HOST_TERMINAL_TOOL } from "./hostTools.ts";
 import { OMP_PROVIDER, type OmpRequestPlacement } from "./mapper.ts";
 
 type Event = ProviderAdapter.ProviderAdapterV2Event;
@@ -102,6 +103,8 @@ export interface OmpDialogAnswer {
 
 const APPROVAL_KIND_BY_TOOL: Record<string, ProviderRequestKind> = {
   bash: "command",
+  // The T3 terminal host tool that replaces `bash` (hostTools.ts).
+  [OMP_HOST_TERMINAL_TOOL]: "command",
   eval: "command",
   ssh: "command",
   python: "command",

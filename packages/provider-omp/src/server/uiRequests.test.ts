@@ -202,6 +202,18 @@ describe("OmpUiRequests", () => {
     });
   });
 
+  it("treats the T3 terminal host tool's approval as a command approval", () => {
+    const requests = new OmpUiRequests({ providerSessionId: SESSION_ID });
+    const opened = open(requests, {
+      id: "ui-terminal",
+      method: "select",
+      title: 'Allow tool: terminal\nArguments:\n{\n  "command": "sudo apt update"\n}',
+      options: ["Approve", "Deny"],
+    });
+    assert.strictEqual(opened.runtimeRequest.kind, "command");
+    assert.strictEqual(approval(opened.item).requestKind, "command");
+  });
+
   it.each([
     {
       tool: "bash",
