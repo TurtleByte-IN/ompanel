@@ -193,7 +193,15 @@ test("rewinds the thread to an earlier turn", async () => {
   await expect(userSaid(removed)).toBeVisible();
 
   // "Edit from here" on the last user message: OMP `branch`es before it on the live session.
-  await page.getByRole("button", { name: "Edit from here" }).last().click();
+  // A message gets its button only once the turn before it has a ready checkpoint, and the
+  // buttons stay disabled while the thread is still finishing a turn. Until every user message
+  // has one, `.last()` is an earlier message's button and the rewind drops one turn too many.
+  const editFromHere = page.getByRole("button", { name: "Edit from here" });
+  await expect(editFromHere).toHaveCount(
+    await page.locator('[data-user-message-body="true"]').count(),
+  );
+  await expect(editFromHere.last()).toBeEnabled();
+  await editFromHere.last().click();
   const confirm = page.getByRole("alertdialog", { name: "Edit from here?" });
   await confirm.getByRole("button", { name: "Revert and keep changes" }).click();
   await expect(userSaid(removed)).toHaveCount(0);
@@ -246,8 +254,14 @@ test("forks the thread from a response", async () => {
 });
 
 test("generates a commit message", async () => {
+  // The Commit item is disabled until the thread's git status shows a working-tree change; that
+  // status refreshes asynchronously after the turn that wrote g1.txt and after navigation.
+  // Clicking the disabled item opens nothing.
+  await expect(page.getByRole("button", { name: /^Changes \+1\b/ })).toBeVisible();
   await page.getByRole("button", { name: "Git action options" }).click();
-  await page.getByRole("menuitem", { name: "Commit" }).click();
+  const commit = page.getByRole("menuitem", { name: "Commit" });
+  await expect(commit).toBeEnabled();
+  await commit.click();
   const dialog = page.getByRole("dialog", { name: "Commit changes" });
   await expect(dialog.getByRole("textbox")).toHaveValue("");
   await screenshot("07a-commit-dialog");
