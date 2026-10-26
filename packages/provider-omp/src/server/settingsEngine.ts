@@ -213,11 +213,11 @@ export const makeOmpSettingsEngine = (deps: {
   });
 
   /**
-   * A stored credential is never replaced from here: `config set` would carry it in argv, which
-   * other local users can read, and an overlay would copy it to disk. Reset still clears it.
+   * A credential, stored or not, is never set from here: `config set` would carry it in argv,
+   * which other local users can read, and an overlay would copy it to disk. Reset still clears it.
    */
   const checkAssignable = (field: OmpSettingsField, value: unknown) =>
-    field.redacted
+    field.credential
       ? Effect.fail(new OmpSettingsError({ key: field.key, reason: "credential" }))
       : ompConfigValueFits(field.type, value)
         ? Effect.void

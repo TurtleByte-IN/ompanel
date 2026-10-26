@@ -16,6 +16,7 @@ import type {
   RpcWireCommands,
   ThinkingLevel,
 } from "../contract/src/wire.generated.ts";
+import { OMP_CREDENTIAL_SETTING_KEYS, OMP_SETTING_KEYS } from "./ompSettingKeys.generated.ts";
 
 /**
  * `omp config list|set|reset --json` output, from OMP's CLI JSON contract 1.0.0
@@ -165,18 +166,61 @@ export const ompConfigValueFits = (type: OmpConfigType, value: unknown): boolean
   }
 };
 
-/** One field per key, in OMP's settings-panel order. */
+const KNOWN_SETTINGS = new Set(OMP_SETTING_KEYS);
+const KNOWN_CREDENTIALS = new Set(OMP_CREDENTIAL_SETTING_KEYS);
+const SECRET_NOUNS = new Set([
+  "token",
+  "secret",
+  "secrets",
+  "password",
+  "passwd",
+  "passphrase",
+  "credential",
+  "credentials",
+  "cookie",
+  "cookies",
+]);
+const KEY_QUALIFIERS = new Set(["api", "access", "private", "secret", "client", "auth", "signing"]);
+
+/** Whether the key's last word names a secret: `searxng.token`, `hindsight.apiToken`, `x.llmApiKey`. */
+const namesSecret = (key: string): boolean => {
+  const words = key
+    .split(/[._-]/)
+    .flatMap((segment) => segment.match(/[A-Z]?[a-z0-9]+|[A-Z]+(?![a-z])/g) ?? [])
+    .map((word) => word.toLowerCase());
+  const last = words.at(-1) ?? "";
+  const before = words.at(-2) ?? "";
+  return (
+    SECRET_NOUNS.has(last) || ((last === "key" || last === "keys") && KEY_QUALIFIERS.has(before))
+  );
+};
+
+/**
+ * Fail-closed: a key is a credential unless the pinned OMP registers it without a credential
+ * marker. OMP's `config list` only redacts credentials that hold a value, so an unset one would
+ * otherwise look like plain text. Text and record keys named like a secret count too.
+ */
+export const isOmpCredentialKey = (key: string, type: OmpConfigType): boolean =>
+  KNOWN_CREDENTIALS.has(key) ||
+  !KNOWN_SETTINGS.has(key) ||
+  ((type === "string" || type === "record") && namesSecret(key));
+
+/** One field per key, in OMP's settings-panel order. A credential's value is never carried. */
 export const buildOmpSettingsForm = (list: OmpConfigList): OmpSettingsForm => ({
-  fields: Object.entries(list).map(([key, entry]): OmpSettingsField => ({
-    key,
-    group: key.split(".", 1)[0] ?? key,
-    type: entry.type,
-    description: entry.description,
-    source: entry.source,
-    ...(entry.redacted === true || entry.value === undefined ? {} : { value: entry.value }),
-    redacted: entry.redacted === true,
-    readOnly: entry.source === "env",
-    launchScoped: Object.hasOwn(OMP_LAUNCH_SCOPED_KEYS, key),
-    threadOverride: threadOverrideRoute(key),
-  })),
+  fields: Object.entries(list).map(([key, entry]): OmpSettingsField => {
+    const credential = entry.redacted === true || isOmpCredentialKey(key, entry.type);
+    return {
+      key,
+      group: key.split(".", 1)[0] ?? key,
+      type: entry.type,
+      description: entry.description,
+      source: entry.source,
+      ...(credential || entry.value === undefined ? {} : { value: entry.value }),
+      redacted: entry.redacted === true,
+      credential,
+      readOnly: entry.source === "env",
+      launchScoped: Object.hasOwn(OMP_LAUNCH_SCOPED_KEYS, key),
+      threadOverride: threadOverrideRoute(key),
+    };
+  }),
 });

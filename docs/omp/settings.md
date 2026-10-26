@@ -17,11 +17,16 @@ and `omp config reset`, using OMP's CLI JSON contract 1.0.0.
   `config list` rather than trusting the `set` output (oh-my-pi#23).
 - There is no `config get` anywhere in Ompanel. It prints credentials unmasked;
   `config list` withholds them (`redacted: true`, no `value`).
-- A stored credential (a redacted field) is never replaced through the engine.
-  `config set` takes the value in argv, which other local users can read, and
-  an overlay would copy it to disk. It can still be reset. OMP marks a
-  credential only once it holds a value, so an unset credential key still
-  looks like a plain string field.
+- A credential is never set through the engine, stored or not. `config set`
+  takes the value in argv, which other local users can read, and an overlay
+  would copy it to disk. A credential can still be reset, and its value never
+  reaches the client. OMP redacts a credential only once it holds a value, so
+  the engine does not trust `config list` for this. It fails closed: a key is
+  a credential unless the pinned OMP registers it without a credential marker
+  (`credential: true` or `ui.secret`). Text and record keys whose last word
+  names a secret (`…Token`, `…Password`, `…ApiKey`) count as well. The
+  registered keys and credentials live in `src/ompSettingKeys.generated.ts`,
+  generated from the pinned tag's settings registry.
 
 ## Launch-scoped keys
 

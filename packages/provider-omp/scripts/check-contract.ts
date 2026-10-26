@@ -1,9 +1,8 @@
 #!/usr/bin/env node
 /**
- * Checks that `contract/` is a byte-for-byte copy of `packages/rpc-contract` at the OMP fork tag
- * pinned in `omp.lock`, and that the lock's commit and contract version match that tag.
- * `--write` replaces `contract/` with the tag's files instead. Needs only `git` and network
- * access to the public fork; no credentials.
+ * Checks `contract/` and `src/ompSettingKeys.generated.ts` against the OMP fork tag pinned in
+ * `omp.lock` (byte for byte), and the lock's commit and contract version against that tag.
+ * `--write` regenerates both from the tag. Needs only `git` and network access; no credentials.
  */
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -27,6 +26,13 @@ import {
   TAG_CONTRACT_DIR,
   VENDORED_CONTRACT_DIR,
 } from "./contractMatch.ts";
+import {
+  extractOmpSettingKeys,
+  OMP_ALL_SETTINGS_PATH,
+  renderOmpSettingKeysModule,
+  SETTING_KEYS_MODULE_PATH,
+  settingsModulePaths,
+} from "./ompSettingKeys.ts";
 
 export class ContractCheckError extends Schema.TaggedError<ContractCheckError>()(
   "ContractCheckError",
@@ -129,7 +135,19 @@ const readTagContract = Effect.fn("readTagContract")(function* (lock: OmpLockFil
     "cli-contract.json",
     decodeCliManifest,
   );
-  return { commit, contract, cliContract, files };
+  // Setting ids and credential markers, from the registry source the sidecar is built from.
+  const allSettings = text(yield* git(dir, ["show", `${lock.tag}:${OMP_ALL_SETTINGS_PATH}`]));
+  const moduleSources: Array<string> = [];
+  for (const modulePath of settingsModulePaths(allSettings)) {
+    moduleSources.push(text(yield* git(dir, ["show", `${lock.tag}:${modulePath}`])));
+  }
+  return {
+    commit,
+    contract,
+    cliContract,
+    files,
+    settingKeys: extractOmpSettingKeys(moduleSources),
+  };
 }, Effect.scoped);
 
 const readVendoredContract = Effect.fn("readVendoredContract")(function* (dir: string) {
@@ -155,6 +173,13 @@ const checkContract = Effect.fn("checkContract")(function* (write: boolean) {
   const vendoredDir = path.join(packageDir, VENDORED_CONTRACT_DIR);
   const tag = yield* readTagContract(lock);
 
+  const settingKeysPath = path.join(packageDir, SETTING_KEYS_MODULE_PATH);
+  const settingKeysModule = renderOmpSettingKeysModule(tag.settingKeys, {
+    repository: lock.repository,
+    tag: lock.tag,
+    commit: tag.commit,
+  });
+
   if (write) {
     yield* fileSystem.remove(vendoredDir, { recursive: true, force: true });
     for (const [relativePath, bytes] of tag.files) {
@@ -162,14 +187,23 @@ const checkContract = Effect.fn("checkContract")(function* (write: boolean) {
       yield* fileSystem.makeDirectory(path.dirname(target), { recursive: true });
       yield* fileSystem.writeFile(target, bytes);
     }
-    yield* Console.log(`Vendored ${tag.files.size} contract files from ${lock.tag}.`);
+    yield* fileSystem.writeFileString(settingKeysPath, settingKeysModule);
+    yield* Console.log(
+      `Vendored ${tag.files.size} contract files and ${tag.settingKeys.settings.length} setting keys from ${lock.tag}.`,
+    );
   }
 
+  const vendoredSettingKeys = (yield* fileSystem.exists(settingKeysPath))
+    ? yield* fileSystem.readFileString(settingKeysPath)
+    : undefined;
   const problems = [
     ...lockProblems(lock, tag),
     ...compareContractFiles(tag.files, yield* readVendoredContract(vendoredDir)).map(
       describeMismatch,
     ),
+    ...(vendoredSettingKeys === settingKeysModule
+      ? []
+      : [`${SETTING_KEYS_MODULE_PATH} differs from the tag's settings registry`]),
   ];
   if (problems.length > 0) {
     return yield* new ContractCheckError({
@@ -181,7 +215,7 @@ const checkContract = Effect.fn("checkContract")(function* (write: boolean) {
     });
   }
   yield* Console.log(
-    `contract/ matches ${lock.repository}@${lock.tag} (${lock.commit}), contract ${lock.contract.version}, CLI contract ${lock.cliContract.version}.`,
+    `contract/ and ${SETTING_KEYS_MODULE_PATH} match ${lock.repository}@${lock.tag} (${lock.commit}), contract ${lock.contract.version}, CLI contract ${lock.cliContract.version}.`,
   );
 });
 

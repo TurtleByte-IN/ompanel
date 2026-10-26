@@ -174,6 +174,8 @@ export default defineConfig({
       "apps/mobile/uniwind-types.d.ts",
       // Byte-for-byte copy of the pinned OMP fork's RPC contract (contract:check).
       "packages/provider-omp/contract/**",
+      // Generated from the pinned fork's settings registry; contract:check compares the bytes.
+      "packages/provider-omp/src/ompSettingKeys.generated.ts",
       // Vendored and generated C.
       "apps/mobile/modules/t3-highlights/Vendor/**",
       "apps/mobile/modules/t3-highlights/cpp/generated/**",
@@ -207,6 +209,7 @@ export default defineConfig({
       "apps/mobile/ios/**",
       "apps/mobile/uniwind-types.d.ts",
       "packages/provider-omp/contract/**",
+      "packages/provider-omp/src/ompSettingKeys.generated.ts",
     ],
     plugins: ["eslint", "oxc", "react", "unicorn", "typescript"],
     jsPlugins: ["./oxlint-plugin-t3code/index.ts", "@shadcn/lint"],

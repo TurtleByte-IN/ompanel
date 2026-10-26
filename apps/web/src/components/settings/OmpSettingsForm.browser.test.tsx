@@ -28,7 +28,19 @@ const FORM = buildOmpSettingsForm({
     source: "default",
     value: "off",
   },
-  "exa.apiKey": { type: "string", description: "Exa API key.", source: "global", redacted: true },
+  "hindsight.apiToken": {
+    type: "string",
+    description: "Hindsight API token.",
+    source: "global",
+    redacted: true,
+  },
+  // Unredacted by OMP, still a credential in the pinned registry.
+  "searxng.basicPassword": {
+    type: "string",
+    description: "SearXNG password.",
+    source: "default",
+    value: "hunter2",
+  },
   "web_search.enabled": {
     type: "boolean",
     description: "Enable web search.",
@@ -100,18 +112,23 @@ describe("OmpSettingsForm", () => {
     expect(onWrite).not.toHaveBeenCalled();
   });
 
-  it("keeps a stored credential hidden and only offers to reset it", async () => {
+  it("masks credentials, stored or not, and only offers to reset a stored one", async () => {
     const onReset = vi.fn();
     await using screen = await render(
       <OmpSettingsForm form={FORM} scope="global" onWrite={vi.fn()} onReset={onReset} />,
     );
 
-    const secret = screen.getByLabelText("exa.apiKey");
-    await expect.element(secret).toBeDisabled();
-    expect(secret.element()).toHaveProperty("type", "password");
-    expect(secret.element()).toHaveProperty("value", "");
+    for (const key of ["hindsight.apiToken", "searxng.basicPassword"]) {
+      const secret = screen.getByLabelText(key);
+      await expect.element(secret).toBeDisabled();
+      expect(secret.element()).toHaveProperty("type", "password");
+      expect(secret.element()).toHaveProperty("value", "");
+    }
+    // OMP reported the unset password as plain text; the form still never shows it.
+    expect(row("searxng.basicPassword").textContent).not.toContain("hunter2");
+    expect(row("searxng.basicPassword").querySelector("button")).toBeNull();
 
-    await userEvent.click(row("exa.apiKey").querySelector("button")!);
-    expect(onReset).toHaveBeenCalledExactlyOnceWith("exa.apiKey");
+    await userEvent.click(row("hindsight.apiToken").querySelector("button")!);
+    expect(onReset).toHaveBeenCalledExactlyOnceWith("hindsight.apiToken");
   });
 });

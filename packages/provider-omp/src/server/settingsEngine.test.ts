@@ -31,7 +31,8 @@ const SETTINGS: Readonly<Record<string, FakeSetting>> = {
   "compaction.thresholdPercent": { type: "number", default: 80 },
   modelRoles: { type: "record", default: {} },
   "memory.backend": { type: "enum", default: "off" },
-  "exa.apiKey": { type: "string", credential: true },
+  "hindsight.apiToken": { type: "string", credential: true },
+  "newfeature.endpoint": { type: "string", default: "https://example.test" },
   "web_search.enabled": { type: "boolean", default: true, env: false },
 };
 
@@ -186,7 +187,7 @@ describe("OmpSettingsEngine.read", () => {
   it.effect("builds one field per `config list` key with its value, type and source", () =>
     Effect.gen(function* () {
       const omp = fakeOmpConfig({
-        global: { "exa.apiKey": "sk-secret", "memory.backend": "local" },
+        global: { "hindsight.apiToken": "sk-secret", "memory.backend": "local" },
       });
       const form = yield* withEngine(omp, fakeThreads([]), (engine) => engine.read(TARGET));
 
@@ -206,6 +207,7 @@ describe("OmpSettingsEngine.read", () => {
         source: "default",
         value: 80,
         redacted: false,
+        credential: false,
         readOnly: false,
         launchScoped: false,
         threadOverride: "overlay",
@@ -216,9 +218,14 @@ describe("OmpSettingsEngine.read", () => {
       assert.strictEqual(byKey.get("tools.approvalMode")?.threadOverride, "none");
       assert.strictEqual(byKey.get("compaction.enabled")?.threadOverride, "rpc");
 
-      const credential = byKey.get("exa.apiKey");
-      assert.isTrue(credential?.redacted);
-      assert.isFalse(credential !== undefined && "value" in credential);
+      const stored = byKey.get("hindsight.apiToken");
+      assert.isTrue(stored?.redacted);
+      assert.isTrue(stored?.credential);
+      assert.isFalse(stored !== undefined && "value" in stored);
+      // Unknown to the pinned registry: treated as a credential, its value withheld.
+      const unknown = byKey.get("newfeature.endpoint");
+      assert.isTrue(unknown?.credential);
+      assert.isFalse(unknown !== undefined && "value" in unknown);
     }),
   );
 
@@ -355,43 +362,53 @@ describe("OmpSettingsEngine.write", () => {
     }),
   );
 
-  it.effect("never runs `config get` and never puts a stored credential on a command line", () =>
+  it.effect("never runs `config get` and never takes a credential, stored or not", () =>
     Effect.gen(function* () {
-      const omp = fakeOmpConfig();
+      const omp = fakeOmpConfig({ global: { "hindsight.apiToken": "sk-old" } });
       const threads = fakeThreads(OPEN_THREADS);
-      const [first, replace, override, cleared] = yield* withEngine(omp, threads, (engine) =>
-        Effect.all([
-          // Unset, OMP cannot tell it is a credential yet; once stored it comes back redacted.
-          engine.write(TARGET, { key: "exa.apiKey", value: "sk-first", scope: "global" }),
-          engine
-            .write(TARGET, { key: "exa.apiKey", value: "sk-second", scope: "global" })
-            .pipe(Effect.flip),
-          engine
-            .setThreadOverride(TARGET, "thread-app", { key: "exa.apiKey", value: "sk-third" })
-            .pipe(Effect.flip),
-          engine.reset(TARGET, { key: "exa.apiKey", scope: "global" }),
-        ]),
+      const [replace, override, cleared, unsetWrite, unknownWrite] = yield* withEngine(
+        omp,
+        threads,
+        (engine) =>
+          Effect.all([
+            engine
+              .write(TARGET, { key: "hindsight.apiToken", value: "sk-new", scope: "global" })
+              .pipe(Effect.flip),
+            engine
+              .setThreadOverride(TARGET, "thread-app", {
+                key: "hindsight.apiToken",
+                value: "sk-thread",
+              })
+              .pipe(Effect.flip),
+            engine.reset(TARGET, { key: "hindsight.apiToken", scope: "global" }),
+            // Unset, OMP reports it as plain text; the pinned registry still marks it.
+            engine
+              .write(TARGET, { key: "hindsight.apiToken", value: "sk-first", scope: "project" })
+              .pipe(Effect.flip),
+            // A key the pinned OMP does not register is not known to be safe.
+            engine
+              .write(TARGET, { key: "newfeature.endpoint", value: "x", scope: "global" })
+              .pipe(Effect.flip),
+          ]),
       );
 
-      const stored = first.form.fields.find((f) => f.key === "exa.apiKey");
-      assert.isTrue(stored?.redacted);
-      assert.isFalse(JSON.stringify(first).includes("sk-first"));
-      assert.strictEqual(replace._tag === "OmpSettingsError" && replace.reason, "credential");
-      assert.strictEqual(override._tag === "OmpSettingsError" && override.reason, "credential");
-      const after = cleared.form.fields.find((f) => f.key === "exa.apiKey");
+      for (const error of [replace, override, unsetWrite, unknownWrite]) {
+        assert.strictEqual(error._tag === "OmpSettingsError" && error.reason, "credential");
+      }
+      const after = cleared.form.fields.find((f) => f.key === "hindsight.apiToken");
       assert.isFalse(after?.redacted);
+      assert.isTrue(after?.credential);
       assert.deepStrictEqual(omp.launches.map(configAction), [
-        "list",
-        "set",
-        "list",
         "list",
         "list",
         "list",
         "reset",
         "list",
+        "list",
+        "list",
       ]);
       assert.isFalse(omp.launches.some((args) => args.includes("get")));
-      assert.isFalse(omp.launches.some((args) => args.some((arg) => arg.includes("sk-second"))));
+      assert.isFalse(omp.launches.some((args) => args.some((arg) => arg.startsWith("sk-"))));
       assert.strictEqual(threads.overlays.get("thread-app"), EMPTY_OVERLAY);
     }),
   );

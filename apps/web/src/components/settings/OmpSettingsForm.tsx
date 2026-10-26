@@ -81,6 +81,17 @@ function FieldControl({
   readonly field: OmpSettingsField;
   readonly onWrite: (value: unknown) => void;
 }) {
+  // Ompanel never takes a credential: `omp config set` would carry it in argv.
+  if (field.credential) {
+    return (
+      <Input
+        aria-label={field.key}
+        type="password"
+        disabled
+        placeholder={field.redacted ? "Stored" : "Not set"}
+      />
+    );
+  }
   switch (field.type) {
     case "boolean":
       return (
@@ -106,10 +117,7 @@ function FieldControl({
       );
     case "string":
     case "enum":
-      // Replacing a stored credential would pass it to `omp config set` in argv.
-      return field.redacted ? (
-        <Input aria-label={field.key} type="password" disabled placeholder="Stored" />
-      ) : (
+      return (
         <DraftInput
           aria-label={field.key}
           disabled={field.readOnly}
@@ -164,10 +172,10 @@ export function OmpSettingsForm({ form, scope, onWrite, onReset }: OmpSettingsFo
                 <p className="text-muted-foreground text-xs">
                   Set by an environment variable; change it where OMP is launched.
                 </p>
-              ) : field.redacted ? (
+              ) : field.credential ? (
                 <p className="text-muted-foreground text-xs">
-                  Stored credential. Replace it with OMP sign-in or an environment variable, or
-                  reset it.
+                  Credential. Set it with OMP sign-in or an environment variable; Reset clears a
+                  stored one.
                 </p>
               ) : null}
             </div>

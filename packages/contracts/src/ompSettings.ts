@@ -48,6 +48,11 @@ export const OmpSettingsField = Schema.Struct({
   value: Schema.optionalKey(Schema.Unknown),
   /** A configured credential: OMP withholds its value. */
   redacted: Schema.Boolean,
+  /**
+   * A credential, set or not: its value is never shown, and Ompanel only resets it. Keys the
+   * pinned OMP does not register count as credentials.
+   */
+  credential: Schema.Boolean,
   /** An environment variable supplies the value; Ompanel cannot change it. */
   readOnly: Schema.Boolean,
   /** A running thread reads it only at startup. */
