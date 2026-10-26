@@ -97,7 +97,7 @@ function probeFailureMessage(failure: Extract<OmpProbeResult, { status: "failed"
  * `get_login_providers` lists OAuth providers only, so API keys and environment credentials are
  * invisible here: no signed-in OAuth provider means "unknown", never "unauthenticated".
  */
-export function ompAuthFromLoginProviders(
+function ompAuthFromLoginProviders(
   providers: Extract<OmpProbeResult, { status: "ready" }>["loginProviders"],
 ): ServerProviderAuth {
   const signedIn = (providers ?? []).filter((provider) => provider.authenticated);
