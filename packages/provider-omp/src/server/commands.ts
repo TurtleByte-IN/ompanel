@@ -24,6 +24,7 @@ import type {
   OmpSkillList,
 } from "./control.ts";
 import type { OmpSidecarError } from "./sidecar.ts";
+import { ompBuiltinAllowed, ompReportedBuiltins } from "./toolGuards.ts";
 
 /** How long a discovered command list or skill list is reused for one directory. */
 export const OMP_COMMAND_CATALOG_TTL_MS = 60_000;
@@ -31,7 +32,10 @@ export const OMP_COMMAND_CATALOG_TTL_MS = 60_000;
 const MAX_PUBLISHED_WORKSPACES = 16;
 
 /** The fields of `AvailableSlashCommand` the menu uses, from the RPC reply or a pushed frame. */
-type AvailableCommand = Pick<OmpAvailableSlashCommand, "name" | "source" | "description"> & {
+type AvailableCommand = Pick<
+  OmpAvailableSlashCommand,
+  "name" | "source" | "description" | "aliases"
+> & {
   readonly input?: { readonly hint?: string | undefined } | undefined;
 };
 
@@ -50,16 +54,23 @@ const GOAL_COMMAND: ServerProviderSlashCommand = {
   input: { hint: "[objective | show | pause | resume | drop]" },
 };
 
-/** OMP's command list as menu entries: skill commands dropped, first of each name kept, `/goal` added. */
+/**
+ * OMP's command list as menu entries: skill commands and refused builtins dropped, first of each
+ * name kept, `/goal` added.
+ */
 export const ompSlashCommands = (
   commands: ReadonlyArray<AvailableCommand>,
 ): ReadonlyArray<ServerProviderSlashCommand> => {
   const seen = new Set<string>();
   const result: Array<ServerProviderSlashCommand> = [];
+  const reported = ompReportedBuiltins(commands);
   for (const command of commands) {
     const name = nonEmpty(command.name);
     if (name === undefined || command.source === "skill" || seen.has(name)) continue;
     seen.add(name);
+    // Builtins the adapter refuses as prompts (toolGuards.ts) are not offered; Ompanel runs
+    // `/goal` itself.
+    if (name !== GOAL_COMMAND.name && !ompBuiltinAllowed(name, "", reported)) continue;
     const description = nonEmpty(command.description);
     const hint = nonEmpty(command.input?.hint);
     result.push({

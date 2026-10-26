@@ -247,7 +247,8 @@ export function buildThreadActionMenuItems(
               },
               {
                 id: "omp-share-live" as const,
-                label: "Share live…",
+                // The link reaches the session through OMP's relay, never T3's pairing (PRD §9).
+                label: "Share live (outside pairing)…",
                 icon: "radio",
                 disabled: !state.canOperate,
               },

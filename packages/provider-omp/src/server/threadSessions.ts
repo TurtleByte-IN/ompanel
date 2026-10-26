@@ -7,12 +7,18 @@ import type { ProviderSessionId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Semaphore from "effect/Semaphore";
 import type * as Scope from "effect/Scope";
 
-import type { OmpThreadRpcCommand } from "../configForm.ts";
+import { OMP_GUARDED_TOOL_KEYS, type OmpThreadRpcCommand } from "../configForm.ts";
 import { OMP_EMPTY_OVERLAY, ompThreadOverlayPath } from "./launch.ts";
 import type { OmpRpcProcess } from "./rpcProcess.ts";
-import { type OmpThreadSettingsHost, OmpThreadHostError } from "./settingsEngine.ts";
+import {
+  type OmpThreadSettingsHost,
+  OmpThreadHostError,
+  ompOverlayValue,
+  ompOverlayWith,
+} from "./settingsEngine.ts";
 
 /** How long a session-only settings command may take before the override is reported failed. */
 const THREAD_COMMAND_TIMEOUT_MS = 10_000;
@@ -104,22 +110,56 @@ export const readOmpThreadOverlay = Effect.fn("readOmpThreadOverlay")(function* 
   );
 });
 
-/** Replaces the thread's overlay whole, owner-only. */
+/** One writer per overlay file at a time, across the adapter and the settings engine. */
+const overlayLocks = new Map<string, Semaphore.Semaphore>();
+const overlayLock = (target: string) => {
+  let lock = overlayLocks.get(target);
+  if (lock === undefined) {
+    lock = Semaphore.makeUnsafe(1);
+    overlayLocks.set(target, lock);
+  }
+  return lock;
+};
+
+/**
+ * Replaces the thread's overlay whole, owner-only, under the overlay's lock. Only the adapter
+ * (`ownsGuardKeys`) changes the browser and computer-use keys (toolGuards.ts): any other writer's
+ * content gets them from the file on disk, so a write based on an older read cannot drop a guard.
+ */
 export const writeOmpThreadOverlay = Effect.fn("writeOmpThreadOverlay")(function* (
   threadsDir: string,
   threadId: string,
   content: string,
+  options: { readonly ownsGuardKeys?: boolean } = {},
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const target = ompThreadOverlayPath(path, threadsDir, threadId);
   const staging = `${target}.tmp`;
-  // A rename swaps the file whole, so OMP's live reload never reads half an overlay.
-  yield* fileSystem.makeDirectory(path.dirname(target), { recursive: true, mode: 0o700 }).pipe(
-    Effect.andThen(fileSystem.writeFileString(staging, content, { mode: 0o600 })),
-    Effect.andThen(fileSystem.rename(staging, target)),
-    Effect.mapError(() => new OmpThreadHostError({ threadId, reason: "io" })),
-  );
+  const write = Effect.gen(function* () {
+    let next = content;
+    if (options.ownsGuardKeys !== true) {
+      // Only an absent file reads as empty; any other read error fails the write rather than
+      // dropping both guards.
+      const current = yield* fileSystem.readFileString(target).pipe(
+        Effect.catchIf(
+          (error) => error._tag === "PlatformError" && error.reason._tag === "NotFound",
+          () => Effect.succeed(OMP_EMPTY_OVERLAY),
+        ),
+      );
+      for (const key of OMP_GUARDED_TOOL_KEYS) {
+        const kept = ompOverlayValue(current, key);
+        if (ompOverlayValue(next, key) !== kept) next = yield* ompOverlayWith(next, key, kept);
+      }
+    }
+    // A rename swaps the file whole, so OMP's live reload never reads half an overlay.
+    yield* fileSystem.makeDirectory(path.dirname(target), { recursive: true, mode: 0o700 });
+    yield* fileSystem.writeFileString(staging, next, { mode: 0o600 });
+    yield* fileSystem.rename(staging, target);
+  });
+  yield* overlayLock(target)
+    .withPermits(1)(write)
+    .pipe(Effect.mapError(() => new OmpThreadHostError({ threadId, reason: "io" })));
 });
 
 /** The settings engine's view of this instance's threads; overlays live under `threadsDir`. */

@@ -383,6 +383,7 @@ const decodeSkillList = Schema.decodeEffect(Schema.fromJsonString(OmpSkillList))
 const AvailableSlashCommandSchema = Schema.Struct({
   name: Schema.String,
   source: Schema.String,
+  aliases: Schema.optionalKey(Schema.Array(Schema.String)),
   description: Schema.optionalKey(Schema.String),
   input: Schema.optionalKey(Schema.Struct({ hint: Schema.optionalKey(Schema.String) })),
 });

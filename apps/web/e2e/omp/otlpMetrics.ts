@@ -13,6 +13,8 @@ export interface OtlpMetricsReceiver {
   readonly url: string;
   /** Every data point received so far, in arrival order. */
   readonly points: () => ReadonlyArray<OtlpMetricPoint>;
+  /** Each export request as received (request line, headers, body), for the secrets scan. */
+  readonly exports: () => ReadonlyArray<string>;
   readonly close: () => Promise<void>;
 }
 
@@ -46,12 +48,15 @@ const valueText = (value: OtlpValue): string =>
 
 export const startOtlpMetricsReceiver = async (): Promise<OtlpMetricsReceiver> => {
   const received: Array<OtlpMetricPoint> = [];
+  const exports: Array<string> = [];
   const server = NodeHttp.createServer((request, response) => {
     const chunks: Array<Buffer> = [];
     request.on("data", (chunk: Buffer) => chunks.push(chunk));
     request.on("end", () => {
+      const text = Buffer.concat(chunks).toString("utf8");
+      exports.push(`${request.method} ${request.url}\n${request.rawHeaders.join("\n")}\n\n${text}`);
       try {
-        const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as OtlpExport;
+        const body = JSON.parse(text) as OtlpExport;
         for (const resource of body.resourceMetrics ?? []) {
           for (const scope of resource.scopeMetrics ?? []) {
             for (const metric of scope.metrics ?? []) {
@@ -88,6 +93,7 @@ export const startOtlpMetricsReceiver = async (): Promise<OtlpMetricsReceiver> =
   return {
     url: `http://127.0.0.1:${port}/v1/metrics`,
     points: () => [...received],
+    exports: () => [...exports],
     close: () => {
       const closed = Promise.withResolvers<void>();
       server.closeAllConnections();

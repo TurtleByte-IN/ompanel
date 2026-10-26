@@ -19,12 +19,7 @@ import * as References from "effect/References";
 import * as Stream from "effect/Stream";
 
 import { makeOmpAdapter } from "./adapter.ts";
-import {
-  OMP_EMPTY_OVERLAY,
-  ompApprovalModeFor,
-  ompArgsApprovalMode,
-  ompSessionArgs,
-} from "./launch.ts";
+import { ompApprovalModeFor, ompArgsApprovalMode, ompSessionArgs } from "./launch.ts";
 import { makeOmpPidfiles } from "./pidfiles.ts";
 import { ompStateDirs, startOmpSessionProcess } from "./session.ts";
 import {
@@ -433,7 +428,11 @@ posixOnly("OmpAdapter.openSession", () => {
             work,
           ]);
           assert.strictEqual(state.argv().cwd, NodeFS.realpathSync(work));
-          assert.strictEqual(NodeFS.readFileSync(overlayPath, "utf8"), OMP_EMPTY_OVERLAY);
+          // Supervised: the browser and computer-use preludes are pinned off (toolGuards.ts).
+          assert.strictEqual(
+            NodeFS.readFileSync(overlayPath, "utf8"),
+            '# Per-thread OMP settings written by Ompanel.\n{"browser":{"enabled":false},"computer":{"enabled":false}}\n',
+          );
           assert.strictEqual(NodeFS.statSync(overlayPath).mode & 0o777, 0o600);
           // After the handshake the session subscribes to the subagent frames that feed the
           // agents panel, enables OMP's ask dialog and checks that its session is a fresh one.
@@ -494,8 +493,10 @@ posixOnly("OmpAdapter.openSession", () => {
 
         const events = yield* Effect.gen(function* () {
           const session = yield* adapter.openSession(input);
-          assert.strictEqual(NodeFS.readFileSync(overlayPath, "utf8"), overrides);
-          assert.strictEqual(yield* host.readOverlay("thread/1"), overrides);
+          const guarded =
+            '# Per-thread OMP settings written by Ompanel.\n{"memory":{"backend":"local"},"browser":{"enabled":false},"computer":{"enabled":false}}\n';
+          assert.strictEqual(NodeFS.readFileSync(overlayPath, "utf8"), guarded);
+          assert.strictEqual(yield* host.readOverlay("thread/1"), guarded);
           assert.deepStrictEqual(yield* host.openThreads, [
             { threadId: "thread/1", cwd: state.dir },
           ]);

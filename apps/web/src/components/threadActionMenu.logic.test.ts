@@ -104,4 +104,11 @@ describe("the OMP section", () => {
     expect(threadActionRequiresOperate("omp-branch-tree")).toBe(false);
     expect(threadActionRequiresOperate("omp-share-live")).toBe(true);
   });
+
+  it("flags Share live as outside T3 pairing where it is offered", () => {
+    const live = ompSection({ ...baseState, isOmpThread: true })?.children?.find(
+      (item) => item.id === "omp-share-live",
+    );
+    expect(live?.label).toBe("Share live (outside pairing)…");
+  });
 });

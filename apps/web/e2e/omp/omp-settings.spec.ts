@@ -136,7 +136,7 @@ test("/wt from a thread creates a T3 worktree", async () => {
 });
 
 test("signs in through a fake login provider", async () => {
-  const { page, stack, screenshot } = suite.current();
+  const { page, stack, screenshot, untraced } = suite.current();
   const signIn = stack.signIn!;
   await openPage(page, "/settings/providers");
   await page.getByRole("button", { name: "Show providers" }).click();
@@ -150,17 +150,20 @@ test("signs in through a fake login provider", async () => {
   await expect(flow.getByRole("button", { name: "Open sign-in page" })).toBeVisible();
   await expect(flow.getByRole("textbox", { name: "Paste the authorization code" })).toBeVisible();
   await screenshot("03a-sign-in-started");
-  const vendorPage = page.context().waitForEvent("page");
-  await flow.getByRole("button", { name: "Open sign-in page" }).click();
-  const vendor = await vendorPage;
-  await vendor.waitForLoadState();
-  expect(vendor.url().startsWith(`${signIn.vendor.url}/authorize`)).toBe(true);
-  const code = (await vendor.locator("[data-fake-vendor-code]").textContent()) ?? "";
-  await vendor.screenshot({ path: NodePath.join(ARTIFACTS, "03b-fake-vendor-page.png") });
-  await vendor.close();
-
-  await flow.getByRole("textbox", { name: "Paste the authorization code" }).fill(code);
-  await flow.getByRole("button", { name: "Submit" }).click();
+  // The vendor's page shows the one-time code and the user pastes it: neither reaches the
+  // uploaded trace or screenshots (PRD §9; the secrets scan covers traces).
+  const code = await untraced(async () => {
+    const vendorPage = page.context().waitForEvent("page");
+    await flow.getByRole("button", { name: "Open sign-in page" }).click();
+    const vendor = await vendorPage;
+    await vendor.waitForLoadState();
+    expect(vendor.url().startsWith(`${signIn.vendor.url}/authorize`)).toBe(true);
+    const shown = (await vendor.locator("[data-fake-vendor-code]").textContent()) ?? "";
+    await vendor.close();
+    await flow.getByRole("textbox", { name: "Paste the authorization code" }).fill(shown);
+    await flow.getByRole("button", { name: "Submit" }).click();
+    return shown;
+  });
   await expect(
     page.getByRole("status").filter({ hasText: `Signed in to ${FAKE_SIGN_IN_PROVIDER.id}.` }),
   ).toBeVisible();

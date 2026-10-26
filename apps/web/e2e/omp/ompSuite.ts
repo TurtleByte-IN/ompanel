@@ -45,6 +45,11 @@ export interface OmpSuite {
   /** The open thread's id, from the URL. */
   readonly threadId: () => string;
   readonly threadProcesses: (threadId: string) => ReadonlyArray<OmpProcess>;
+  /**
+   * Runs `run` with tracing paused: a step the user performs with a secret (copying a sign-in
+   * code from the vendor's page into Ompanel) stays out of the uploaded trace, as pairing does.
+   */
+  readonly untraced: <T>(run: () => Promise<T>) => Promise<T>;
 }
 
 const slug = (title: string) =>
@@ -54,6 +59,7 @@ const slug = (title: string) =>
     .replace(/^-|-$/g, "");
 
 const STOP = '[aria-label="Stop generation"]';
+const TRACING = { screenshots: true, snapshots: true, sources: true } as const;
 
 const makeSuite = (stack: OmpStack, page: Page, artifacts: string): OmpSuite => {
   const send = async (text: string) => {
@@ -164,6 +170,24 @@ const makeSuite = (stack: OmpStack, page: Page, artifacts: string): OmpSuite => 
     threadId: () => decodeURIComponent(new URL(page.url()).pathname.split("/").at(-1) ?? ""),
     threadProcesses: (threadId) =>
       stack.ompProcesses().filter((entry) => entry.threadId === threadId),
+    untraced: async (run) => {
+      const tracing = page.context().tracing;
+      const path = NodePath.join(artifacts, `trace-${slug(test.info().title)}-before.zip`);
+      await tracing.stopChunk({ path });
+      await test.info().attach("trace before the untraced step", {
+        path,
+        contentType: "application/zip",
+      });
+      // A chunk carries every resource the tracing session has seen, so stop the session: a page
+      // loaded meanwhile (the vendor's code page) then reaches no later chunk.
+      await tracing.stop();
+      try {
+        return await run();
+      } finally {
+        await tracing.start(TRACING);
+        await tracing.startChunk({ title: `${test.info().title} (after the untraced step)` });
+      }
+    },
   };
 };
 
@@ -195,7 +219,7 @@ export const useOmpSuite = (options: {
     });
     await page.evaluate((url) => window.location.assign(url), stack.pairingUrl);
     await reloaded;
-    await context.tracing.start({ screenshots: true, snapshots: true, sources: true });
+    await context.tracing.start(TRACING);
   });
 
   test.beforeEach(async () => {
@@ -214,7 +238,19 @@ export const useOmpSuite = (options: {
     }
     await context?.tracing.stop();
     await context?.close();
-    await suite?.stack.stop();
+    // What CI uploads: this suite's screenshots, traces and server log, and Playwright's results.
+    const stopped = await suite?.stack.stop({
+      uploaded: [options.artifacts, test.info().project.outputDir],
+    });
+    // PRD §9: no secret the run handled reaches the server's logs, traces, metric exports,
+    // uploaded artifacts or OMP's thread state.
+    if (stopped !== undefined) {
+      NodeFS.writeFileSync(
+        NodePath.join(options.artifacts, "leaked-secrets.json"),
+        `${JSON.stringify(stopped.leakedSecrets, null, 2)}\n`,
+      );
+      expect(stopped.leakedSecrets).toEqual([]);
+    }
   });
 
   return {

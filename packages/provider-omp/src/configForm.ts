@@ -67,11 +67,15 @@ const OMP_LAUNCH_SCOPED_KEYS: Readonly<Record<string, true>> = {
 };
 
 /**
- * Keys every thread sets with a launch flag, which outranks overlays: the approval mode follows
- * the thread's runtime mode (`--approval-mode`), so a settings override would never apply.
+ * Keys that follow the thread's permission mode, so a per-thread override would never apply: the
+ * approval mode is a launch flag (`--approval-mode`), which outranks overlays, and the browser
+ * and computer-use preludes are pinned in the overlay by the adapter (server/toolGuards.ts).
  */
-const OMP_LAUNCH_FLAG_KEYS: Readonly<Record<string, true>> = {
+export const OMP_GUARDED_TOOL_KEYS = ["browser.enabled", "computer.enabled"] as const;
+
+const OMP_PERMISSION_MODE_KEYS: Readonly<Record<string, true>> = {
   "tools.approvalMode": true,
+  ...Object.fromEntries(OMP_GUARDED_TOOL_KEYS.map((key) => [key, true] as const)),
 };
 
 type ThreadRpcCommandName =
@@ -143,7 +147,7 @@ export const ompThreadRpcCommand = (
   Object.hasOwn(THREAD_RPC_COMMANDS, key) ? THREAD_RPC_COMMANDS[key]?.(value) : undefined;
 
 const threadOverrideRoute = (key: string): OmpThreadOverrideRoute =>
-  Object.hasOwn(OMP_LAUNCH_FLAG_KEYS, key)
+  Object.hasOwn(OMP_PERMISSION_MODE_KEYS, key)
     ? "none"
     : Object.hasOwn(THREAD_RPC_COMMANDS, key)
       ? "rpc"

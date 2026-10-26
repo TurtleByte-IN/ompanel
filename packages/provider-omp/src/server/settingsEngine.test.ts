@@ -34,6 +34,8 @@ const SETTINGS: Readonly<Record<string, FakeSetting>> = {
   "hindsight.apiToken": { type: "string", credential: true },
   "newfeature.endpoint": { type: "string", default: "https://example.test" },
   "web_search.enabled": { type: "boolean", default: true, env: false },
+  "browser.enabled": { type: "boolean", default: true },
+  "computer.enabled": { type: "boolean", default: false },
 };
 
 const PROJECT = "/work/app";
@@ -216,6 +218,8 @@ describe("OmpSettingsEngine.read", () => {
       assert.strictEqual(byKey.get("memory.backend")?.value, "local");
       assert.isTrue(byKey.get("memory.backend")?.launchScoped);
       assert.strictEqual(byKey.get("tools.approvalMode")?.threadOverride, "none");
+      assert.strictEqual(byKey.get("browser.enabled")?.threadOverride, "none");
+      assert.strictEqual(byKey.get("computer.enabled")?.threadOverride, "none");
       assert.strictEqual(byKey.get("compaction.enabled")?.threadOverride, "rpc");
 
       const stored = byKey.get("hindsight.apiToken");
@@ -545,7 +549,7 @@ describe("per-thread overrides", () => {
     }),
   );
 
-  it.effect("refuse the approval mode, which the thread's launch flag sets", () =>
+  it.effect("refuse the keys the thread's permission mode sets", () =>
     Effect.gen(function* () {
       const threads = fakeThreads(OPEN_THREADS);
       const errors = yield* withEngine(fakeOmpConfig(), threads, (engine) =>
@@ -554,11 +558,19 @@ describe("per-thread overrides", () => {
             .setThreadOverride(TARGET, "thread-app", { key: "tools.approvalMode", value: "write" })
             .pipe(Effect.flip),
           engine.clearThreadOverride(TARGET, "thread-app", "tools.approvalMode").pipe(Effect.flip),
+          // Browser and computer use exist only in Full access (toolGuards.ts).
+          engine
+            .setThreadOverride(TARGET, "thread-app", { key: "browser.enabled", value: true })
+            .pipe(Effect.flip),
+          engine
+            .setThreadOverride(TARGET, "thread-app", { key: "computer.enabled", value: true })
+            .pipe(Effect.flip),
+          engine.clearThreadOverride(TARGET, "thread-app", "computer.enabled").pipe(Effect.flip),
         ]),
       );
       assert.deepStrictEqual(
         errors.map((error) => (error._tag === "OmpSettingsError" ? error.reason : error._tag)),
-        ["not_thread_overridable", "not_thread_overridable"],
+        Array.from({ length: 5 }, () => "not_thread_overridable"),
       );
       assert.deepStrictEqual(threads.commands, []);
       assert.strictEqual(threads.overlays.get("thread-app"), EMPTY_OVERLAY);

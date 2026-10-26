@@ -252,7 +252,8 @@ test("opens Share live with the pairing warning, gated on the collab RPC", async
   const [major = 0, minor = 0] = PINNED_CONTRACT.split(".").map(Number);
   const hasCollab = major > 1 || minor >= 7;
   const { page, screenshot } = suite.current();
-  await pickOmpMenuItem("Share live…");
+  // The menu item itself says the link is outside T3 pairing.
+  await pickOmpMenuItem("Share live \\(outside pairing\\)…");
   const dialog = page.locator("[data-omp-share-live-dialog]");
   await expect(dialog.getByText("This link bypasses T3 pairing")).toBeVisible();
   const start = dialog.getByRole("button", { name: "Start sharing" });
