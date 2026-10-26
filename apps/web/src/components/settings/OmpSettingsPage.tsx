@@ -19,7 +19,11 @@ import {
 } from "@t3tools/provider-omp/settingsPages";
 import { useEffect, useState } from "react";
 
-import { useEnvironmentProviders, usePrimaryEnvironmentId } from "../../state/environments";
+import {
+  useEnvironmentHasConnected,
+  useEnvironmentProviders,
+  usePrimaryEnvironmentId,
+} from "../../state/environments";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { DraftInput } from "../ui/draft-input";
@@ -331,6 +335,7 @@ export function OmpSettingsPageBody({
 /** Settings → OMP page on the primary environment, with a picker when it runs several OMPs. */
 export function OmpSettingsPanel({ pageId }: { readonly pageId: OmpSettingsPageId }) {
   const environmentId = usePrimaryEnvironmentId();
+  const hasConnected = useEnvironmentHasConnected(environmentId);
   const providersByEnvironment = useEnvironmentProviders();
   const instances = (
     environmentId === null ? [] : (providersByEnvironment.get(environmentId) ?? [])
@@ -369,6 +374,10 @@ export function OmpSettingsPanel({ pageId }: { readonly pageId: OmpSettingsPageI
           <p className="px-3 py-3 text-muted-foreground text-xs sm:px-4">
             Add an OMP provider under Providers to edit its settings here.
           </p>
+        ) : !hasConnected ? (
+          // A full page load shows the cached providers before the connection is up; the body
+          // reads OMP on mount, so it waits for the connection.
+          <p className="px-3 py-3 text-muted-foreground text-xs sm:px-4">Connecting…</p>
         ) : (
           <OmpSettingsPageBody
             key={`${environmentId}:${instanceId}`}

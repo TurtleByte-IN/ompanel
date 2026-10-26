@@ -8,7 +8,7 @@ Six layers, from fastest to most faithful.
 | Adapter         | `packages/provider-omp/src/server/adapter.test.ts` (and the process-layer tests next to it)                            | The adapter and thread process against the scripted fake `omp`   |
 | Control plane   | `packages/provider-omp/src/server/controlBinary.test.ts`                                                               | `OmpControlService` against the scripted control fake `omp`      |
 | Replay fixtures | `apps/server/src/orchestration-v2/testkit/OmpReplayFixtures.integration.test.ts`, fixtures in `testkit/fixtures/omp_*` | The process layer against stdout recorded from the pinned fork   |
-| End-to-end      | `apps/web/e2e/omp/omp-thread.spec.ts` (Playwright)                                                                     | The web app and server against a real `omp` and a scripted model |
+| End-to-end      | `apps/web/e2e/omp/omp-thread.spec.ts`, `omp-settings.spec.ts` (Playwright)                                             | The web app and server against a real `omp` and a scripted model |
 | Live            | `apps/web/e2e/omp/omp-live.spec.ts` (Playwright, `OMPANEL_LIVE=1`)                                                     | The web app and server against a real `omp` and a real model     |
 
 The first four run in CI with the rest of the suite; none needs a model, an
@@ -184,7 +184,45 @@ web app in headless Chromium. Its steps run in order on one page:
 7. commit from the Git actions menu with an empty message; the subject comes
    from OMP text generation (`omp -p`).
 
-`e2e/omp/ompSuite.ts` holds what both Playwright specs share: the hooks that
+`apps/web/e2e/omp/omp-settings.spec.ts` is gate G2: OMP's control plane
+through the web app. Its steps run in order on one page, every page opened
+with a full page load:
+
+1. OMP settings pages and the Usage page's OMP tab show OMP's data on a full
+   page load, after the client has cached the environment's providers
+   (ompanel#128: the pages read OMP before the connection was up);
+2. `/wt <branch>` in an OMP thread makes a T3 worktree (`git worktree list`),
+   the thread list and git panel show the branch, and the next message runs
+   OMP with `--cwd` in the worktree;
+3. sign-in through Settings → Providers → OMP → Accounts against a fake login
+   provider (below): Sign in, open the vendor page, paste its code, Submit;
+   the provider shows Signed in and the vendor's token endpoint got the code;
+4. one non-credential key on every OMP settings page that `omp config set`
+   writes (Models & Roles, Routing, Thinking, Advisor & Agents, Sampling,
+   Approvals & Tools, Memory, Context, Modes, Runtime, Search, Discovery, MCP,
+   Customization), read back with `omp config get <key> --json` from the
+   stack's OMP home;
+5. Custom providers: a provider and model added in the form and saved (OMP
+   checks the file first); `omp models <provider> --json` lists the model;
+6. Terminal prefs stay read-only, and `omp config get` is unchanged;
+7. Plugins: a marketplace on disk added, its plugin installed, disabled and
+   enabled again, each after the confirmation that shows the command; `omp
+   plugin list --json` agrees; Skills lists the plugin's skill, as `omp skill
+   list` does. Nothing needs the network.
+
+The fake login provider (`e2e/omp/fakeSignIn.ts`): OMP lists only built-in
+login providers in the control servers Ompanel starts (`--no-extensions`), so
+the stack's OMP instance runs a wrapper `omp`. Control servers go through
+`fakeSignInOmp.mjs`, which passes every frame to the real `omp` except
+`get_login_providers` (which gains `g2-fake-vendor`) and `login`,
+`get_logout_accounts` and `logout` for that provider. Its `login` answers as
+OMP does for an OAuth provider: `open_url` to a vendor page on loopback that
+shows a one-time code, an `input` request for the code, then the code traded
+at the vendor's token endpoint. Every other `omp` start execs the real binary,
+so thread processes keep their pid and command line. No real vendor is
+contacted.
+
+`e2e/omp/ompSuite.ts` holds what the Playwright specs share: the hooks that
 start one stack and one paired page per file and record a trace per step, and
 the page helpers the steps use. `e2e/omp/ompStack.ts` starts everything in a
 throwaway directory: a `HOME`
@@ -214,8 +252,9 @@ the `omp` binary (skipped when `dist/omp.commit` already names the pinned
 commit) and prints the binary's path. `test:e2e` builds the web app, then
 runs Playwright on every spec in `e2e/` (the live suite is skipped without
 `OMPANEL_LIVE=1`). Screenshots, `server.log` and one trace per step go to
-`apps/web/.playwright/omp-artifacts/`, or to `OMPANEL_E2E_ARTIFACTS_DIR`; the
-HTML report goes to `apps/web/playwright-report/`. Open a trace with
+`apps/web/.playwright/omp-artifacts/`, or to `OMPANEL_E2E_ARTIFACTS_DIR` (G2's
+in its `g2/` subdirectory); the HTML report goes to `apps/web/playwright-report/`.
+Open a trace with
 `pnpm --filter @t3tools/web exec playwright show-trace <zip>`.
 
 In CI, `OMP E2E` caches the binary by the pinned commit, so only the first

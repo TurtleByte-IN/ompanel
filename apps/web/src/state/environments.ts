@@ -7,6 +7,7 @@ import {
 import { Discovery } from "@t3tools/client-runtime/relay";
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
+import { useState } from "react";
 
 import { environmentCatalog } from "../connection/catalog";
 import {
@@ -104,4 +105,18 @@ export function useEnvironmentMachines() {
 
 export function useConnectedEnvironmentIds() {
   return useAtomValue(environmentSummaries.connectedEnvironmentIdsAtom);
+}
+
+/**
+ * Whether the environment has connected since this component started showing it. A full page
+ * load renders cached providers before the connection is up, and a command sent then fails with
+ * "not connected"; a later reconnect keeps this true, so what already loaded stays mounted.
+ */
+export function useEnvironmentHasConnected(environmentId: EnvironmentId | null): boolean {
+  const connected = useConnectedEnvironmentIds();
+  const [seen, setSeen] = useState<EnvironmentId | null>(null);
+  if (environmentId === null) return false;
+  const isConnected = connected.includes(environmentId);
+  if (isConnected && seen !== environmentId) setSeen(environmentId);
+  return isConnected || seen === environmentId;
 }
