@@ -27,6 +27,9 @@ export type SettingsPath =
   | "/settings/omp-models"
   | "/settings/omp-routing"
   | "/settings/omp-thinking"
+  | "/settings/omp-advisor"
+  | "/settings/omp-sampling"
+  | "/settings/omp-approvals"
   | "/settings/integrations"
   | "/settings/scheduled-tasks"
   | "/settings/source-control"
@@ -91,6 +94,9 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/omp-models": "OMP Models & Roles",
   "/settings/omp-routing": "OMP Routing",
   "/settings/omp-thinking": "OMP Thinking",
+  "/settings/omp-advisor": "OMP Advisor & Agents",
+  "/settings/omp-sampling": "OMP Sampling",
+  "/settings/omp-approvals": "OMP Approvals & Tools",
   "/settings/integrations": "Integrations",
   "/settings/scheduled-tasks": "Scheduled Tasks",
   "/settings/source-control": "Source Control",
@@ -720,6 +726,30 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "omp-advisor",
+    title: "OMP advisor and agents",
+    to: "/settings/omp-advisor",
+    searchTerms: [
+      "omp advisor watchdog WATCHDOG.yml review mode interval severity sync backlog immune turns notes evict stale results subagent agentAdvisor custom agents agents folder markdown",
+    ],
+  },
+  {
+    id: "omp-sampling",
+    title: "OMP sampling",
+    to: "/settings/omp-sampling",
+    searchTerms: [
+      "omp sampling temperature top p top k min p presence penalty repetition penalty text verbosity personality service tier priority flex",
+    ],
+  },
+  {
+    id: "omp-approvals",
+    title: "OMP approvals and tools",
+    to: "/settings/omp-approvals",
+    searchTerms: [
+      "omp approval mode always ask write yolo tool approval rules allow prompt deny bash patterns bash interceptor intent tracing xd tools xdev docs devices",
+    ],
+  },
+  {
     id: "usage-providers",
     title: "Usage providers",
     to: "/settings/providers",
@@ -1085,6 +1115,9 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/omp-models": null,
   "/settings/omp-routing": null,
   "/settings/omp-thinking": null,
+  "/settings/omp-advisor": null,
+  "/settings/omp-sampling": null,
+  "/settings/omp-approvals": null,
   "/settings/integrations": null,
   "/settings/source-control": "environment-defaults",
   "/settings/storage": "project-defaults",

@@ -24,7 +24,14 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { DraftInput } from "../ui/draft-input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { toastManager } from "../ui/toast";
+import { OmpAgentFilesSection } from "./OmpAgentFilesSection";
 import { OmpSettingsForm, type OmpSettingsFormProps } from "./OmpSettingsForm";
+import {
+  AgentAdvisorRulesEditor,
+  ApprovalModeEditor,
+  BashPatternsEditor,
+  ToolApprovalRulesEditor,
+} from "./OmpSettingsRuleEditors";
 import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
 
 // Ompanel writes the user's global OMP config from these pages; project layers stay per project.
@@ -83,6 +90,12 @@ function ModelRolesEditor({
 
 const CONTROLS: NonNullable<OmpSettingsFormProps["controls"]> = {
   modelRoles: (field, onWrite) => <ModelRolesEditor field={field} onWrite={onWrite} />,
+  "tools.approvalMode": (field, onWrite) => <ApprovalModeEditor field={field} onWrite={onWrite} />,
+  "tools.approval": (field, onWrite) => <ToolApprovalRulesEditor field={field} onWrite={onWrite} />,
+  "bash.patterns": (field, onWrite) => <BashPatternsEditor field={field} onWrite={onWrite} />,
+  "task.agentAdvisor": (field, onWrite) => (
+    <AgentAdvisorRulesEditor field={field} onWrite={onWrite} />
+  ),
 };
 
 /** One OMP settings page for one OMP instance: reads through the engine, writes globally. */
@@ -169,6 +182,9 @@ export function OmpSettingsPageBody({
           }
         />
       )}
+      {pageId === "advisor" ? (
+        <OmpAgentFilesSection environmentId={environmentId} instanceId={instanceId} />
+      ) : null}
     </div>
   );
 }
