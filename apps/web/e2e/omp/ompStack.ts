@@ -331,7 +331,7 @@ export const startOmpStack = async (options: OmpStackOptions = {}): Promise<OmpS
           {
             label: "pairing token",
             value: new URL(pairingUrl).hash.replace(/^#token=/, ""),
-            // The pairing grant row keeps it until it is spent (TurtleByte-IN/ompanel#162).
+            // The pairing grant row keeps it until it is spent (TurtleByte-IN/ompanel#164).
             storedIn: [NodePath.join(userdata, "statev2.sqlite")],
           },
           ...secrets.map((value, index) => ({ label: `secretEnvironment[${index}]`, value })),
