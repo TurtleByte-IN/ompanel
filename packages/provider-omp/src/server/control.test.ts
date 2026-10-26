@@ -78,19 +78,39 @@ type Behaviour =
   | { readonly rpc: RpcServer }
   | "hang";
 
+const CATALOG = [
+  {
+    id: "claude-sonnet-4-5",
+    name: "Claude Sonnet 4.5",
+    provider: "anthropic",
+    reasoning: true,
+    thinking: { efforts: ["low", "medium", "high"] },
+  },
+];
+
 const answerLoginProviders: RpcServer = (frame) =>
-  frame["type"] === "get_login_providers"
+  frame["type"] === "get_available_models"
     ? [
-        { type: "available_commands_update", commands: [] },
         {
           type: "response",
           id: frame["id"],
-          command: "get_login_providers",
+          command: "get_available_models",
           success: true,
-          data: { providers: LOGIN_PROVIDERS },
+          data: { models: CATALOG.map((model) => ({ ...model, api: "anthropic-messages" })) },
         },
       ]
-    : [];
+    : frame["type"] === "get_login_providers"
+      ? [
+          { type: "available_commands_update", commands: [] },
+          {
+            type: "response",
+            id: frame["id"],
+            command: "get_login_providers",
+            success: true,
+            data: { providers: LOGIN_PROVIDERS },
+          },
+        ]
+      : [];
 
 function handle(command: ChildProcess.StandardCommand, behaviour: Behaviour) {
   const base = {
@@ -203,7 +223,7 @@ const withControl = <A, E>(
   );
 
 describe("OmpControlService.probe", () => {
-  it.effect("reads the version, the ready frame and the login providers", () =>
+  it.effect("reads the version, the ready frame, the login providers and the models", () =>
     Effect.gen(function* () {
       const omp = fakeOmp();
       const result = yield* withControl(omp, (control) =>
@@ -214,6 +234,7 @@ describe("OmpControlService.probe", () => {
         version: "18.12.6",
         ready: { protocolVersion: 1, contractVersion: "1.0.0" },
         loginProviders: LOGIN_PROVIDERS,
+        models: CATALOG,
       });
       const [version, rpc] = omp.launches;
       assert.strictEqual(version?.command, "/opt/ompanel/omp");
@@ -249,6 +270,7 @@ describe("OmpControlService.probe", () => {
       const result = yield* withControl(omp, (control) => control.probe(TARGET));
       assert.strictEqual(result.status, "ready");
       assert.isTrue(result.status === "ready" && result.loginProviders === null);
+      assert.isTrue(result.status === "ready" && result.models === null);
     }),
   );
 
@@ -453,7 +475,12 @@ describe("OmpControlService.login", () => {
       const omp = fakeOmp({
         rpc: {
           rpc: (frame) => {
-            if (frame["type"] === "get_login_providers") return answerLoginProviders(frame);
+            if (
+              frame["type"] === "get_login_providers" ||
+              frame["type"] === "get_available_models"
+            ) {
+              return answerLoginProviders(frame);
+            }
             if (frame["type"] === "login") {
               loginId = frame["id"];
               return [

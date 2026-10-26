@@ -47,7 +47,18 @@ import {
   readOmpBranchTree,
   resolveOmpForkEntry,
 } from "./sessionBranches.ts";
-import type { OmpThreadSessions } from "./threadSessions.ts";
+import {
+  OMP_DEFAULT_MODEL_SLUG,
+  ompRoleOverlayValue,
+  parseOmpModelSlug,
+  readOmpTraitSelection,
+} from "./modelTraits.ts";
+import { ompOverlayValue, ompOverlayWith } from "./settingsEngine.ts";
+import {
+  type OmpThreadSessions,
+  readOmpThreadOverlay,
+  writeOmpThreadOverlay,
+} from "./threadSessions.ts";
 import type { OmpSidecarError } from "./sidecar.ts";
 import {
   isOmpCancelRequest,
@@ -67,6 +78,12 @@ import {
 const STREAM_FLUSH = Duration.millis(50);
 /** Reads and title syncs around a turn; a slow answer costs only the meter or the title. */
 const SIDE_REQUEST_TIMEOUT_MS = 2_000;
+/** Model and trait commands; `set_model` may refresh the model's metadata first. */
+const SELECTION_REQUEST_TIMEOUT_MS = 10_000;
+/** The overlay key the role chip writes (docs/omp/models.md). */
+const ROLE_OVERLAY_KEY = "modelRoles.default";
+/** Stands for the model a prewalk handoff left OMP on, which no selection names. */
+const PREWALK_HANDOFF_MODEL = "\0prewalk";
 /** Subagent controls wait for OMP to accept them, which can include a subagent's turn setup. */
 const SUBAGENT_REQUEST_TIMEOUT_MS = 30_000;
 /** Reviving rebuilds a subagent session from its transcript (models, tools, extensions). */
@@ -245,6 +262,43 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
     yield* Effect.serviceOption(McpProviderSessions.McpProviderSessions),
   );
 
+  const withAdapterFiles = <A, E>(
+    effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path>,
+  ): Effect.Effect<A, E> =>
+    effect.pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+    );
+
+  /** Sets one key of the thread's overlay; OMP reloads the overlay live. */
+  const setOverlayKey = Effect.fnUntraced(function* (
+    threadId: string,
+    key: string,
+    value: unknown,
+  ) {
+    const current = yield* withAdapterFiles(readOmpThreadOverlay(options.dirs.threads, threadId));
+    if (ompOverlayValue(current, key) === value) return;
+    const next = yield* ompOverlayWith(current, key, value);
+    yield* withAdapterFiles(writeOmpThreadOverlay(options.dirs.threads, threadId, next));
+  });
+
+  /**
+   * `modelRoles.default: "@<role>"` for a role other than default. Back on default, only a role
+   * alias (which Ompanel wrote) is removed; a model a settings override put there stays.
+   */
+  const syncRoleOverlay = Effect.fnUntraced(function* (
+    threadId: string,
+    role: ReturnType<typeof readOmpTraitSelection>["role"],
+  ) {
+    const wanted = ompRoleOverlayValue(role);
+    if (wanted === undefined) {
+      const current = yield* withAdapterFiles(readOmpThreadOverlay(options.dirs.threads, threadId));
+      const present = ompOverlayValue(current, ROLE_OVERLAY_KEY);
+      if (typeof present !== "string" || !present.startsWith("@")) return;
+    }
+    yield* setOverlayKey(threadId, ROLE_OVERLAY_KEY, wanted);
+  });
+
   const openSession = Effect.fn("OmpAdapter.openSession")(function* (
     input: ProviderAdapter.ProviderAdapterV2OpenSessionInput,
   ) {
@@ -256,6 +310,10 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       });
     const cwd = input.runtimePolicy.cwd ?? options.defaultCwd;
     const binaryPath = yield* options.resolveBinary.pipe(Effect.mapError(openError));
+    // The role chip is read at startup, so the overlay must hold it before the process starts.
+    yield* syncRoleOverlay(input.threadId, readOmpTraitSelection(input.modelSelection).role).pipe(
+      Effect.mapError(openError),
+    );
     const process = yield* startOmpSessionProcess({
       binaryPath,
       profile: options.profile,
@@ -618,6 +676,10 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
     // Before the first turn, so its tools and directory handling are in place.
     yield* hostBridge.setup;
 
+    /** What OMP runs: the launch model until a `set_model`, then each pick OMP accepted. */
+    let appliedModel: string = OMP_DEFAULT_MODEL_SLUG;
+    /** The model OMP started the session on, restored when the thread goes back to default. */
+    let baselineModel: { readonly provider: string; readonly modelId: string } | undefined;
     /**
      * Binds the thread to its OMP session: the one it ran before (reopened if the process runs
      * another), else the process's own fresh session. A thread with no run yet whose session
@@ -635,6 +697,11 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
         return bound;
       }
       let state = yield* process.request("get_state", undefined);
+      // The process's own fresh session runs the model OMP's config (and the role chip's
+      // overlay) resolves at launch: OMP default for this thread.
+      if (state.model !== undefined) {
+        baselineModel = { provider: state.model.provider, modelId: state.model.id };
+      }
       const nativeId = existing?.nativeThreadRef?.nativeId;
       if (nativeId != null && nativeId !== state.sessionId) {
         state = yield* withFiles(switchOmpSession({ ...binding, sessionId: nativeId })).pipe(
@@ -642,6 +709,14 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
             protocolError(`OMP session ${nativeId} could not be resumed: ${error.message}`),
           ),
         );
+        // A resumed session reloads the model it recorded, which need not be OMP default.
+        if (
+          state.model !== undefined &&
+          (state.model.provider !== baselineModel?.provider ||
+            state.model.id !== baselineModel?.modelId)
+        ) {
+          appliedModel = `${state.model.provider}/${state.model.id}`;
+        }
       }
       const result = mapper.bindThread(
         { threadId, state, ...(existing === undefined ? {} : { existing }) },
@@ -705,6 +780,105 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       appliedApprovalMode = wanted;
     });
 
+    const applied: {
+      thinking?: string;
+      fastMode?: boolean;
+      advisor?: boolean;
+      prewalk?: boolean;
+      computer?: boolean;
+    } = {};
+    const selectionError = (command: string) => (error: OmpRpcRequestError) =>
+      protocolError(
+        `OMP ${command} failed: ${error._tag === "OmpRpcCommandError" ? error.detail : error.message}`,
+      );
+    /** A trait OMP refused (fast mode on a model without it) leaves the turn running. */
+    const traitRefused = (trait: string) => (error: unknown) =>
+      Effect.logWarning("omp trait not applied", {
+        trait,
+        detail: error instanceof Error ? error.message : String(error),
+      });
+
+    /**
+     * Brings OMP to the turn's model and traits before its prompt. T3 owns the selection, so it
+     * is re-applied by value, never by OMP's `cycle_*` commands (docs/omp/models.md).
+     */
+    const applySelection = Effect.fnUntraced(function* (
+      threadId: string,
+      modelSelection: ProviderAdapter.ProviderAdapterV2TurnInput["modelSelection"],
+    ) {
+      const traits = readOmpTraitSelection(modelSelection);
+      if (traits.model !== appliedModel) {
+        const target =
+          traits.model === OMP_DEFAULT_MODEL_SLUG ? baselineModel : parseOmpModelSlug(traits.model);
+        if (target === undefined && traits.model !== OMP_DEFAULT_MODEL_SLUG) {
+          return yield* protocolError(`OMP model '${traits.model}' must be provider/model`);
+        }
+        if (target !== undefined) {
+          yield* process
+            .request("set_model", target, { timeoutMs: SELECTION_REQUEST_TIMEOUT_MS })
+            .pipe(Effect.mapError(selectionError("set_model")));
+          // OMP re-applies the new model's own thinking level, and fast mode is per model
+          // family: both are re-sent for the new model.
+          delete applied.thinking;
+          delete applied.fastMode;
+        }
+        appliedModel = traits.model;
+      }
+      if (traits.thinking !== undefined && traits.thinking !== applied.thinking) {
+        yield* process
+          .request(
+            "set_thinking_level",
+            { level: traits.thinking },
+            { timeoutMs: SELECTION_REQUEST_TIMEOUT_MS },
+          )
+          .pipe(Effect.mapError(selectionError("set_thinking_level")));
+        applied.thinking = traits.thinking;
+      }
+      if (traits.fastMode !== undefined && traits.fastMode !== applied.fastMode) {
+        const enabled = traits.fastMode;
+        yield* process
+          .request("set_fast_mode", { enabled }, { timeoutMs: SIDE_REQUEST_TIMEOUT_MS })
+          .pipe(
+            Effect.tap(() => Effect.sync(() => (applied.fastMode = enabled))),
+            Effect.catch(traitRefused("fastMode")),
+          );
+      }
+      if (traits.advisor !== undefined && traits.advisor !== applied.advisor) {
+        const enabled = traits.advisor;
+        yield* process
+          .request("set_advisor", { enabled }, { timeoutMs: SIDE_REQUEST_TIMEOUT_MS })
+          .pipe(
+            Effect.tap(() => Effect.sync(() => (applied.advisor = enabled))),
+            Effect.catch(traitRefused("advisor")),
+          );
+      }
+      // A handoff is spent by the turn it ran on, so an armed prewalk is re-armed every turn.
+      if (traits.prewalk === true || (traits.prewalk === false && applied.prewalk === true)) {
+        const armed = traits.prewalk;
+        yield* process
+          .request("set_prewalk", { armed }, { timeoutMs: SIDE_REQUEST_TIMEOUT_MS })
+          .pipe(
+            Effect.tap(() =>
+              Effect.sync(() => {
+                applied.prewalk = armed;
+                // OMP's handoff switches the model for good; the next turn restores the pick.
+                if (armed) appliedModel = PREWALK_HANDOFF_MODEL;
+              }),
+            ),
+            Effect.catch(traitRefused("prewalk")),
+          );
+      }
+      // `/computer` is an eval prelude, not a tool (`set_tool_enabled` refuses it), and RPC has
+      // no command for it; its setting is read live, so the overlay toggles it in place.
+      if (traits.computer !== undefined && traits.computer !== applied.computer) {
+        const enabled = traits.computer;
+        yield* setOverlayKey(threadId, "computer.enabled", enabled).pipe(
+          Effect.tap(() => Effect.sync(() => (applied.computer = enabled))),
+          Effect.catch(traitRefused("computer")),
+        );
+      }
+    });
+
     let appliedSessionName: string | null = null;
     const startTurn = Effect.fnUntraced(function* (
       turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
@@ -731,6 +905,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
         options.commands === undefined
           ? turnInput.message.text
           : yield* options.commands.resolvePrompt(cwd, turnInput.message.text);
+      yield* applySelection(turnInput.threadId, turnInput.modelSelection);
       // T3 names the thread; OMP keeps it as a user-set title, which its own titling respects.
       const title = turnInput.appThread.title;
       if (title !== appliedSessionName) {
@@ -1277,10 +1452,12 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
     driver: OMP_PROVIDER,
     getCapabilities: () => Effect.succeed(OMP_PROVIDER_CAPABILITIES),
     // A session that must restart for changed settings is restarted on the selection change.
+    // The role chip is read only at startup (openSession writes it to the overlay first).
     planSelectionTransition: (input) =>
       Effect.succeed(
         input.providerSessionId !== undefined &&
-          options.threadSessions.restartRequired(input.providerSessionId).length > 0
+          (options.threadSessions.restartRequired(input.providerSessionId).length > 0 ||
+            readOmpTraitSelection(input.current).role !== readOmpTraitSelection(input.target).role)
           ? ({ type: "restart_session" } as const)
           : turnScopedSelectionTransition(),
       ),

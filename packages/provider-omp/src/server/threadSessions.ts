@@ -88,6 +88,40 @@ const requestCommand = <C extends OmpThreadRpcCommand>(
   command: C,
 ) => process.request(command.type, command.params, { timeoutMs: THREAD_COMMAND_TIMEOUT_MS });
 
+/** The thread's `--config` overlay; an absent one reads as the empty overlay. */
+export const readOmpThreadOverlay = Effect.fn("readOmpThreadOverlay")(function* (
+  threadsDir: string,
+  threadId: string,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  return yield* fileSystem.readFileString(ompThreadOverlayPath(path, threadsDir, threadId)).pipe(
+    Effect.catchIf(
+      (error) => error._tag === "PlatformError" && error.reason._tag === "NotFound",
+      () => Effect.succeed(OMP_EMPTY_OVERLAY),
+    ),
+    Effect.mapError(() => new OmpThreadHostError({ threadId, reason: "io" })),
+  );
+});
+
+/** Replaces the thread's overlay whole, owner-only. */
+export const writeOmpThreadOverlay = Effect.fn("writeOmpThreadOverlay")(function* (
+  threadsDir: string,
+  threadId: string,
+  content: string,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const target = ompThreadOverlayPath(path, threadsDir, threadId);
+  const staging = `${target}.tmp`;
+  // A rename swaps the file whole, so OMP's live reload never reads half an overlay.
+  yield* fileSystem.makeDirectory(path.dirname(target), { recursive: true, mode: 0o700 }).pipe(
+    Effect.andThen(fileSystem.writeFileString(staging, content, { mode: 0o600 })),
+    Effect.andThen(fileSystem.rename(staging, target)),
+    Effect.mapError(() => new OmpThreadHostError({ threadId, reason: "io" })),
+  );
+});
+
 /** The settings engine's view of this instance's threads; overlays live under `threadsDir`. */
 export const makeOmpThreadSettingsHost = Effect.fn("makeOmpThreadSettingsHost")(function* (input: {
   readonly sessions: OmpThreadSessions;
@@ -95,8 +129,13 @@ export const makeOmpThreadSettingsHost = Effect.fn("makeOmpThreadSettingsHost")(
 }) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const overlayPath = (threadId: string) => ompThreadOverlayPath(path, input.threadsDir, threadId);
-  const ioError = (threadId: string) => () => new OmpThreadHostError({ threadId, reason: "io" });
+  const withFiles = <A, E>(
+    effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path>,
+  ): Effect.Effect<A, E> =>
+    effect.pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+    );
 
   return {
     openThreads: input.sessions.list.pipe(
@@ -117,26 +156,9 @@ export const makeOmpThreadSettingsHost = Effect.fn("makeOmpThreadSettingsHost")(
         ),
       );
     },
-    readOverlay: (threadId) =>
-      fileSystem.readFileString(overlayPath(threadId)).pipe(
-        Effect.catchIf(
-          (error) => error._tag === "PlatformError" && error.reason._tag === "NotFound",
-          () => Effect.succeed(OMP_EMPTY_OVERLAY),
-        ),
-        Effect.mapError(ioError(threadId)),
-      ),
-    writeOverlay: (threadId, content) => {
-      const target = overlayPath(threadId);
-      const staging = `${target}.tmp`;
-      // A rename swaps the file whole, so OMP's live reload never reads half an overlay.
-      return fileSystem
-        .makeDirectory(path.dirname(target), { recursive: true, mode: 0o700 })
-        .pipe(
-          Effect.andThen(fileSystem.writeFileString(staging, content, { mode: 0o600 })),
-          Effect.andThen(fileSystem.rename(staging, target)),
-          Effect.mapError(ioError(threadId)),
-        );
-    },
+    readOverlay: (threadId) => withFiles(readOmpThreadOverlay(input.threadsDir, threadId)),
+    writeOverlay: (threadId, content) =>
+      withFiles(writeOmpThreadOverlay(input.threadsDir, threadId, content)),
     markRestartRequired: input.sessions.markRestartRequired,
   } satisfies OmpThreadSettingsHost;
 });

@@ -15,6 +15,13 @@ import * as Effect from "effect/Effect";
 import { OMP_LOCK, type OmpLock } from "../ompLock.ts";
 import type { OmpSettings } from "../settings.ts";
 import { OMP_CONTROL_TIMEOUTS_MS, type OmpProbeResult } from "./control.ts";
+import {
+  OMP_CUSTOM_MODEL_CAPABILITIES,
+  OMP_DEFAULT_MODEL_CAPABILITIES,
+  OMP_DEFAULT_MODEL_SLUG,
+  ompCatalogModels,
+  type OmpCatalogModel,
+} from "./modelTraits.ts";
 import type { OmpSidecar, OmpSidecarError } from "./sidecar.ts";
 
 const OMP_PRESENTATION = {
@@ -29,25 +36,33 @@ const OMP_PRESENTATION = {
 } as const;
 
 const OMP_DEFAULT_MODEL: ServerProviderModel = {
-  slug: "default",
+  slug: OMP_DEFAULT_MODEL_SLUG,
   name: "OMP default",
   isCustom: false,
-  capabilities: null,
+  capabilities: OMP_DEFAULT_MODEL_CAPABILITIES,
 };
 
-const ompModels = (customModels: ReadonlyArray<CustomModelSetting>) =>
-  providerModelsFromSettings([OMP_DEFAULT_MODEL], customModels, null);
+const ompModels = (
+  customModels: ReadonlyArray<CustomModelSetting>,
+  catalog: ReadonlyArray<OmpCatalogModel>,
+) =>
+  providerModelsFromSettings(
+    [OMP_DEFAULT_MODEL, ...ompCatalogModels(catalog)],
+    customModels,
+    OMP_CUSTOM_MODEL_CAPABILITIES,
+  );
 
 const ompSnapshot = (
   settings: OmpSettings,
   checkedAt: string,
   probe: ProviderProbeResult,
+  catalog: ReadonlyArray<OmpCatalogModel> = [],
 ): ServerProviderDraft => ({
   ...buildServerProvider({
     presentation: OMP_PRESENTATION,
     enabled: settings.enabled,
     checkedAt,
-    models: ompModels(settings.customModels),
+    models: ompModels(settings.customModels, catalog),
     probe,
   }),
   supportsTextGeneration: true,
@@ -160,15 +175,20 @@ export function ompProviderSnapshot(input: {
     });
   }
   const sidecar = resolution.sidecar;
-  return ompSnapshot(settings, checkedAt, {
-    installed: true,
-    version: probe.version,
-    status: "ready",
-    auth: ompAuthFromLoginProviders(probe.loginProviders),
-    ...(sidecar && !sidecar.verified
-      ? {
-          message: `Running the OMP binary at ${sidecar.path}, which Ompanel does not check against OMP ${lock.tag}.`,
-        }
-      : {}),
-  });
+  return ompSnapshot(
+    settings,
+    checkedAt,
+    {
+      installed: true,
+      version: probe.version,
+      status: "ready",
+      auth: ompAuthFromLoginProviders(probe.loginProviders),
+      ...(sidecar && !sidecar.verified
+        ? {
+            message: `Running the OMP binary at ${sidecar.path}, which Ompanel does not check against OMP ${lock.tag}.`,
+          }
+        : {}),
+    },
+    probe.models ?? [],
+  );
 }
