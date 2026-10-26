@@ -344,7 +344,7 @@ export function ompCardFor(input: {
     }
   }
 
-  const memoryOp = MEMORY_TOOLS[toolName];
+  const memoryOp = Object.hasOwn(MEMORY_TOOLS, toolName) ? MEMORY_TOOLS[toolName] : undefined;
   if (memoryOp !== undefined) return withBlocks(memoryCard(memoryOp, args, details, text));
   return null;
 }

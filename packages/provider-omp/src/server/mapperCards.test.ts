@@ -491,6 +491,18 @@ describe("OMP cards", () => {
     );
   });
 
+  it("inherited object keys as device names get a plain card", () => {
+    const { toolEnd } = startedTurn();
+    for (const name of ["__proto__", "constructor", "toString"]) {
+      const [item] = toolEnd(
+        "write",
+        { path: `xd://${name}`, content: "{}" },
+        { content: [text("unknown device")] },
+      );
+      assert.strictEqual(item?.type === "dynamic_tool" ? item.output : null, "unknown device");
+    }
+  });
+
   it("compaction: auto and manual runs share one card from start to end", () => {
     const { frame } = startedTurn();
     const [running] = frame({
