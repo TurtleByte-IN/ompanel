@@ -199,3 +199,54 @@ test("stops a running turn", async () => {
   expect(threadProcesses().map((entry) => entry.pid)).toEqual(before);
   await screenshot("08c-after-stop");
 });
+
+// PRD §9: what a collector receives about OMP is driver kind, version, error class and frame
+// drops; never a prompt, reply, path or secret (`packages/provider-omp/src/server/telemetry.ts`).
+const OMP_METRIC_KEYS = [
+  "provider",
+  "ompVersion",
+  "ompContract",
+  "outcome",
+  "errorClass",
+  "reason",
+];
+
+test("exports OMP driver metrics without turn content", async () => {
+  const { stack } = suite.current();
+  const ompPoints = () =>
+    stack.metrics.points().filter((point) => point.name.startsWith("t3_omp_"));
+  const ended = (outcome: string) =>
+    ompPoints().some(
+      (point) => point.name === "t3_omp_turns_total" && point.attributes.outcome === outcome,
+    );
+  await expect
+    .poll(() => ended("completed") && ended("interrupted"), { timeout: 30_000 })
+    .toBe(true);
+  const points = ompPoints();
+  expect(
+    points.some(
+      (point) => point.name === "t3_omp_sessions_total" && point.attributes.outcome === "started",
+    ),
+  ).toBe(true);
+  const forbidden = [
+    "hello from G1",
+    "g1-supervised",
+    "g1-stop",
+    STREAMED_PARAGRAPHS[0],
+    stack.workspace,
+    stack.home,
+  ];
+  for (const point of points) {
+    expect(point.attributes.provider).toBe("omp");
+    for (const [key, value] of Object.entries(point.attributes)) {
+      expect(OMP_METRIC_KEYS, `${point.name} label ${key}`).toContain(key);
+      for (const text of forbidden) expect(value).not.toContain(text);
+    }
+  }
+  // The labels exactly as exported, for the gate's evidence.
+  NodeFS.mkdirSync(ARTIFACTS, { recursive: true });
+  NodeFS.writeFileSync(
+    NodePath.join(ARTIFACTS, "omp-metrics.json"),
+    `${JSON.stringify(points, null, 2)}\n`,
+  );
+});
