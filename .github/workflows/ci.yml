@@ -299,6 +299,14 @@ jobs:
           fi
           vp run --parallel --concurrency-limit 4 "${filters[@]}" test
 
+      # PRD §9: a 10k-frame OMP journal replays in under 200 ms. Alone on the runner, after the
+      # parallel suites, so their load does not decide it (docs/omp/journal.md).
+      - name: OMP journal replay benchmark
+        working-directory: packages/provider-omp
+        env:
+          OMP_JOURNAL_BENCH: "1"
+        run: vp test run --config ../../vite.config.ts src/server/journal.perf.test.ts
+
   # The web suite is the largest outside the server. In the shared Test job it
   # started last and ran alone for about 40s after everything else finished.
   # release.yml mirrors this test, test_web, and test_server split.

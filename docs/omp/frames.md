@@ -22,6 +22,11 @@ frames of one `omp --mode rpc-ui` process into V2 thread events. The adapter
   (2 s each; a missing answer only leaves the meter as it was).
 - If the process exits during a turn, the turn fails (or is interrupted when
   the thread was being stopped).
+- A run OMP starts on its own after a turn (`prompt_result` said
+  `sessionSettled: false` and a background job woke the session) is held
+  until T3 runs a continuation turn for it, which replays it and ends at the
+  run's yield ([journal.md](journal.md#background-runs)).
+- Every frame the mapper reads is journaled ([journal.md](journal.md)).
 
 ## Frames
 
@@ -44,7 +49,7 @@ frames of one `omp --mode rpc-ui` process into V2 thread events. The adapter
 | `extension_ui_request` `setStatus` / `setWidget` / `setTitle`                                            | Ignored: they style OMP's own TUI; T keeps its own title.                                                                                                                                                                                                                       |
 | `session_info_update`                                                                                    | Session id and title (see Title and /fresh).                                                                                                                                                                                                                                    |
 | `subagent_lifecycle` / `subagent_progress`                                                               | Subagent records for the agents panel (see [subagents.md](subagents.md)); at any time, not only in a turn.                                                                                                                                                                      |
-| anything else; any frame above outside a turn, except `session_info_update`, dialogs and subagent frames | Ignored.                                                                                                                                                                                                                                                                        |
+| anything else; any frame above outside a turn, except `session_info_update`, dialogs and subagent frames | Ignored (frames of a run OMP started on its own wait for a turn, see above).                                                                                                                                                                                                    |
 
 ## Tool cards
 
