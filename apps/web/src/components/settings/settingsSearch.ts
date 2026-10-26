@@ -24,6 +24,9 @@ export type SettingsPath =
   | "/settings/keybindings"
   | "/settings/snap-shot"
   | "/settings/providers"
+  | "/settings/omp-models"
+  | "/settings/omp-routing"
+  | "/settings/omp-thinking"
   | "/settings/integrations"
   | "/settings/scheduled-tasks"
   | "/settings/source-control"
@@ -85,6 +88,9 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/keybindings": "Keybindings",
   "/settings/snap-shot": "SnapShots",
   "/settings/providers": "Providers",
+  "/settings/omp-models": "OMP Models & Roles",
+  "/settings/omp-routing": "OMP Routing",
+  "/settings/omp-thinking": "OMP Thinking",
   "/settings/integrations": "Integrations",
   "/settings/scheduled-tasks": "Scheduled Tasks",
   "/settings/source-control": "Source Control",
@@ -690,6 +696,30 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "omp-models",
+    title: "OMP models and roles",
+    to: "/settings/omp-models",
+    searchTerms: [
+      "omp model roles default smol slow vision plan commit tiny memory task advisor widget image web speech dictation judge modelRoles modelRoleStorage modelTags modelProviderOrder cycleOrder enabledModels disabledProviders includeModelInPrompt",
+    ],
+  },
+  {
+    id: "omp-routing",
+    title: "OMP routing",
+    to: "/settings/omp-routing",
+    searchTerms: [
+      "omp retry fallback chains round robin credentials account policies agent account pools path scoped models enabledProviders anthropic server side fallback usage reserve",
+    ],
+  },
+  {
+    id: "omp-thinking",
+    title: "OMP thinking",
+    to: "/settings/omp-thinking",
+    searchTerms: [
+      "omp thinking level reasoning effort budgets tokens hide thinking block auto thinking max effort",
+    ],
+  },
+  {
     id: "usage-providers",
     title: "Usage providers",
     to: "/settings/providers",
@@ -1052,6 +1082,9 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/snap-shot": null,
   "/settings/keybindings": null,
   "/settings/providers": null,
+  "/settings/omp-models": null,
+  "/settings/omp-routing": null,
+  "/settings/omp-thinking": null,
   "/settings/integrations": null,
   "/settings/source-control": "environment-defaults",
   "/settings/storage": "project-defaults",

@@ -366,6 +366,7 @@
   "apps/web/src/components/settings/DiagnosticsSettings.tsx": 2,
   "apps/web/src/components/settings/EasDeviceHostsSettings.tsx": 1,
   "apps/web/src/components/settings/FontFamilyPicker.tsx": 2,
+  "apps/web/src/components/settings/OmpSettingsPage.tsx": 1,
   "apps/web/src/components/settings/OpenSourceLicenses.tsx": 1,
   "apps/web/src/components/settings/ProjectFaviconThumbnail.tsx": 1,
   "apps/web/src/components/settings/ProjectIconPickerDialog.tsx": 1,

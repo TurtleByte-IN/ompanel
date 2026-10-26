@@ -5,7 +5,7 @@ import type {
   OmpSettingsForm as OmpSettingsFormModel,
 } from "@t3tools/contracts";
 import { ompConfigValueFits } from "@t3tools/provider-omp/configForm";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -29,6 +29,10 @@ export interface OmpSettingsFormProps {
   readonly scope: OmpConfigScope;
   readonly onWrite: (key: string, value: unknown) => void;
   readonly onReset: (key: string) => void;
+  /** Replaces the generic control for a key; credential and env rules still apply. */
+  readonly controls?: Readonly<
+    Record<string, (field: OmpSettingsField, onWrite: (value: unknown) => void) => ReactNode>
+  >;
 }
 
 function JsonField({
@@ -132,7 +136,7 @@ function FieldControl({
 }
 
 /** Renders the settings engine's form: one row per OMP setting, grouped by key prefix. */
-export function OmpSettingsForm({ form, scope, onWrite, onReset }: OmpSettingsFormProps) {
+export function OmpSettingsForm({ form, scope, onWrite, onReset, controls }: OmpSettingsFormProps) {
   const groups = new Map<string, OmpSettingsField[]>();
   for (const field of form.fields) {
     const fields = groups.get(field.group);
@@ -166,11 +170,15 @@ export function OmpSettingsForm({ form, scope, onWrite, onReset }: OmpSettingsFo
                 <p className="text-muted-foreground text-xs">{field.description}</p>
               )}
               <div className="max-w-xl">
-                <FieldControl field={field} onWrite={(value) => onWrite(field.key, value)} />
+                {(field.credential ? undefined : controls?.[field.key])?.(field, (value) =>
+                  onWrite(field.key, value),
+                ) ?? <FieldControl field={field} onWrite={(value) => onWrite(field.key, value)} />}
               </div>
               {field.readOnly ? (
                 <p className="text-muted-foreground text-xs">
-                  Set by an environment variable; change it where OMP is launched.
+                  {field.source === "env"
+                    ? "Set by an environment variable; change it where OMP is launched."
+                    : "Can hold entries scoped to other folders, which this view cannot show; edit it in OMP's config file."}
                 </p>
               ) : field.credential ? (
                 <p className="text-muted-foreground text-xs">
