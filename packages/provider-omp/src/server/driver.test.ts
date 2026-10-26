@@ -12,6 +12,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Sink from "effect/Sink";
@@ -25,11 +26,17 @@ import type { OmpSettings } from "../settings.ts";
 import { OMP_CONTROL_TIMEOUTS_MS } from "./control.ts";
 import { OmpDriver } from "./driver.ts";
 
+// Offline: with no bundled or cached sidecar the driver would download the pinned release.
+const offlineFetch: typeof globalThis.fetch = () => Promise.reject(new Error("offline in tests"));
+
 const layerTest = TestProviderHost.layer({
   cwd: "/machine",
   settings: DEFAULT_SERVER_SETTINGS,
   runBackgroundWork: false,
-}).pipe(Layer.provideMerge(NodeServices.layer));
+}).pipe(
+  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.succeed(FetchHttpClient.Fetch, offlineFetch)),
+);
 
 const encoder = new TextEncoder();
 const SKILL_LIST = {
