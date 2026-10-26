@@ -35,7 +35,7 @@ import type { OmpRpcProcess } from "./rpcProcess.ts";
 /** Name of the host tool that replaces OMP's built-in `bash`. */
 export const OMP_HOST_TERMINAL_TOOL = "terminal";
 /** First RPC contract with `set_tool_enabled` (oh-my-pi C-04). */
-export const OMP_TOOL_TOGGLE_CONTRACT = "1.1.0";
+const OMP_TOOL_TOGGLE_CONTRACT = "1.1.0";
 /**
  * First RPC contract with `set_host_cwd_change` and `host_cwd_change_request` (oh-my-pi#38).
  * Renumber if that PR lands under a later minor.
@@ -115,7 +115,7 @@ const isHostCwdChangeRequest = (frame: unknown): frame is OmpHostCwdChangeReques
   "reason" in frame &&
   (frame.reason === "worktree" || frame.reason === "move");
 
-export const OMP_HOST_TERMINAL_DEFINITION: HostToolDefinition = {
+const OMP_HOST_TERMINAL_DEFINITION: HostToolDefinition = {
   name: OMP_HOST_TERMINAL_TOOL,
   label: "Terminal",
   description: [

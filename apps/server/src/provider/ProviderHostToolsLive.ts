@@ -136,9 +136,7 @@ function describeMcpContent(block: McpClientContentBlock): ProviderHostMcpConten
 }
 
 /** Maps an MCP `tools/call` result, including the pre-2024-11 `toolResult` shape. */
-export function toProviderHostMcpCallResult(
-  result: Record<string, unknown>,
-): ProviderHostMcpCallResult {
+function toProviderHostMcpCallResult(result: Record<string, unknown>): ProviderHostMcpCallResult {
   const content = Array.isArray(result.content)
     ? (result.content as ReadonlyArray<McpClientContentBlock>).map(describeMcpContent)
     : "toolResult" in result
