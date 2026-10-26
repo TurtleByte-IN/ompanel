@@ -23,6 +23,7 @@ import { makeOmpAdapter } from "./adapter.ts";
 import { makeOmpPidfiles } from "./pidfiles.ts";
 import { ompStateDirs } from "./session.ts";
 import { OmpSubagentTracker } from "./subagents.ts";
+import { makeOmpThreadSessions } from "./threadSessions.ts";
 import {
   type FakeOmpScript,
   type FakeOmpState,
@@ -127,6 +128,7 @@ const openAdapter = Effect.fnUntraced(function* (state: FakeOmpState, contract: 
     dirs,
     pidfiles: yield* makeOmpPidfiles({ dir: dirs.pidfiles, platform }),
     expectedContractVersion: contract,
+    threadSessions: makeOmpThreadSessions(),
   });
   const session = yield* adapter.openSession({
     threadId: THREAD_ID,
