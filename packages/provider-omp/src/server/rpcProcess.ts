@@ -118,6 +118,11 @@ export type OmpRpcResult<K extends OmpRpcCommand> = RpcWireCommands[K]["result"]
 export interface OmpRpcRequestOptions {
   /** `null` waits for as long as the process lives (e.g. `compact`). */
   readonly timeoutMs?: number | null;
+  /**
+   * Also put the `response` on `frames`, after every frame OMP wrote before it. For commands
+   * whose output frames (`command_output`, `prompt_result`) must be ordered against the reply.
+   */
+  readonly echoResponse?: boolean;
 }
 
 export interface OmpRpcExit {
@@ -133,10 +138,10 @@ export interface OmpRpcProcess {
   readonly ready: ReadyEvent;
   readonly contractVersion: string;
   /**
-   * Every frame except responses to `request`, in order, with `rpc_chunk` sequences already
-   * reassembled. Typed as the pinned contract's union; consumers must tolerate unknown `type`s.
-   * Single consumer. Ends when the process stops; fails when it breaks the protocol or exits
-   * unexpectedly.
+   * Every frame except responses to `request` (unless `echoResponse` asked for them), in order,
+   * with `rpc_chunk` sequences already reassembled. Typed as the pinned contract's union;
+   * consumers must tolerate unknown `type`s. Single consumer. Ends when the process stops; fails
+   * when it breaks the protocol or exits unexpectedly.
    */
   readonly frames: Stream.Stream<RpcServerFrame, OmpRpcError>;
   /** Sends a command and waits for its correlated `response`. */
@@ -175,6 +180,7 @@ export interface OmpRpcSpawnOptions {
 interface PendingRequest {
   readonly command: string;
   readonly deferred: Deferred.Deferred<unknown, OmpRpcError | OmpRpcCommandError>;
+  readonly echoResponse: boolean;
 }
 
 const encoder = new TextEncoder();
@@ -279,6 +285,7 @@ export const startOmpRpcProcess = Effect.fn("startOmpRpcProcess")(function* (
       const request = pending.get(response.id ?? "");
       if (request !== undefined) {
         pending.delete(response.id ?? "");
+        if (request.echoResponse) yield* Queue.offer(frames, response);
         if (response.success) {
           // OMP switches its encoder to v2 right after writing this response.
           if (response.command === "negotiate_protocol") protocolV2 = true;
@@ -412,7 +419,7 @@ export const startOmpRpcProcess = Effect.fn("startOmpRpcProcess")(function* (
     yield* Effect.annotateCurrentSpan({ command });
     const id = `ompanel-${nextRequestId++}`;
     const deferred = yield* Deferred.make<unknown, OmpRpcError | OmpRpcCommandError>();
-    pending.set(id, { command, deferred });
+    pending.set(id, { command, deferred, echoResponse: requestOptions?.echoResponse === true });
     const forget = Effect.sync(() => pending.delete(id));
     yield* write({ ...params, id, type: command }).pipe(Effect.tapError(() => forget));
     const timeoutMs =

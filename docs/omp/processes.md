@@ -33,7 +33,10 @@ instance's environment overrides.
 
 After the handshake the process exposes a frame stream (every frame except
 responses to Ompanel's own commands) and a typed command API keyed by the
-vendored contract's `RpcWireCommands`.
+vendored contract's `RpcWireCommands`. A command sent with `echoResponse`
+also has its response put on the frame stream, after every frame OMP wrote
+before it; turns use this for `prompt`. What the frames mean for a thread is
+in [frames.md](./frames.md).
 
 ## Framing
 
