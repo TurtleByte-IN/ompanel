@@ -58,3 +58,15 @@ export class ServerCliExecutableImportError extends Schema.TaggedError<ServerCli
     return `${this.bundlePath} imports file-backed packages that a single-executable cannot resolve: ${this.specifiers.join(", ")}. Load them through createRequire instead.`;
   }
 }
+
+export class ServerCliUnshippedRuntimePackageError extends Schema.TaggedError<ServerCliUnshippedRuntimePackageError>()(
+  "ServerCliUnshippedRuntimePackageError",
+  {
+    distDir: Schema.String,
+    packages: Schema.Array(Schema.String),
+  },
+) {
+  override get message(): string {
+    return `${this.distDir} loads packages that apps/server would not ship at runtime: ${this.packages.join(", ")}. Add each to apps/server dependencies and keep it matched by scripts/lib/cli-external-packages.ts, or let the bundler inline it.`;
+  }
+}

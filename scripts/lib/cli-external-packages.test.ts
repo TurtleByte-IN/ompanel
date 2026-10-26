@@ -7,11 +7,15 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
-import { findEsmImportsOfExternalPackages } from "./cli-executable-imports.ts";
+import {
+  findEsmImportsOfExternalPackages,
+  findRuntimePackageSpecifiers,
+} from "./cli-executable-imports.ts";
 
 import {
   isRuntimeExternalCliDependency,
   findInlinedExternalPackages,
+  findUnshippedRuntimePackages,
   shouldBundleCliDependency,
 } from "./cli-external-packages.ts";
 
@@ -219,5 +223,45 @@ describe("findEsmImportsOfExternalPackages", () => {
   it("does not mistake createRequire calls for imports", () => {
     const source = 'const { FileFinder } = createRequire(import.meta.url)("@ff-labs/fff-node");';
     assert.deepStrictEqual(findEsmImportsOfExternalPackages(source), []);
+  });
+});
+
+describe("findRuntimePackageSpecifiers", () => {
+  it("adds Rolldown's CommonJS requires to the ESM imports", () => {
+    const source = [
+      'import { z } from "zod/v4";',
+      'const ws = () => __require("bufferutil");',
+      'const fs = __require("fs");',
+      'const pty = createRequire(import.meta.url)("node-pty");',
+    ].join("\n");
+    assert.deepStrictEqual(findRuntimePackageSpecifiers(source), ["bufferutil", "zod/v4"]);
+    assert.deepStrictEqual(findEsmImportsOfExternalPackages(source), ["zod/v4"]);
+  });
+});
+
+describe("findUnshippedRuntimePackages", () => {
+  it("flags an external package the server does not declare", () => {
+    // The G0 crash: the bundled MCP SDK imported zod, which apps/server did not declare.
+    assert.deepStrictEqual(
+      findUnshippedRuntimePackages(["zod/v3", "zod/v4", "@cursor/sdk/sqlite"], {
+        "@cursor/sdk": "1.0.35",
+      }),
+      ["zod"],
+    );
+    assert.deepStrictEqual(
+      findUnshippedRuntimePackages(["zod/v4", "@cursor/sdk"], {
+        "@cursor/sdk": "1.0.35",
+        zod: "4.6.5",
+      }),
+      [],
+    );
+  });
+
+  it("flags a declared package that runtime staging would leave out", () => {
+    assert.deepStrictEqual(findUnshippedRuntimePackages(["yaml"], { yaml: "2.9.0" }), ["yaml"]);
+  });
+
+  it("allows the optional ws accelerators", () => {
+    assert.deepStrictEqual(findUnshippedRuntimePackages(["bufferutil", "utf-8-validate"], {}), []);
   });
 });
