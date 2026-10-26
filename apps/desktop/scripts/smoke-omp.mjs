@@ -2,6 +2,7 @@
 // home with OMP enabled and no binary path, and passes only when the backend is healthy and OMP
 // turns ready on the omp.lock sidecar for this platform, downloaded and sha256-verified. CI runs
 // it on macOS, Windows and Linux (docs/omp/ci.md).
+import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
@@ -15,10 +16,27 @@ const READINESS_PATH = "/.well-known/t3/environment";
 // Covers the first-run sidecar download (~100 MB) and its probe on a cold runner.
 const OMP_READY_TIMEOUT_MS = 5 * 60_000;
 const WINDOW_TIMEOUT_MS = 2 * 60_000;
+// Same flags as the status check's RPC control process (OMP_CONTROL_RPC_ARGS in control.ts).
+const OMP_CONTROL_RPC_ARGS = [
+  "--mode",
+  "rpc",
+  "--no-session",
+  "--no-tools",
+  "--no-extensions",
+  "--no-skills",
+  "--no-rules",
+  "--no-lsp",
+  "--no-title",
+];
 // oxlint-disable-next-line t3code/no-global-process-runtime -- The smoke test checks the host it runs on; this script has no Effect runtime.
 const hostPlatform = process.platform;
 // oxlint-disable-next-line t3code/no-global-process-runtime -- The omp.lock key is the host's architecture.
 const hostArch = process.arch;
+
+const lock = JSON.parse(
+  NodeFS.readFileSync(NodePath.join(desktopDir, "../../packages/provider-omp/omp.lock"), "utf8"),
+);
+const sidecar = lock.sidecars[`${hostPlatform}-${hostArch}`];
 
 const artifactsDir = NodePath.resolve(
   process.env.OMPANEL_DESKTOP_SMOKE_ARTIFACTS ?? NodePath.join(desktopDir, ".smoke-omp"),
@@ -31,18 +49,12 @@ const root = NodeFS.realpathSync(
 const home = NodePath.join(root, "home");
 const ompanelHome = NodePath.join(root, "ompanel");
 const userdata = NodePath.join(ompanelHome, "userdata");
-NodeFS.mkdirSync(userdata, { recursive: true });
-NodeFS.mkdirSync(home, { recursive: true });
-// OMP enabled with no binary path: the backend has to find the pinned sidecar itself.
-NodeFS.writeFileSync(
-  NodePath.join(userdata, "settings.json"),
-  `${JSON.stringify({ providerInstances: { omp: { driver: "omp", enabled: true } } }, null, 2)}\n`,
-);
-
-const env = { ...process.env };
-delete env.ELECTRON_RUN_AS_NODE;
-Object.assign(env, {
-  // Every per-user path the app, its backend and omp derive: nothing touches the runner's profile.
+const cachedSidecar =
+  sidecar === undefined
+    ? undefined
+    : NodePath.join(ompanelHome, "tools", "omp", lock.tag, sidecar.asset);
+// Every per-user path the app, its backend and omp derive: nothing touches the runner's profile.
+const profile = {
   HOME: home,
   USERPROFILE: home,
   APPDATA: NodePath.join(home, "AppData", "Roaming"),
@@ -51,6 +63,17 @@ Object.assign(env, {
   XDG_DATA_HOME: NodePath.join(home, ".local", "share"),
   XDG_STATE_HOME: NodePath.join(home, ".local", "state"),
   XDG_CACHE_HOME: NodePath.join(home, ".cache"),
+};
+for (const dir of [userdata, ...Object.values(profile)]) NodeFS.mkdirSync(dir, { recursive: true });
+// OMP enabled with no binary path: the backend has to find the pinned sidecar itself.
+NodeFS.writeFileSync(
+  NodePath.join(userdata, "settings.json"),
+  `${JSON.stringify({ providerInstances: { omp: { driver: "omp", enabled: true } } }, null, 2)}\n`,
+);
+
+const env = { ...process.env };
+delete env.ELECTRON_RUN_AS_NODE;
+Object.assign(env, profile, {
   OMPANEL_HOME: ompanelHome,
   OMPANEL_TELEMETRY_ENABLED: "false",
   VITE_DEV_SERVER_URL: "",
@@ -62,18 +85,64 @@ const record = (line) => {
   log.push(line);
   console.log(line);
 };
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+/** `promise`, or `fallback` once `ms` pass: a hung window must not hang the job. */
+const within = (promise, ms, fallback) =>
+  Promise.race([promise.catch(() => fallback), sleep(ms).then(() => fallback)]);
+
+/** Runs the cached sidecar as the status check does, for 15 s, so a failing probe shows why. */
+const runSidecarDirectly = async () => {
+  if (cachedSidecar === undefined || !NodeFS.existsSync(cachedSidecar)) return;
+  const child = NodeChildProcess.spawn(cachedSidecar, OMP_CONTROL_RPC_ARGS, {
+    cwd: home,
+    env: { ...env, PI_NO_PTY: "1" },
+    stdio: ["pipe", "pipe", "pipe"],
+    windowsHide: true,
+  });
+  let output = "";
+  child.stdout.on("data", (chunk) => (output += `[stdout] ${String(chunk)}`));
+  child.stderr.on("data", (chunk) => (output += `[stderr] ${String(chunk)}`));
+  const exited = new Promise((resolve) =>
+    child.on("exit", (code, signal) => resolve(`exit ${String(code)} ${String(signal)}`)),
+  );
+  child.on("error", (error) => (output += `[spawn error] ${String(error)}\n`));
+  child.stdin.write(`${JSON.stringify({ id: "1", type: "get_login_providers" })}\n`);
+  const outcome = await within(exited, 15_000, "still running after 15 s");
+  child.kill();
+  NodeFS.writeFileSync(
+    NodePath.join(artifactsDir, "sidecar-rpc.log"),
+    `${cachedSidecar} ${OMP_CONTROL_RPC_ARGS.join(" ")}\n${outcome}\n${output}\n`,
+  );
+};
+
+const stopApp = async (app) => {
+  if (app === undefined) return;
+  // Playwright's handle is gone once the app closes; take the process before closing.
+  const child = app.process();
+  await within(app.close(), 15_000, undefined);
+  if (child.exitCode === null && child.signalCode === null) child.kill();
+};
 
 const fail = async (message, app, page) => {
   console.error(`\nDesktop OMP smoke test failed: ${message}`);
   if (page !== undefined) {
-    await page
-      .screenshot({ path: NodePath.join(artifactsDir, "failure.png") })
-      .catch(() => undefined);
+    await within(
+      page.screenshot({ path: NodePath.join(artifactsDir, "failure.png"), timeout: 10_000 }),
+      15_000,
+      undefined,
+    );
   }
   NodeFS.writeFileSync(NodePath.join(artifactsDir, "output.log"), `${log.join("\n")}\n`);
-  await app?.close().catch(() => undefined);
+  const logs = NodePath.join(userdata, "logs");
+  if (NodeFS.existsSync(logs)) {
+    NodeFS.cpSync(logs, NodePath.join(artifactsDir, "logs"), { recursive: true });
+  }
+  await runSidecarDirectly().catch((error) => console.error(String(error)));
+  await stopApp(app);
   process.exit(1);
 };
+
+if (sidecar === undefined) await fail(`omp.lock has no sidecar for ${hostPlatform}-${hostArch}`);
 
 const launch = resolveElectronLaunchCommand([NodePath.join(desktopDir, "dist-electron/boot.cjs")]);
 record(`[smoke-omp] ${hostPlatform}-${hostArch}: launching ${launch.electronPath}`);
@@ -97,9 +166,9 @@ app.process().stderr?.on("data", onAppOutput);
 const waitFor = async (find, timeoutMs) => {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const found = find();
+    const found = await find();
     if (found !== undefined) return found;
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    await sleep(500);
   }
   return undefined;
 };
@@ -125,44 +194,73 @@ if (page === undefined) {
   const urls = app.windows().map((candidate) => candidate.url());
   await fail(`the main window never opened (windows: ${JSON.stringify(urls)})`, app);
 }
-page.on("console", (message) => record(`[renderer:${message.type()}] ${message.text()}`));
-page.on("pageerror", (error) => record(`[renderer:pageerror] ${String(error)}`));
+// A runner's window may start hidden or behind others; Chromium then stops painting it.
+await within(
+  app.evaluate(({ BrowserWindow }) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      window.show();
+      window.focus();
+    }
+  }),
+  10_000,
+  undefined,
+);
 
 // The providers page lists each instance; its row carries the status key (providerStatus.ts).
-await page.goto(new URL("#/settings/providers", page.url()).href);
-const omp = page.locator("[data-provider-instance='omp']");
-const ready = await omp
-  .and(page.locator("[data-provider-status='ready']"))
-  .waitFor({ timeout: OMP_READY_TIMEOUT_MS })
-  .then(() => true)
-  .catch(() => false);
-const summary = (await omp.innerText().catch(() => "")).replace(/\s+/g, " ").trim();
-await page
-  .screenshot({ path: NodePath.join(artifactsDir, `providers-${hostPlatform}-${hostArch}.png`) })
-  .catch(() => undefined);
-if (!ready) {
-  const status = await omp.getAttribute("data-provider-status").catch(() => null);
-  await fail(`OMP provider is ${String(status)}, not ready: ${summary}`, app, page);
+// Polled through the DOM, which answers whether or not the window paints.
+await within(
+  page.evaluate(() => {
+    window.location.hash = "#/settings/providers";
+  }),
+  10_000,
+  undefined,
+);
+const readRow = () =>
+  within(
+    page.evaluate(() => {
+      const row = document.querySelector("[data-provider-instance='omp']");
+      return row === null
+        ? null
+        : {
+            status: row.getAttribute("data-provider-status"),
+            text: (row instanceof HTMLElement ? row.innerText : (row.textContent ?? ""))
+              .replace(/\s+/g, " ")
+              .trim(),
+          };
+    }),
+    10_000,
+    null,
+  );
+// `warning` covers "Checking the OMP sidecar..." while the probe runs; ready and error are final.
+const row = await waitFor(async () => {
+  const current = await readRow();
+  return current?.status === "ready" || current?.status === "error" ? current : undefined;
+}, OMP_READY_TIMEOUT_MS);
+await within(
+  page.screenshot({
+    path: NodePath.join(artifactsDir, `providers-${hostPlatform}-${hostArch}.png`),
+    timeout: 10_000,
+  }),
+  15_000,
+  undefined,
+);
+if (row?.status !== "ready") {
+  const last = row ?? (await readRow());
+  await fail(`OMP provider is ${String(last?.status)}, not ready: ${last?.text ?? ""}`, app, page);
 }
-record(`[smoke-omp] OMP provider ready: ${summary}`);
+record(`[smoke-omp] OMP provider ready: ${row.text}`);
 
 // The sidecar it ran is this platform's omp.lock asset, downloaded into the cache and verified.
-const lock = JSON.parse(
-  NodeFS.readFileSync(NodePath.join(desktopDir, "../../packages/provider-omp/omp.lock"), "utf8"),
-);
-const sidecar = lock.sidecars[`${hostPlatform}-${hostArch}`];
-if (sidecar === undefined) await fail(`omp.lock has no sidecar for this platform`, app, page);
-const cached = NodePath.join(ompanelHome, "tools", "omp", lock.tag, sidecar.asset);
-const digest = NodeFS.existsSync(cached)
-  ? NodeCrypto.createHash("sha256").update(NodeFS.readFileSync(cached)).digest("hex")
+const digest = NodeFS.existsSync(cachedSidecar)
+  ? NodeCrypto.createHash("sha256").update(NodeFS.readFileSync(cachedSidecar)).digest("hex")
   : null;
 if (digest !== sidecar.sha256) {
-  await fail(`${cached} is ${digest === null ? "missing" : `sha256 ${digest}`}`, app, page);
+  await fail(`${cachedSidecar} is ${digest === null ? "missing" : `sha256 ${digest}`}`, app, page);
 }
 record(`[smoke-omp] ran ${lock.tag} ${sidecar.asset} (sha256 ${digest})`);
 
 NodeFS.writeFileSync(NodePath.join(artifactsDir, "output.log"), `${log.join("\n")}\n`);
-await app.close();
+await stopApp(app);
 // Windows can hold a just-exited process's files open for a moment; a leftover temp dir is harmless.
 try {
   NodeFS.rmSync(root, { recursive: true, force: true, maxRetries: 5 });

@@ -720,17 +720,18 @@ jobs:
       - name: Ensure Electron runtime is installed
         run: vp run --filter @t3tools/desktop ensure:electron
 
+      # The Linux desktop build compiles the browser secret helper; the smoke needs a display.
+      - name: Install Linux build libraries and a virtual display
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config xvfb
+
       - name: Build desktop app and server
         run: vp run --filter @t3tools/desktop --filter t3 build
 
       - name: Kill process trees under the job-object launcher
         if: runner.os == 'Windows'
         working-directory: packages/provider-omp
-        run: vp test run src/server/processTree.windows.test.ts
-
-      - name: Install a virtual display
-        if: runner.os == 'Linux'
-        run: command -v xvfb-run || (sudo apt-get update && sudo apt-get install -y xvfb)
+        run: vp test run --config ../../vite.config.ts --dir . src/server/processTree.windows.test.ts
 
       - name: Launch the desktop app and wait for OMP
         timeout-minutes: 15
