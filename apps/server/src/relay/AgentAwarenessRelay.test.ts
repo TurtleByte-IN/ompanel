@@ -844,10 +844,7 @@ describe("AgentAwarenessRelay", () => {
           ["running", "notify:1", "Build is green"],
         ],
       );
-      assert.equal(
-        publications[1]?.state?.agentMessage?.sentAt,
-        DateTime.formatIso(now),
-      );
+      assert.equal(publications[1]?.state?.agentMessage?.sentAt, DateTime.formatIso(now));
     }).pipe(Effect.scoped, Effect.provide(ProjectionStore.layerMemory)),
   );
 });

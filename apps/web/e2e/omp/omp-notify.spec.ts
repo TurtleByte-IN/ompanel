@@ -75,9 +75,8 @@ test("an OMP notify mid-turn alerts in another view and reaches the relay", asyn
   await expect
     .poll(
       () =>
-        stack.relay
-          ?.publications()
-          .find((entry) => entry.state?.agentMessage?.text === MESSAGE)?.state ?? null,
+        stack.relay?.publications().find((entry) => entry.state?.agentMessage?.text === MESSAGE)
+          ?.state ?? null,
     )
     .toMatchObject({ threadId: thread, phase: "running", agentMessage: { text: MESSAGE } });
   NodeFS.writeFileSync(

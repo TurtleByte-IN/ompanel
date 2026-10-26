@@ -145,16 +145,16 @@ function EnvironmentNotifications({
       kind === "message"
         ? thread.title
         : kind === "completion"
-        ? "Thread completed"
-        : status === "approval"
-          ? "Approval needed"
-          : status === "limited"
-            ? "Usage limit reached"
-            : status === "failed"
-              ? "Thread failed"
-              : status === "request"
-                ? "Guest request"
-                : "Input needed";
+          ? "Thread completed"
+          : status === "approval"
+            ? "Approval needed"
+            : status === "limited"
+              ? "Usage limit reached"
+              : status === "failed"
+                ? "Thread failed"
+                : status === "request"
+                  ? "Guest request"
+                  : "Input needed";
     if (hasNotificationSound(mode)) {
       void playNotificationSound(kind === "completion" ? "completion" : "input", () =>
         hasNotificationSound(getClientSettings().notificationMode),

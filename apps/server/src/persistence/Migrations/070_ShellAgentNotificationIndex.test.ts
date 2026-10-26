@@ -60,7 +60,10 @@ layer("070_ShellAgentNotificationIndex", (it) => {
       // Up.
       assert.deepEqual(yield* runMigrations(), [[70, "ShellAgentNotificationIndex"]]);
       assert.isTrue(yield* indexExists());
-      assert.include(yield* plan(), "orchestration_v2_projection_turn_items_agent_notification_idx");
+      assert.include(
+        yield* plan(),
+        "orchestration_v2_projection_turn_items_agent_notification_idx",
+      );
       assert.deepEqual(yield* latest(), ["newer"]);
       assert.deepEqual(yield* runMigrations(), []);
 
