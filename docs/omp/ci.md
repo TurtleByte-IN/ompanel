@@ -47,13 +47,19 @@ cancelled job fails it. Through it, every pull request is gated on:
   on its own runner, then runs `node apps/desktop/scripts/smoke-omp.mjs`
   (under `xvfb-run` on Linux). The script launches `dist-electron/boot.cjs`,
   the entry the packaged app runs, with a throwaway home and OMP enabled with
-  no binary path. It passes only when the backend logs ready and answers
+  no binary path. `omp --mode rpc` exits when no default model resolves
+  (ompanel#144), so the throwaway OMP home gets a loopback model provider
+  that is never prompted. On macOS the app runs with `--use-mock-keychain`,
+  since a locked runner keychain would block the main process with a prompt.
+  It passes only when the backend logs ready and answers
   `/.well-known/t3/environment`, the main window opens, and the OMP row on
   Settings → Providers turns ready. It then checks that the sidecar that ran
   is this platform's `omp.lock` asset: downloaded into
   `<OMPANEL_HOME>/tools/omp/<tag>/` with the sha256 in the lock. A screenshot
   of the providers page and the app's log are uploaded as
-  `desktop-smoke-<platform>-<arch>`. On Windows the job first runs
+  `desktop-smoke-<platform>-<arch>`; on failure the backend logs and the
+  output of the cached sidecar run with the status check's flags are too.
+  On Windows the job first runs
   `processTree.windows.test.ts`, which kills real process trees under the
   job-object launcher ([processes.md](processes.md#stopping)). Locally, run
   the build, then the script; set `OMPANEL_DESKTOP_SMOKE_ARTIFACTS` to keep the

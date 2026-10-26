@@ -6,6 +6,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
+import * as NodeHttp from "node:http";
 import * as NodePath from "node:path";
 
 import { _electron } from "playwright-core";
@@ -69,6 +70,42 @@ for (const dir of [userdata, ...Object.values(profile)]) NodeFS.mkdirSync(dir, {
 NodeFS.writeFileSync(
   NodePath.join(userdata, "settings.json"),
   `${JSON.stringify({ providerInstances: { omp: { driver: "omp", enabled: true } } }, null, 2)}\n`,
+);
+
+// `omp --mode rpc` exits unless a default model resolves, so the throwaway OMP home gets one: a
+// loopback OpenAI-compatible provider that only lists its model (the probe never prompts).
+const modelServer = NodeHttp.createServer((request, response) => {
+  if ((request.url ?? "").endsWith("/models")) {
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(
+      JSON.stringify({ object: "list", data: [{ id: "smoke-model", object: "model" }] }),
+    );
+    return;
+  }
+  response.writeHead(404).end();
+});
+await new Promise((resolve) => modelServer.listen(0, "127.0.0.1", resolve));
+modelServer.unref();
+const agentDir = NodePath.join(home, ".omp", "agent");
+NodeFS.mkdirSync(agentDir, { recursive: true });
+NodeFS.writeFileSync(
+  NodePath.join(agentDir, "models.yml"),
+  [
+    "providers:",
+    "  smoke:",
+    `    baseUrl: http://127.0.0.1:${String(modelServer.address().port)}/v1`,
+    "    auth: none",
+    "    api: openai-completions",
+    "    models:",
+    "      - id: smoke-model",
+    "        name: Smoke Model",
+    "        reasoning: false",
+    "",
+  ].join("\n"),
+);
+NodeFS.writeFileSync(
+  NodePath.join(agentDir, "config.yml"),
+  "modelRoles:\n  default: smoke/smoke-model\n",
 );
 
 const env = { ...process.env };
@@ -149,7 +186,8 @@ record(`[smoke-omp] ${hostPlatform}-${hostArch}: launching ${launch.electronPath
 const app = await _electron
   .launch({
     executablePath: launch.electronPath,
-    args: launch.args,
+    // A runner's login keychain may be locked; a keychain prompt would block the main process.
+    args: hostPlatform === "darwin" ? ["--use-mock-keychain", ...launch.args] : launch.args,
     cwd: desktopDir,
     env,
     timeout: WINDOW_TIMEOUT_MS,
