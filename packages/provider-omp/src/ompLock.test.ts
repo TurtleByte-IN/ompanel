@@ -5,11 +5,12 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
+import { CLI_CONTRACT_SCHEMA_HASH, CLI_CONTRACT_VERSION } from "../contract/src/cli.generated.ts";
 import {
   RPC_CONTRACT_SCHEMA_HASH,
   RPC_CONTRACT_VERSION,
 } from "../contract/src/contract.generated.ts";
-import { ContractManifest, OmpLockFile } from "../scripts/contractMatch.ts";
+import { CliContractManifest, ContractManifest, OmpLockFile } from "../scripts/contractMatch.ts";
 import { OMP_LOCK } from "./ompLock.ts";
 import { isSafeOmpAssetName } from "./server/sidecar.ts";
 
@@ -42,6 +43,16 @@ describe("omp.lock", () => {
       assert.strictEqual(manifest.schemaHash, OMP_LOCK.contract.schemaHash);
       assert.strictEqual(RPC_CONTRACT_VERSION, OMP_LOCK.contract.version);
       assert.strictEqual(RPC_CONTRACT_SCHEMA_HASH, OMP_LOCK.contract.schemaHash);
+    }),
+  );
+
+  it.effect("pins the CLI contract version and schema hash of the vendored contract", () =>
+    Effect.gen(function* () {
+      const manifest = yield* readPackageJson("contract/cli-contract.json", CliContractManifest);
+      assert.strictEqual(manifest.cliContractVersion, OMP_LOCK.cliContract.version);
+      assert.strictEqual(manifest.schemaHash, OMP_LOCK.cliContract.schemaHash);
+      assert.strictEqual(CLI_CONTRACT_VERSION, OMP_LOCK.cliContract.version);
+      assert.strictEqual(CLI_CONTRACT_SCHEMA_HASH, OMP_LOCK.cliContract.schemaHash);
     }),
   );
 

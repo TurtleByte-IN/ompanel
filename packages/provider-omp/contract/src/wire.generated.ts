@@ -378,6 +378,9 @@ export type QueuedMessageQueue = "steering" | "followUp";
 
 export type CacheWarmingMode = "off" | "streaming" | "idle";
 
+/** `tools.approvalMode`: the highest tool tier that runs without asking (the `--approval-mode` choices). */
+export type ApprovalMode = "always-ask" | "always-ask-cached" | "write" | "yolo";
+
 /** `set_event_filter` projection: `delta` drops the accumulated snapshots from `message_update`. */
 export type MessageUpdates = "full" | "delta";
 
@@ -695,6 +698,10 @@ export interface SubagentSnapshot {
 	/** Raw `AgentProgress` record. */
 	progress?: Record<string, unknown>;
 	parentToolCallId?: string;
+	/** Id of the subagent that spawned this one; null when the root session spawned it. */
+	parentId?: string | null;
+	/** Subagent ancestors above this one: 0 when the root session spawned it, 1 for its children, and so on. */
+	depth?: number;
 }
 
 /** Incremental subagent transcript read. */
@@ -873,6 +880,25 @@ export interface AutoCompactionEndEvent {
 	skipped?: boolean;
 }
 
+/** A manual compaction (`compact` command, `/compact`, extension `ctx.compact()`) began; the live turn is already aborted. */
+export interface ManualCompactionStartEvent {
+	type: "manual_compaction_start";
+	/** The `/compact <mode>` subcommand, when one was given. */
+	mode?: string;
+}
+
+/** Outcome of the compaction announced by the matching `manual_compaction_start`. */
+export interface ManualCompactionEndEvent {
+	type: "manual_compaction_end";
+	/** The compaction was cancelled (abort, or a `session_before_compact` hook). */
+	aborted: boolean;
+	/** Present when the compaction committed. */
+	result?: CompactionResult;
+	/** There was nothing to compact; `errorMessage` says why. */
+	skipped?: boolean;
+	errorMessage?: string;
+}
+
 export interface AutoRetryStartEvent {
 	type: "auto_retry_start";
 	attempt: number;
@@ -942,6 +968,7 @@ export interface AdvisorYieldedEvent {
 	type: "advisor_yielded";
 }
 
+/** Rule injection: a TTSR rule matched the stream and its text was injected. Each rule carries at least `name`, `path`, and `content`. */
 export interface TtsrTriggeredEvent {
 	type: "ttsr_triggered";
 	rules: Record<string, unknown>[];
@@ -997,7 +1024,7 @@ export interface QueueUpdateEvent {
 }
 
 /** A session event, discriminated by `type`; `set_event_filter` selects which are sent. */
-export type RpcAgentEvent = AgentStartEvent | AgentEndEvent | TurnStartEvent | TurnEndEvent | MessageStartEvent | MessageUpdateEvent | MessageEndEvent | ToolExecutionStartEvent | ToolExecutionUpdateEvent | ToolStreamUpdateEvent | ToolExecutionEndEvent | AutoCompactionStartEvent | AutoCompactionEndEvent | AutoRetryStartEvent | AutoRetryEndEvent | CacheWarmingStartEvent | CacheWarmingEndEvent | RetryFallbackAppliedEvent | RetryFallbackSucceededEvent | ModelChangedEvent | ConfigWarningsChangedEvent | AdvisorCostChangedEvent | AdvisorYieldedEvent | TtsrTriggeredEvent | TodoReminderEvent | TodoAutoClearEvent | IrcMessageEvent | NoticeEvent | ThinkingLevelChangedEvent | GoalUpdatedEvent | QueueUpdateEvent;
+export type RpcAgentEvent = AgentStartEvent | AgentEndEvent | TurnStartEvent | TurnEndEvent | MessageStartEvent | MessageUpdateEvent | MessageEndEvent | ToolExecutionStartEvent | ToolExecutionUpdateEvent | ToolStreamUpdateEvent | ToolExecutionEndEvent | AutoCompactionStartEvent | AutoCompactionEndEvent | ManualCompactionStartEvent | ManualCompactionEndEvent | AutoRetryStartEvent | AutoRetryEndEvent | CacheWarmingStartEvent | CacheWarmingEndEvent | RetryFallbackAppliedEvent | RetryFallbackSucceededEvent | ModelChangedEvent | ConfigWarningsChangedEvent | AdvisorCostChangedEvent | AdvisorYieldedEvent | TtsrTriggeredEvent | TodoReminderEvent | TodoAutoClearEvent | IrcMessageEvent | NoticeEvent | ThinkingLevelChangedEvent | GoalUpdatedEvent | QueueUpdateEvent;
 
 /** First frame after startup; transport fields are absent on servers without protocol v2. */
 export interface ReadyEvent {
@@ -1062,6 +1089,10 @@ export interface SubagentLifecyclePayload {
 	description?: string;
 	sessionFile?: string;
 	parentToolCallId?: string;
+	/** Id of the subagent that spawned this one; null when the root session spawned it. */
+	parentId?: string | null;
+	/** Subagent ancestors above this one: 0 when the root session spawned it, 1 for its children, and so on. */
+	depth?: number;
 	/** The subagent runs as a detached background job. */
 	detached?: boolean;
 }
@@ -1074,6 +1105,10 @@ export interface SubagentProgressPayload {
 	/** Raw `AgentProgress` record. */
 	progress: Record<string, unknown>;
 	parentToolCallId?: string;
+	/** Id of the subagent that spawned this one; null when the root session spawned it. */
+	parentId?: string | null;
+	/** Subagent ancestors above this one: 0 when the root session spawned it, 1 for its children, and so on. */
+	depth?: number;
 	assignment?: string;
 	sessionFile?: string;
 	detached?: boolean;
@@ -1082,6 +1117,10 @@ export interface SubagentProgressPayload {
 export interface SubagentEventPayload {
 	id: string;
 	event: RpcAgentEvent;
+	/** Id of the subagent that spawned this one; null when the root session spawned it. */
+	parentId?: string | null;
+	/** Subagent ancestors above this one: 0 when the root session spawned it, 1 for its children, and so on. */
+	depth?: number;
 }
 
 /** A subagent started or ended; sent at subscription level "progress" or "events". */
@@ -1536,6 +1575,47 @@ export interface SetAskDialogResult {
 	enabled: boolean;
 }
 
+export interface SetApprovalModeParams {
+	mode: ApprovalMode;
+}
+
+export interface SetApprovalModeResult {
+	mode: ApprovalMode;
+}
+
+export interface SetAdvisorParams {
+	enabled: boolean;
+}
+
+export interface SetAdvisorResult {
+	/** The session's advisor setting after the call. */
+	enabled: boolean;
+	/** Whether an advisor is running; false when no model is assigned to the `advisor` role. */
+	active: boolean;
+}
+
+export interface SetPrewalkParams {
+	armed: boolean;
+}
+
+export interface SetPrewalkResult {
+	/** Whether a handoff is pending after the call. */
+	armed: boolean;
+	/** Provider of the pending handoff's target model. */
+	provider?: string;
+	/** Id of the pending handoff's target model. */
+	modelId?: string;
+}
+
+export interface SetToolEnabledParams {
+	tool: string;
+	enabled: boolean;
+}
+
+export interface SetToolEnabledResult {
+	enabled: boolean;
+}
+
 export interface GetAvailableCommandsResult {
 	commands: AvailableSlashCommand[];
 }
@@ -1810,6 +1890,10 @@ export interface RpcWireCommands {
 	set_slow_mode: { params: SetSlowModeParams; result: SetSlowModeResult };
 	goal: { params: GoalParams; result: GoalResult };
 	set_ask_dialog: { params: SetAskDialogParams; result: SetAskDialogResult };
+	set_approval_mode: { params: SetApprovalModeParams; result: SetApprovalModeResult };
+	set_advisor: { params: SetAdvisorParams; result: SetAdvisorResult };
+	set_prewalk: { params: SetPrewalkParams; result: SetPrewalkResult };
+	set_tool_enabled: { params: SetToolEnabledParams; result: SetToolEnabledResult };
 	get_available_commands: { params: undefined; result: GetAvailableCommandsResult };
 	get_entries: { params: GetEntriesParams; result: SessionEntries };
 	get_tree: { params: undefined; result: SessionTree };

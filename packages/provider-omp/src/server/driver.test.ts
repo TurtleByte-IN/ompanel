@@ -20,6 +20,7 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as TestClock from "effect/testing/TestClock";
 
+import { OMP_LOCK } from "../ompLock.ts";
 import type { OmpSettings } from "../settings.ts";
 import { OMP_CONTROL_TIMEOUTS_MS } from "./control.ts";
 import { OmpDriver } from "./driver.ts";
@@ -99,7 +100,7 @@ const create = (config: Partial<OmpSettings>, enabled = true) =>
 it.layer(layerTest)("OmpDriver", (it) => {
   it.effect("reports a ready sidecar that speaks the pinned contract", () =>
     Effect.gen(function* () {
-      const omp = fakeOmp("1.0.0");
+      const omp = fakeOmp(OMP_LOCK.contract.version);
       const binaryPath = yield* overrideBinary;
       const instance = yield* create({ binaryPath, profile: "work" }).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, omp.spawner),
@@ -173,7 +174,7 @@ it.layer(layerTest)("OmpDriver", (it) => {
       const snapshot = yield* instance.snapshot.getSnapshot;
       assert.strictEqual(snapshot.status, "error");
       assert.include(snapshot.message, "RPC contract 2.0.0");
-      assert.include(snapshot.message, "contract 1.0.0");
+      assert.include(snapshot.message, `contract ${OMP_LOCK.contract.version}`);
     }).pipe(Effect.scoped),
   );
 

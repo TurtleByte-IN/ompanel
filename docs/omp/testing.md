@@ -121,6 +121,7 @@ another commit. For each scenario it:
   follows although no turn ran. Read the new id with `get_state`.
 - `/rename <title>` writes `command_output` and a `session_info_update`
   with the title.
-- `/compact` acks `{ agentInvoked: false }` and reports through
-  `command_output` only; no compaction events are sent.
+- `/compact` acks `{ agentInvoked: false }`, then sends
+  `manual_compaction_start` and `manual_compaction_end` (with the compaction
+  `result`, or `aborted`), then a `command_output` summary.
 - `/context` output contains ANSI colour escapes.
