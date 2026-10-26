@@ -12,6 +12,7 @@ const agentMessage = (itemId: string): OrchestrationV2AgentNotificationSummary =
   itemId: TurnItemId.make(itemId),
   summary: `Message ${itemId}`,
   notifiedAt: "2026-10-27T10:00:00.000Z",
+  runId: null,
 });
 
 describe("newAgentMessage", () => {

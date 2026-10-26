@@ -6,7 +6,7 @@ import type {
   Project,
   ThreadId,
 } from "@t3tools/contracts";
-import { ProviderInstanceId, RuntimeRequestId } from "@t3tools/contracts";
+import { ProviderInstanceId, RunId, RuntimeRequestId, TurnItemId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
 import { projectThreadAwarenessV2 } from "./agentAwareness.ts";
@@ -23,7 +23,9 @@ describe("projectThreadAwarenessV2", () => {
     overrides: Partial<
       Pick<
         OrchestrationV2ThreadShell,
+        | "activeRunId"
         | "activityRunStatus"
+        | "latestAgentNotification"
         | "latestRunStopRequested"
         | "status"
         | "pendingBackgroundTasks"
@@ -44,6 +46,7 @@ describe("projectThreadAwarenessV2", () => {
     status: "running" as const,
     pendingRuntimeRequest: null,
     settledOverride: null,
+    activeRunId: null,
     updatedAt,
     ...overrides,
   });
@@ -61,6 +64,45 @@ describe("projectThreadAwarenessV2", () => {
         thread: { ...input.thread, latestRunStopRequested: true },
       }),
     ).toBeNull();
+  });
+
+  it("carries the agent's message only while the run that sent it is working", () => {
+    const runId = RunId.make("run-1");
+    const latestAgentNotification = {
+      itemId: TurnItemId.make("item-1"),
+      summary: "Build is green",
+      notifiedAt: NOW,
+      runId,
+    };
+    const project3 = (overrides: Parameters<typeof v2Thread>[0]) =>
+      projectThreadAwarenessV2({
+        environmentId: "env-1" as EnvironmentId,
+        project,
+        thread: v2Thread({ latestAgentNotification, activeRunId: runId, ...overrides }),
+      });
+
+    expect(project3({})?.agentMessage).toEqual({
+      id: "item-1",
+      text: "Build is green",
+      sentAt: NOW,
+    });
+    // Waiting and finished phases carry their own alert; the words stay off the relay.
+    expect(project3({ status: "completed", activeRunId: null })?.agentMessage).toBeUndefined();
+    expect(
+      project3({
+        pendingRuntimeRequest: {
+          id: RuntimeRequestId.make("request-1"),
+          kind: "user_input",
+          createdAt: updatedAt,
+        },
+      })?.agentMessage,
+    ).toBeUndefined();
+    // A follow-up run (after Stop or a settle) never pushes an earlier run's message.
+    expect(project3({ activeRunId: RunId.make("run-2") })?.agentMessage).toBeUndefined();
+    expect(
+      project3({ latestAgentNotification: { ...latestAgentNotification, runId: null } })
+        ?.agentMessage,
+    ).toBeUndefined();
   });
 
   it.each(["running", "completed", "failed"] as const)(

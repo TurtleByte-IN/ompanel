@@ -10,7 +10,9 @@ import {
   type OrchestrationV2TurnItem,
   ProjectId,
   ProviderInstanceId,
+  ProviderSessionId,
   RunId,
+  RuntimeRequestId,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -756,17 +758,23 @@ describe("AgentAwarenessRelay", () => {
         contextHandoffId: null,
       };
       // What provider-omp's mapper makes of `extension_ui_request` `notify` (mapper.test.ts).
-      const notification = (id: string, kind: "agent" | "system", summary: string) =>
+      const notification = (
+        id: string,
+        kind: "agent" | "system",
+        summary: string,
+        inRun: RunId = runId,
+        at: DateTime.Utc = now,
+      ) =>
         ({
           id: EventId.make(`event:${id}`),
           type: "turn-item.updated",
           threadId: THREAD_ID,
-          runId,
-          occurredAt: now,
+          runId: inRun,
+          occurredAt: at,
           payload: {
             id: TurnItemId.make(id),
             threadId: THREAD_ID,
-            runId,
+            runId: inRun,
             nodeId: NodeId.make(`node:${id}`),
             providerThreadId: null,
             providerTurnId: null,
@@ -774,9 +782,9 @@ describe("AgentAwarenessRelay", () => {
             parentItemId: null,
             ordinal: 1,
             title: null,
-            startedAt: now,
-            completedAt: now,
-            updatedAt: now,
+            startedAt: at,
+            completedAt: at,
+            updatedAt: at,
             status: "completed",
             type: "notification",
             source: { kind },
@@ -845,6 +853,79 @@ describe("AgentAwarenessRelay", () => {
         ],
       );
       assert.equal(publications[1]?.state?.agentMessage?.sentAt, DateTime.formatIso(now));
+      const messagesSince = (from: number) =>
+        publications
+          .slice(from)
+          .map((publication) => [publication.state?.phase, publication.state?.agentMessage?.id]);
+
+      // Stop, then a follow-up run inside the alert window: the earlier run's message stays put.
+      yield* deliver({
+        id: EventId.make("event:notify:run:stopped"),
+        type: "run.updated",
+        threadId: THREAD_ID,
+        runId,
+        occurredAt: now,
+        payload: { ...run, status: "completed", completedAt: now },
+      });
+      const followUpRunId = RunId.make("run:notify:follow-up");
+      yield* deliver({
+        id: EventId.make("event:notify:run:follow-up"),
+        type: "run.created",
+        threadId: THREAD_ID,
+        runId: followUpRunId,
+        occurredAt: now,
+        payload: {
+          ...run,
+          id: followUpRunId,
+          ordinal: 2,
+          userMessageId: MessageId.make("message:notify:follow-up"),
+        },
+      });
+      assert.deepEqual(messagesSince(2), [["running", undefined]]);
+
+      // Waiting for input carries its own alert, so the words stay off the relay; once the run
+      // works again the message was already alerted and is not sent a second time.
+      yield* deliver(notification("notify:2", "agent", "Tests pass", followUpRunId));
+      const request = (status: "pending" | "resolved") =>
+        ({
+          id: EventId.make(`event:notify:request:${status}`),
+          type: "runtime-request.updated",
+          threadId: THREAD_ID,
+          runId: followUpRunId,
+          nodeId: NodeId.make("node:notify:request"),
+          occurredAt: now,
+          payload: {
+            id: RuntimeRequestId.make("request:notify"),
+            nodeId: NodeId.make("node:notify:request"),
+            providerTurnId: null,
+            nativeRequestRef: null,
+            kind: "user_input",
+            status,
+            responseCapability: {
+              type: "live",
+              providerSessionId: ProviderSessionId.make("session:notify"),
+            },
+            createdAt: now,
+            resolvedAt: status === "resolved" ? now : null,
+          },
+        }) satisfies OrchestrationV2DomainEvent;
+      yield* deliver(request("pending"));
+      yield* deliver(request("resolved"));
+      assert.deepEqual(messagesSince(3), [
+        ["running", "notify:2"],
+        ["waiting_for_input", undefined],
+        ["running", undefined],
+      ]);
+
+      // The relay holds the words only for the alert window: the server publishes again without
+      // them when it closes.
+      const later = yield* DateTime.now;
+      yield* deliver(notification("notify:3", "agent", "Deploying", followUpRunId, later));
+      assert.deepEqual(messagesSince(6), [["running", "notify:3"]]);
+      yield* TestClock.adjust("2 minutes");
+      yield* TestClock.adjust("2 seconds");
+      yield* relay.drain;
+      assert.deepEqual(messagesSince(7), [["running", undefined]]);
     }).pipe(Effect.scoped, Effect.provide(ProjectionStore.layerMemory)),
   );
 });

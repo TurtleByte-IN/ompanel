@@ -392,7 +392,7 @@ const registerDeviceWithRelay = Effect.fn("remoteRegistration.registerDeviceWith
   logRegistrationDebug("relay device registration request started", {
     expectedGeneration,
   });
-  yield* client.registerDevice({
+  const response = yield* client.registerDevice({
     clerkToken: token,
     payload,
   });
@@ -408,11 +408,15 @@ const registerDeviceWithRelay = Effect.fn("remoteRegistration.registerDeviceWith
   }
   if (body.platform === "android") androidDeviceReplayedAt = Date.now();
   setRegistrationStatus("registered");
+  // A relay that predates the agent-message preference drops it, and a missing preference reads
+  // as on. Until a relay confirms "off", keep no record so the next refresh registers again.
+  const agentMessagePreferenceKept =
+    payload.preferences.notifyOnAgentMessage !== false || response.notifyOnAgentMessage === false;
   yield* Effect.promise(() =>
-    saveAgentAwarenessRegistrationRecord({
-      identity,
-      signature,
-    }).catch((error: unknown) => {
+    (agentMessagePreferenceKept
+      ? saveAgentAwarenessRegistrationRecord({ identity, signature })
+      : clearAgentAwarenessRegistrationRecord()
+    ).catch((error: unknown) => {
       logRegistrationError("persist registration record failed", error);
     }),
   );

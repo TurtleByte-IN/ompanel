@@ -11,7 +11,7 @@ user is not reading that thread, alerts it on the desktop, in the web app, and o
    whole message as `detail`. `notifyType: "error"` gives a failed outcome. OMP's own notices keep
    other sources and never alert.
 2. **Thread shell.** Every thread shell carries `latestAgentNotification`: the newest `agent`
-   notification's item id, summary and time (`OrchestrationV2AgentNotificationSummary`). The
+   notification's item id, summary, time and run (`OrchestrationV2AgentNotificationSummary`). The
    SQLite read uses a partial index added by migration 070 (`070_ShellAgentNotificationIndex`).
    The migration only adds that index; dropping it restores the previous schema with the same
    answers. Older servers omit the field.
@@ -25,7 +25,15 @@ user is not reading that thread, alerts it on the desktop, in the web app, and o
    on) turns this alert off.
 4. **Server to relay.** `AgentAwarenessRelay` publishes the thread's agent-activity state when its
    `agentMessage` (`{ id, text, sentAt }`) changes, as it does for phase changes. This needs the
-   environment linked to Ompanel Connect with agent-activity publishing on.
+   environment linked to Ompanel Connect with agent-activity publishing on. The agent's words go to
+   the relay only while they can still alert, so the relay never keeps them longer than that:
+   - only while the thread is `starting` or `running` in the run that sent the message, so after
+     Stop or a settle a follow-up run never pushes an earlier run's message;
+   - only within two minutes of `sentAt`; when the window closes the server publishes again
+     without the words, which replaces the relay's stored copy;
+   - only in the unbroken run of publishes that introduced it: once a publish leaves it out (for
+     example while the thread waits for input) the message is retired and is not sent again when
+     the run resumes, so the relay cannot see it as new and push it twice.
 5. **Relay.** The publisher compares the message with the stored row's. It alerts a new message
    only while the thread is `starting` or `running`, once per message id, and only within the
    two-minute freshness window. Attention and terminal phases carry their own alert, so a message
@@ -36,7 +44,10 @@ user is not reading that thread, alerts it on the desktop, in the web app, and o
    the queued job runs.
 6. **Phones.** Settings > Notifications > Agent Messages sets the device's
    `notifyOnAgentMessage` preference on the relay. A device registered before the preference
-   existed omits it and gets agent messages.
+   existed omits it and gets agent messages. The relay's registration response echoes the
+   preference it stored. A relay that predates it drops the preference and does not echo it, so
+   a phone with Agent Messages off keeps no registration record and registers again on every
+   foreground until a relay confirms "off".
 
 There is no new relay phase: phone apps reject phases they do not know.
 

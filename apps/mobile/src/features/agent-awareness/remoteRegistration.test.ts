@@ -22,6 +22,7 @@ import {
   clearAgentAwarenessRegistrationRecord,
   loadAgentAwarenessRegistrationRecord,
   loadOrCreateAgentAwarenessDeviceId,
+  loadPreferences,
   saveAgentAwarenessRegistrationRecord,
 } from "../../persistence/imperative";
 import { makeRelayDeviceRegistrationRequest } from "./registrationPayload";
@@ -612,6 +613,54 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       expect(getAgentAwarenessRegistrationStatus()).toBe("registered");
       expect(saveAgentAwarenessRegistrationRecord).not.toHaveBeenCalled();
     }).pipe(Effect.provide(layerRelayTest));
+  });
+
+  it.effect("registers again until a relay confirms Agent Messages is off", () => {
+    let registrationResponse: Record<string, unknown> = { ok: true };
+    const registrations: unknown[] = [];
+    vi.stubGlobal("fetch", async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = request instanceof Request ? request.url : String(request);
+      if (url.endsWith("/v1/client/dpop-token")) {
+        return Response.json({
+          access_token: "relay-dpop-token",
+          issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
+          token_type: "DPoP",
+          expires_in: 300,
+          scope: "mobile:registration",
+        });
+      }
+      const body = request instanceof Request ? await request.text() : String(init?.body ?? "");
+      registrations.push(JSON.parse(body));
+      return Response.json(registrationResponse);
+    });
+    vi.mocked(loadPreferences).mockResolvedValue({ agentMessageNotificationsEnabled: false });
+    Constants.expoConfig!.extra = { relay: { url: "https://relay.example.test/" } };
+    setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"));
+
+    return Effect.gen(function* () {
+      // A relay that predates the preference answers without it: nothing is recorded, so the
+      // next foreground registers again.
+      yield* refreshAgentAwarenessRegistration();
+      yield* refreshAgentAwarenessRegistration();
+      expect(registrations).toHaveLength(2);
+      expect(registrations[0]).toMatchObject({ preferences: { notifyOnAgentMessage: false } });
+      expect(registrationRecordStore.current).toBeNull();
+
+      // Once a relay echoes "off", the registration is recorded and not repeated.
+      registrationResponse = { ok: true, notifyOnAgentMessage: false };
+      yield* refreshAgentAwarenessRegistration();
+      expect(registrationRecordStore.current).not.toBeNull();
+      yield* refreshAgentAwarenessRegistration();
+      expect(registrations).toHaveLength(3);
+    }).pipe(
+      Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
+      Effect.provide(layerRelayTest),
+      Effect.ensuring(
+        Effect.sync(() => {
+          vi.mocked(loadPreferences).mockResolvedValue({ liveActivitiesEnabled: false });
+        }),
+      ),
+    );
   });
 
   it.effect("continues queued device registration after a failed auth lookup", () => {

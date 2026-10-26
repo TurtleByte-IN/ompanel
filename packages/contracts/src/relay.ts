@@ -977,6 +977,16 @@ export const RelayOkResponse = Schema.Struct({
 });
 export type RelayOkResponse = typeof RelayOkResponse.Type;
 
+export const RelayDeviceRegistrationResponse = Schema.Struct({
+  ok: Schema.Boolean,
+  /**
+   * The agent-message preference the relay stored. Relays that predate it omit the field and drop
+   * the preference, so a client that turned it off registers again until a relay confirms it.
+   */
+  notifyOnAgentMessage: Schema.optional(Schema.Boolean),
+});
+export type RelayDeviceRegistrationResponse = typeof RelayDeviceRegistrationResponse.Type;
+
 export const RelayPublishResponse = Schema.Struct({
   ok: Schema.Boolean,
   deliveries: Schema.Array(RelayDeliveryResult),
@@ -1015,7 +1025,7 @@ export const RelayRegisterDeviceEndpoint = HttpApiEndpoint.post(
   {
     headers: RelayDpopRequestHeaders,
     payload: RelayDeviceRegistrationRequest,
-    success: RelayOkResponse,
+    success: RelayDeviceRegistrationResponse,
     error: RelayAuthAndInternalErrors,
   },
 ).annotate(OpenApi.Summary, "Register or update a mobile device");

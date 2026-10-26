@@ -3453,6 +3453,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         itemId: TurnItemId.make("item:agent-newer"),
         summary: "agent item:agent-newer",
         notifiedAt: DateTime.formatIso(later),
+        runId,
       };
       assert.deepStrictEqual(yield* shells, [expected, expected]);
     }),

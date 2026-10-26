@@ -1927,6 +1927,8 @@ export const OrchestrationV2AgentNotificationSummary = Schema.Struct({
   itemId: TurnItemId,
   summary: TrimmedNonEmptyString,
   notifiedAt: IsoDateTime,
+  /** The run that sent it; pushes go out only for the thread's active run. */
+  runId: Schema.NullOr(RunId),
 });
 export type OrchestrationV2AgentNotificationSummary =
   typeof OrchestrationV2AgentNotificationSummary.Type;

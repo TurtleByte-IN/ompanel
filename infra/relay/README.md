@@ -35,8 +35,12 @@ message the agent sent the user mid-run, such as an OMP `notify`. `AgentActivity
 it with the stored row and alerts a new message id once, only while the thread is `starting` or
 `running` and within the two-minute freshness window. iOS gets a plain push notification
 (`ApnsDeliveries.sendAgentMessageForTarget`); Android gets it on the FCM job (`agentMessageId`)
-when no attention or completion alert rings. Devices opt out with the `notifyOnAgentMessage`
-preference; a registration without it gets agent messages. Both fields are optional, so older
+when no attention or completion alert rings. Servers send `agentMessage` only while it can still
+alert (its own run working, within the window) and publish again without it when the window
+closes, so the stored row keeps the agent's words for at most about two minutes. Devices opt out
+with the `notifyOnAgentMessage` preference; a registration without it gets agent messages. The
+`registerDevice` response echoes the stored preference, which lets an app that turned it off tell
+a relay that predates the field from one that kept it. All three fields are optional, so older
 servers and apps keep working, and nothing new is stored outside the existing JSON columns. See
 [OMP notify alerts](../../docs/omp/notifications.md).
 

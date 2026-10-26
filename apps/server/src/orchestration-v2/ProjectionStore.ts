@@ -1729,6 +1729,7 @@ function agentNotificationSummary(
     itemId: item.id,
     summary: item.summary,
     notifiedAt: DateTime.formatIso(item.updatedAt),
+    runId: item.runId,
   };
 }
 
