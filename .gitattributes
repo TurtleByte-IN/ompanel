@@ -7,3 +7,5 @@
 packages/source-control-github/schema/** linguist-generated
 apps/server/schema/** linguist-generated
 **/*.graphql.ts linguist-generated
+# Byte-for-byte copy of the pinned OMP fork RPC contract; packages/provider-omp checks it.
+packages/provider-omp/contract/** linguist-generated

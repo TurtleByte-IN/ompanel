@@ -109,6 +109,10 @@ jobs:
       - name: Check generated Expo GraphQL operations
         run: vp run --filter t3 generate --check
 
+      # Fetches the OMP fork tag pinned in omp.lock (public, no credentials).
+      - name: Check vendored OMP RPC contract
+        run: vp run --filter @t3tools/provider-omp contract:check
+
       - name: Check
         run: vp check
 

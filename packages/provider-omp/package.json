@@ -1,0 +1,21 @@
+{
+  "name": "@t3tools/provider-omp",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vp test run --config ../../vite.config.ts --dir .",
+    "contract:check": "node scripts/check-contract.ts",
+    "contract:vendor": "node scripts/check-contract.ts --write"
+  },
+  "dependencies": {
+    "@t3tools/shared": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/platform-node": "catalog:",
+    "@effect/vitest": "catalog:",
+    "@types/node": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}
