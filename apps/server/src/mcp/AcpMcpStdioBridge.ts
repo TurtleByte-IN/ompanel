@@ -66,7 +66,7 @@ export interface McpToolSession {
 }
 
 /**
- * One initialized MCP session over T3 Code's HTTP endpoint, terminated when
+ * One initialized MCP session over Ompanel's HTTP endpoint, terminated when
  * the scope closes. Used by the ACP terminal fallback and `ompanel thread`.
  */
 export const mcpToolSession = (
@@ -101,7 +101,7 @@ export const mcpToolSession = (
     if (!response.ok) {
       yield* discardResponseBody(response);
       return yield* Effect.fail(
-        new AcpMcpBridgeError(`T3 Code MCP endpoint responded with HTTP ${response.status}.`),
+        new AcpMcpBridgeError(`Ompanel MCP endpoint responded with HTTP ${response.status}.`),
       );
     }
     const payloads = yield* Stream.runCollect(responsePayloads(response, bridgeError));
@@ -121,7 +121,7 @@ export const mcpToolSession = (
     if (envelope === null || envelope.error !== undefined) {
       return yield* Effect.fail(
         new AcpMcpBridgeError(
-          `T3 Code MCP ${method} failed${envelope?.error === undefined ? "." : `: ${JSON.stringify(envelope.error)}`}`,
+          `Ompanel MCP ${method} failed${envelope?.error === undefined ? "." : `: ${JSON.stringify(envelope.error)}`}`,
         ),
       );
     }
@@ -229,7 +229,7 @@ export function runAcpMcpStdioBridge(options: AcpMcpStdioBridgeOptions): Effect.
           if (envelope.id !== undefined) {
             yield* respondWithError(
               envelope.id,
-              `T3 Code MCP endpoint responded with HTTP ${response.status}.`,
+              `Ompanel MCP endpoint responded with HTTP ${response.status}.`,
             );
           }
           return yield* discardResponseBody(response);
@@ -243,7 +243,7 @@ export function runAcpMcpStdioBridge(options: AcpMcpStdioBridgeOptions): Effect.
             const error = Cause.squash(cause);
             return respondWithError(
               envelope.id,
-              `T3 Code MCP bridge request failed: ${error instanceof Error ? error.message : String(error)}`,
+              `Ompanel MCP bridge request failed: ${error instanceof Error ? error.message : String(error)}`,
             );
           }),
         ),

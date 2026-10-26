@@ -565,7 +565,7 @@ export default defineConfig({
         },
       },
       {
-        // The sign-in masthead is T3 brand artwork: fixed gradients, not theme surfaces.
+        // The sign-in masthead is Ompanel brand artwork: fixed gradients, not theme surfaces.
         files: ["apps/web/src/components/auth/AuthSurfaceShell.tsx"],
         rules: { "shadcn/no-arbitrary-values": "off" },
       },

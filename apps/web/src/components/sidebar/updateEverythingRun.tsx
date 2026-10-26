@@ -327,7 +327,7 @@ export function DesktopUpdateLaunchNotice() {
       stackedThreadToast({
         type: "error",
         title: "Update did not apply",
-        description: `T3 Code is still on ${APP_VERSION}. Install ${notAppliedVersion} again from the update button.`,
+        description: `Ompanel is still on ${APP_VERSION}. Install ${notAppliedVersion} again from the update button.`,
       }),
     );
   }, [notAppliedVersion]);

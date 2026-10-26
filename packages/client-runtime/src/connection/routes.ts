@@ -158,7 +158,7 @@ function routeAddressKey(route: ConnectionRoute): string | null {
 export function connectionRouteLabel(route: ConnectionRoute): string {
   switch (connectionRouteKind(route)) {
     case "relay":
-      return "T3 Connect";
+      return "Ompanel Connect";
     case "loopback":
       return "This device";
     case "lan":
@@ -401,7 +401,7 @@ export function isLearned(route: ConnectionRoute): boolean {
 
 /**
  * A learned route borrows the credential of the route it was learned over, so
- * it cannot outlive that route: removing T3 Connect also removes routes learned
+ * it cannot outlive that route: removing Ompanel Connect also removes routes learned
  * through it, and removing a paired address removes routes that borrow its
  * token.
  */

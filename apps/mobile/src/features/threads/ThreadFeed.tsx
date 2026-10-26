@@ -1239,7 +1239,7 @@ function ThreadAutomationMessageRow(props: {
   );
 }
 
-/** Leads with why T3 Code compacted, when it did so without being asked. */
+/** Leads with why Ompanel compacted, when it did so without being asked. */
 function compactionLabel(label: string, title: string | undefined) {
   return title !== undefined && label.startsWith("Context compacted")
     ? title + label.slice("Context compacted".length)
@@ -1560,7 +1560,7 @@ function renderFeedEntry(
         >
           {presentation.attribution === "t3code" ? (
             <Text className="mb-1 pr-1 font-t3-medium text-2xs text-foreground-muted opacity-60">
-              Sent by T3 Code
+              Sent by Ompanel
             </Text>
           ) : null}
           {presentation.guestName !== undefined ? (

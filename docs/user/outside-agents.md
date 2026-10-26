@@ -1,6 +1,6 @@
 # Outside agents
 
-Agents that T3 Code did not start can work with an environment through its MCP
+Agents that Ompanel did not start can work with an environment through its MCP
 server. They can read projects and threads, start and message threads, and
 check which providers and models are available. This covers Claude Code or
 Codex in your own terminal, ChatGPT, and bots that support MCP. Each agent signs
@@ -19,7 +19,7 @@ https://<environment-address>/mcp
 The copied URL uses the route this device is connected over, so an agent on the
 same device can reach it.
 
-- **An agent on your own computers** can use `localhost` on the host, T3
+- **An agent on your own computers** can use `localhost` on the host, Ompanel
   Connect, or any `https` address, such as
   [Tailscale HTTPS](./remote-access.md#tailscale-https). Signing in sends the
   agent's credentials to the environment, and agents only do that over `https`
@@ -27,7 +27,7 @@ same device can reach it.
   `http://100.x.y.z:3773`, lets an agent find the environment but not finish
   signing in.
 - **A hosted agent**, such as ChatGPT or a bot running in the cloud, must reach
-  the environment from the internet. Use the T3 Connect address. A Tailscale
+  the environment from the internet. Use the Ompanel Connect address. A Tailscale
   address only works from your own tailnet.
 
 ## Approve a sign-in
@@ -80,7 +80,7 @@ codex mcp login ompanel
 Add the environment as a custom MCP app in ChatGPT's apps settings:
 
 1. Create a new app or plugin with a custom MCP server.
-2. Set the server URL to `https://<environment-address>/mcp`, using the T3
+2. Set the server URL to `https://<environment-address>/mcp`, using the Ompanel
    Connect address.
 3. Choose **OAuth** for authentication. ChatGPT discovers the rest; you do not
    need a client ID or secret.

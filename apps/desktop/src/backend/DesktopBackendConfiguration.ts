@@ -91,7 +91,7 @@ const WSL_FORWARDED_ENV_NAMES = [
   "OTEL_SDK_DISABLED",
   "OMPANEL_OTLP_HEADERS",
   "OMPANEL_OTLP_PROTOCOL",
-  // Untranslated T3 URLs must override bootstrap endpoints inside WSL, as they do on Windows.
+  // Untranslated Ompanel URLs must override bootstrap endpoints inside WSL, as they do on Windows.
   "OMPANEL_OTLP_TRACES_URL",
   "OMPANEL_OTLP_METRICS_URL",
   "OMPANEL_OTLP_LOGS_URL",

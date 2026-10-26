@@ -328,7 +328,7 @@ export const createDevRunnerEnv = Effect.fn("dev-runner.createDevRunnerEnv")(fun
     delete output.OMPANEL_HOME;
   }
 
-  // Managed T3 service shells leak launcher variables that make dev servers fail version checks.
+  // Managed Ompanel service shells leak launcher variables that make dev servers fail version checks.
   // Dev-runner servers are never launcher-managed (serviceLauncherClient.ts resolveStartup).
   delete output.T3_SERVICE_LAUNCHER_CONTEXT;
   delete output.T3_BOOT_SERVICE_UNIT;
@@ -910,7 +910,7 @@ const devRunnerCli = Command.make("dev-runner", {
   ),
   t3Home: Flag.String("home-dir").pipe(
     Flag.withDescription(
-      "Explicit T3 Code data directory; runtime state is stored under userdata (equivalent to OMPANEL_HOME). Inside a git worktree this defaults to that worktree's own .ompanel so dev state stays off the shared home.",
+      "Explicit Ompanel data directory; runtime state is stored under userdata (equivalent to OMPANEL_HOME). Inside a git worktree this defaults to that worktree's own .ompanel so dev state stays off the shared home.",
     ),
     Flag.optional,
     Flag.map(Option.getOrUndefined),

@@ -1,6 +1,6 @@
-# T3 Connect
+# Ompanel Connect
 
-T3 Connect uses Clerk for cloud identity. The relay manages environment links,
+Ompanel Connect uses Clerk for cloud identity. The relay manages environment links,
 credentials for reaching environments, and managed tunnel allocations. After
 bootstrap, clients send application traffic through the environment's tunnel
 hostname; the relay Worker does not proxy their HTTP or WebSocket sessions.
@@ -146,7 +146,7 @@ user's choice and is never replaced, since linking asks before downloading.
 
 Once the pinned release registers a connection, managed releases older than the
 pin are deleted except the newest of them. That one, and any newer release, can
-belong to another server sharing the same T3 home, such as a rollback after a
+belong to another server sharing the same Ompanel home, such as a rollback after a
 failed update, which could not run again without it.
 
 The version comes from running `cloudflared version`, not from the folder name.

@@ -1,3 +1,4 @@
+import { PRODUCT_NAME, REPOSITORY_URL } from "@t3tools/shared/brand";
 import {
   CommandId,
   type GitManagerServiceError,
@@ -177,7 +178,7 @@ function namedProjectReadme(name: string): string {
     "",
     `# ${name}`,
     "",
-    "Created in [T3 Code](https://t3.codes).",
+    `Created in [${PRODUCT_NAME}](${REPOSITORY_URL}).`,
     "",
   ].join("\n");
 }

@@ -70,14 +70,14 @@ export function BetaSettingsPanel() {
             />
           }
         />
-        {/* Clerk is only mounted when this build has T3 Connect. */}
+        {/* Clerk is only mounted when this build has Ompanel Connect. */}
         {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : <GuestLinksRow />}
       </SettingsSection>
     </SettingsPageContainer>
   );
 }
 
-/** Signed out of T3 Connect, the row offers to sign in instead of its switch. */
+/** Signed out of Ompanel Connect, the row offers to sign in instead of its switch. */
 function GuestLinksRowWithSignIn() {
   const { isSignedIn } = useAuth();
   const { openAuthPrompt } = useT3ConnectAuthPrompt();
@@ -86,7 +86,7 @@ function GuestLinksRowWithSignIn() {
   return (
     <SettingsRow
       {...searchableSetting("guest-links")}
-      description="Share a thread with a guest who watches it live in their browser and sends messages you approve. Sign in to T3 Connect to use guest links."
+      description="Share a thread with a guest who watches it live in their browser and sends messages you approve. Sign in to Ompanel Connect to use guest links."
       control={
         <Button size="sm" variant="outline" onClick={openAuthPrompt}>
           Sign in
@@ -107,7 +107,7 @@ function GuestLinksRow() {
       description={
         <>
           Share a thread with a guest who watches it live in their browser and sends messages you
-          approve. Needs T3 Connect: sign in and link this machine in{" "}
+          approve. Needs Ompanel Connect: sign in and link this machine in{" "}
           <Link to="/settings/connections" className="underline underline-offset-2">
             Connections
           </Link>

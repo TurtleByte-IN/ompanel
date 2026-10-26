@@ -1,4 +1,4 @@
-import { APP_ID, PRODUCT_SLUG } from "@t3tools/shared/brand";
+import { APP_ID, PRODUCT_NAME, PRODUCT_SLUG } from "@t3tools/shared/brand";
 import type {
   DesktopAppBranding,
   DesktopAppStageLabel,
@@ -87,7 +87,7 @@ export class DesktopEnvironment extends Context.Service<
   }
 >()("@t3tools/desktop/app/DesktopEnvironment") {}
 
-const APP_BASE_NAME = "T3 Code";
+const APP_BASE_NAME = PRODUCT_NAME;
 
 function resolveDesktopAppStageLabel(input: {
   readonly isDevelopment: boolean;

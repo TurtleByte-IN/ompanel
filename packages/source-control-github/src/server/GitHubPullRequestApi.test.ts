@@ -3115,7 +3115,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
           Effect.succeed(output(reviewThreadsPage([thread("T2", "c2")], "last"))),
         );
         mockedExecute.mockReturnValueOnce(
-          Effect.succeed(output(reviewThreadsPage([thread("T3", "c3")], null))),
+          Effect.succeed(output(reviewThreadsPage([thread("Ompanel", "c3")], null))),
         );
         const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
         const read = cli.listReviewThreadComments(pullRequestInput);

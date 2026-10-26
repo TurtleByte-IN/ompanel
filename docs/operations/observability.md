@@ -1,8 +1,8 @@
 # Observability
 
-> For maintainers. Using T3 Code? See [docs/user](../user/).
+> For maintainers. Using Ompanel? See [docs/user](../user/).
 
-T3 Code has one server-side observability model:
+Ompanel has one server-side observability model:
 
 - pretty logs go to stdout for humans
 - completed spans go to a local NDJSON trace file
@@ -232,7 +232,7 @@ macOS app bundle example:
 OMPANEL_OTLP_TRACES_URL=http://localhost:4318/v1/traces \
 OMPANEL_OTLP_METRICS_URL=http://localhost:4318/v1/metrics \
 OMPANEL_OTLP_LOGS_URL=http://localhost:4318/v1/logs \
-"/Applications/T3 Code.app/Contents/MacOS/T3 Code"
+"/Applications/Ompanel.app/Contents/MacOS/Ompanel"
 ```
 
 Direct binary example:
@@ -420,7 +420,7 @@ Webhooks have their own families:
 
 `ScheduledTaskService.triggerWebhook` spans carry the same outcome per request, and each run
 started from a delivery is its own `ScheduledTaskService.runWebhookDelivery` trace. For a request
-the relay forwarded, the span also goes to the T3 Connect trace export as a child of the relay's
+the relay forwarded, the span also goes to the Ompanel Connect trace export as a child of the relay's
 span; requests that reach the environment directly never join a sender's trace.
 
 Use metrics when the question is:
@@ -639,7 +639,7 @@ set `VITE_RELEASE_CHANNEL=preview` because their `APP_VERSION` must stay compara
 server's, and the mobile app maps its build variant (`development`, `preview`, `production`), or
 reports `dev` from a development bundle.
 
-Attributes specific to T3 Code use the `t3code.` prefix. The UI runs as `t3code-web` in both a
+Attributes specific to Ompanel use the `t3code.` prefix. The UI runs as `t3code-web` in both a
 browser and the desktop window, since it is the same code, and `t3code.client.surface` is `desktop`
 or `web`. The server's `t3code.server.managed_by` is `desktop` when the desktop app launched it and
 `standalone` otherwise. The desktop main process reports `t3code.desktop.mode` as `development` or
@@ -710,7 +710,7 @@ pid="$(jq .pid "${OMPANEL_HOME:-$HOME/.ompanel}/userdata/server-runtime.json")"
 ps -p "$pid" -o command=
 ```
 
-If `ps` shows the T3 Code server, send the signal:
+If `ps` shows the Ompanel server, send the signal:
 
 ```bash
 kill -USR2 "$pid"

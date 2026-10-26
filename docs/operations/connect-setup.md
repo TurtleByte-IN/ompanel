@@ -1,12 +1,12 @@
-# T3 Connect setup
+# Ompanel Connect setup
 
-Deployment and client configuration for T3 Connect. The [architecture note](../internals/t3-connect.md)
+Deployment and client configuration for Ompanel Connect. The [architecture note](../internals/t3-connect.md)
 explains the trust boundaries; the [relay README](../../infra/relay/README.md#deployment) owns relay
 provisioning instructions.
 
 ## Public application configuration
 
-T3 Connect is disabled in a fresh clone. To build against the production deployment, copy the
+Ompanel Connect is disabled in a fresh clone. To build against the production deployment, copy the
 repository-root example:
 
 ```sh
@@ -38,7 +38,7 @@ depend on. The stack's `PublishClientConfig` action writes the resulting relay U
 
 In Clerk's OAuth applications settings:
 
-1. Create a public OAuth application for the T3 CLI, using authorization-code exchange with PKCE.
+1. Create a public OAuth application for the Ompanel CLI, using authorization-code exchange with PKCE.
 2. Allow the redirect URI `http://127.0.0.1:34338/callback`.
 3. Enable the `openid`, `profile`, `email`, and `offline_access` scopes.
 4. Enable **Device authorization grant** on the application. Headless and SSH authorization use
@@ -119,15 +119,15 @@ actual web and server ports. For example, with the default ports:
 ```sh
 VITE_DEV_SERVER_URL=http://127.0.0.1:5733 \
 OMPANEL_PORT=13773 \
-  "/Applications/T3 Code (Alpha).app/Contents/MacOS/T3 Code (Alpha)"
+  "/Applications/Ompanel (Beta).app/Contents/MacOS/Ompanel (Beta)"
 ```
 
 Rebuild the signed app after native dependency, main-process, preload, entitlement, provisioning,
 or signing changes. Renderer edits can reuse it. Verify the installed bundle before testing:
 
 ```sh
-codesign --verify --deep --strict "/Applications/T3 Code (Alpha).app"
-codesign -d --entitlements :- "/Applications/T3 Code (Alpha).app"
+codesign --verify --deep --strict "/Applications/Ompanel (Beta).app"
+codesign -d --entitlements :- "/Applications/Ompanel (Beta).app"
 ```
 
 ## Restricting sign-ups

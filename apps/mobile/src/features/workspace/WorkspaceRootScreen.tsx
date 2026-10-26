@@ -64,7 +64,7 @@ function WorkspaceRootTitle(props: {
   return (
     <View style={{ width: props.maxWidth, minHeight: 32, justifyContent: "center" }}>
       <WorkspaceConnectionTitle
-        brand={<CompactBrandTitle accessibilityLabel={`T3 Code, ${tabTitle}`} />}
+        brand={<CompactBrandTitle accessibilityLabel={`Ompanel, ${tabTitle}`} />}
         maxWidth={props.maxWidth}
         onPress={props.onOpenEnvironments}
       />
@@ -175,7 +175,7 @@ function WorkspaceRootContent() {
           />
         ) : (
           <AndroidScreenHeader
-            title="T3 Code"
+            title="Ompanel"
             titleContent={renderHeaderTitle()}
             actions={[
               ...(state.selectedTab === "threads" || state.selectedTab === "pullRequests"

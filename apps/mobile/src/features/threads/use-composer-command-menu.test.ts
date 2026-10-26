@@ -59,7 +59,7 @@ describe("mobile slash commands", () => {
     },
   );
 
-  it("still applies the T3 plan command for supported providers", () => {
+  it("still applies the Ompanel plan command for supported providers", () => {
     const items = buildComposerSlashCommandItems({
       query: "plan",
       atMessageStart: true,
@@ -71,7 +71,7 @@ describe("mobile slash commands", () => {
       },
     });
     const item = items[0];
-    if (!item) throw new Error("Expected the T3 plan command");
+    if (!item) throw new Error("Expected the Ompanel plan command");
     expect(
       resolveComposerCommandSelection({
         draftMessage: "/plan",

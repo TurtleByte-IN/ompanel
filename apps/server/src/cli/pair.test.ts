@@ -285,7 +285,7 @@ describe("ompanel pair", () => {
         const rendered = String(
           typeof error === "object" && error !== null && "cause" in error ? error.cause : error,
         );
-        assert.include(rendered, "No running T3 Code server found.");
+        assert.include(rendered, "No running Ompanel server found.");
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );
@@ -321,7 +321,7 @@ describe("ompanel pair", () => {
           ),
         );
 
-        assert.include(String(error), "No running T3 Code server found.");
+        assert.include(String(error), "No running Ompanel server found.");
         assert.notInclude(String(error), sharedHome);
         assert.deepEqual(NodeFS.readdirSync(NodePath.join(sharedHome, "userdata")), [
           "server-runtime.json",

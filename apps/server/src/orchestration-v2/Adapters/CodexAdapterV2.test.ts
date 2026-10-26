@@ -168,7 +168,7 @@ describe("CodexAdapterV2 runtime policy", () => {
       }),
   );
 
-  it.effect("derives concrete Codex turn policies from every T3 runtime mode", () =>
+  it.effect("derives concrete Codex turn policies from every Ompanel runtime mode", () =>
     Effect.gen(function* () {
       const build = (
         runtimeMode: "approval-required" | "auto-accept-edits" | "auto" | "full-access",
@@ -566,7 +566,7 @@ function codexReplayPreamble(input: {
         id: 1,
         method: "initialize",
         params: {
-          clientInfo: { name: "T3 Code", title: "T3 Code", version: packageJson.version },
+          clientInfo: { name: "Ompanel", title: "Ompanel", version: packageJson.version },
           capabilities: {
             experimentalApi: true,
             optOutNotificationMethods: ["turn/diff/updated"],
@@ -583,7 +583,7 @@ function codexReplayPreamble(input: {
       frame: {
         id: 1,
         result: {
-          userAgent: "T3 Code/0.156.1",
+          userAgent: "Ompanel/0.156.1",
           codexHome: "/tmp/codex-home",
           platformFamily: "unix",
           platformOs: "macos",
@@ -1719,7 +1719,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
-  it.effect("preserves T3 context on the wire and restores it after compaction", () =>
+  it.effect("preserves Ompanel context on the wire and restores it after compaction", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const nativeThreadId = "context-thread";

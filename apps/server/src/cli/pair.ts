@@ -66,12 +66,12 @@ export class NoRunningServerError extends Schema.TaggedError<NoRunningServerErro
 ) {
   override get message(): string {
     return [
-      "No running T3 Code server found.",
+      "No running Ompanel server found.",
       ...this.checkedStatePaths.map((statePath) => `  checked ${statePath}`),
       ...(this.inLinkedWorktree
         ? ["In a linked worktree, pass --base-dir to pair with a server outside it."]
         : []),
-      "Start one with `npx ompanel serve`, or connect this machine with T3 Connect: `npx ompanel connect`.",
+      "Start one with `npx ompanel serve`, or connect this machine with Ompanel Connect: `npx ompanel connect`.",
     ].join("\n");
   }
 }
@@ -82,7 +82,7 @@ export class IncompatibleServerProtocolError extends Schema.TaggedError<Incompat
 ) {
   override get message(): string {
     return [
-      `The running T3 Code server (${this.serverVersion}) speaks orchestration protocol ${String(this.serverProtocolVersion)}, but this CLI speaks protocol ${String(ORCHESTRATION_PROTOCOL_VERSION)}.`,
+      `The running Ompanel server (${this.serverVersion}) speaks orchestration protocol ${String(this.serverProtocolVersion)}, but this CLI speaks protocol ${String(ORCHESTRATION_PROTOCOL_VERSION)}.`,
       `Pair with the matching CLI instead: \`npx ompanel@${this.serverVersion} pair\`.`,
     ].join("\n");
   }
@@ -120,7 +120,7 @@ export class ServesOtherEnvironmentError extends Schema.TaggedError<ServesOtherE
   { servePort: Schema.Number },
 ) {
   override get message(): string {
-    return `Tailscale Serve on HTTPS port ${String(this.servePort)} already fronts a different T3 Code server. Pass --tailscale-serve-port to publish this one on another port.`;
+    return `Tailscale Serve on HTTPS port ${String(this.servePort)} already fronts a different Ompanel server. Pass --tailscale-serve-port to publish this one on another port.`;
   }
 }
 
@@ -138,7 +138,7 @@ export class ServePortOccupiedError extends Schema.TaggedError<ServePortOccupied
   { servePort: Schema.Number },
 ) {
   override get message(): string {
-    return `HTTPS port ${String(this.servePort)} on the tailnet already serves something that is not a T3 Code server. Pass --tailscale-serve-port to publish this one on another port.`;
+    return `HTTPS port ${String(this.servePort)} on the tailnet already serves something that is not an Ompanel server. Pass --tailscale-serve-port to publish this one on another port.`;
   }
 }
 
@@ -478,7 +478,7 @@ export const pairCommand = Command.make("pair", {
   tailscaleServePort: tailscaleServePortFlag,
 }).pipe(
   Command.withDescription(
-    "Mint a pairing token for a running T3 Code server and print it as a QR code.",
+    "Mint a pairing token for a running Ompanel server and print it as a QR code.",
   ),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
@@ -514,7 +514,7 @@ export const pairCommand = Command.make("pair", {
           );
         } else if (target.state.privateNetworkOnly) {
           notes.push(
-            "This URL works only from this machine's local network. From elsewhere, re-run with --tailscale or use T3 Connect.",
+            "This URL works only from this machine's local network. From elsewhere, re-run with --tailscale or use Ompanel Connect.",
           );
         }
         if (target.variant === "dev" && target.state.devUrl === undefined) {

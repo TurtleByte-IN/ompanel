@@ -3,7 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { T3_MCP_TOOL_NAMES, resolveT3McpToolPresentation } from "./t3McpToolPresentation.ts";
 
 describe("resolveT3McpToolPresentation", () => {
-  it("recognizes every T3 tool across provider prefixes and completion suffixes", () => {
+  it("recognizes every Ompanel tool across provider prefixes and completion suffixes", () => {
     for (const tool of T3_MCP_TOOL_NAMES) {
       const presentation = resolveT3McpToolPresentation(tool);
       for (const prefix of [
@@ -14,7 +14,7 @@ describe("resolveT3McpToolPresentation", () => {
         "t3_code/",
         "t3code:",
         "mcp_t3-code_",
-        "T3 Code ",
+        "Ompanel ",
         "t3-code · ",
       ]) {
         expect(resolveT3McpToolPresentation(`${prefix}${tool} completed`), tool).toEqual(

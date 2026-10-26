@@ -450,7 +450,7 @@ async function screenshotScale(path: string, snapshot: Snapshot): Promise<number
 }
 
 async function ensureSimulator(spec: E2eDevice): Promise<string> {
-  const name = `T3 E2E ${spec.id}`;
+  const name = `Ompanel E2E ${spec.id}`;
   const listing = JSON.parse(
     (await run("xcrun", ["simctl", "list", "devices", "available", "-j"])).stdout,
   ) as { devices: Record<string, ReadonlyArray<{ udid: string; name: string; state: string }>> };

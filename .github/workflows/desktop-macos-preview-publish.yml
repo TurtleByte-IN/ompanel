@@ -193,7 +193,7 @@ jobs:
       # Same inputs as the build workflow, read from the built commit through
       # the contents API as data: the desktop manifest's base version plus the
       # build run's number reproduces the version baked into the bundle, and
-      # .env.example holds the public T3 Connect identifiers the bundle was
+      # .env.example holds the public Ompanel Connect identifiers the bundle was
       # compiled with, which the signed app's passkey entitlement must match.
       # Both are validated before they reach a file name or an entitlement.
       - id: version
@@ -457,7 +457,7 @@ jobs:
               `Version: ${process.env.PREVIEW_VERSION}`,
               `Commit: ${process.env.HEAD_SHA.slice(0, 7)}`,
               "",
-              "Signed and notarized, with T3 Connect enabled. The app bundle (server, web client, Electron main) is built from this PR; packaging, native helpers, and desktop dependencies come from `main`.",
+              "Signed and notarized, with Ompanel Connect enabled. The app bundle (server, web client, Electron main) is built from this PR; packaging, native helpers, and desktop dependencies come from `main`.",
               "",
               "No GitHub sign-in is needed. The download stays available until this PR closes. The `preview:mac` label was consumed by this build; a maintainer applies it again to build a newer commit.",
             ].join("\n");

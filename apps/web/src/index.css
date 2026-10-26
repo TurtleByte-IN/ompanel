@@ -658,7 +658,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     background-color: color-mix(in oklab, var(--primary) 45%, transparent);
   }
   :root {
-    /* Keep the original T3 Code artwork palettes as the defaults. Built-in
+    /* Keep the original Ompanel artwork palettes as the defaults. Built-in
        themes override them with their own pigments in the components layer. */
     --stage-art-top: oklch(0.782169 0.123386 240.226);
     --stage-art-mid: oklch(0.616111 0.195824 259.735);
@@ -1484,7 +1484,7 @@ html[data-theme-id] :is(.chat-markdown, .composer-tiptap) .chat-markdown-codeblo
   color: color-mix(in srgb, var(--code-foreground) 72%, transparent);
 }
 
-/* T3 Chat renders inline code and compact chat artifacts with its translucent
+/* Ompanel Chat renders inline code and compact chat artifacts with its translucent
    secondary surface flattened over the light chat canvas. The raw muted and
    secondary tokens are substantially darker than those visible pixels. */
 html[data-theme-id="t3-chat"] {
@@ -1533,7 +1533,7 @@ html[data-theme-id] [data-app-sidebar] {
   }
 }
 
-/* T3 Chat's panel divider is deliberately pink, and its resize affordance
+/* Ompanel Chat's panel divider is deliberately pink, and its resize affordance
    keeps that color while hovered. Do not neutralize this branded edge. */
 html[data-theme-id="t3-chat"] [data-app-sidebar] {
   @variant dark {
@@ -1718,7 +1718,7 @@ body {
   --surface-grain-size: 256px 256px;
 }
 
-/* The live T3 Chat texture is a 128px grayscale tile with a constant 7/255
+/* The live Ompanel Chat texture is a 128px grayscale tile with a constant 7/255
    alpha. Keep our procedural texture cheap while matching that scale and
    strength for the branded preset. */
 html[data-theme-id="t3-chat"] {

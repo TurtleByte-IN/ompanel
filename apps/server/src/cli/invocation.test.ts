@@ -102,11 +102,11 @@ it.layer(NodeServices.layer)("host CLI commands", (it) => {
         resolveHostCliCommand("doctor", ["--base-dir", "C:\\Users\\Jane Doe\\.ompanel"]).pipe(
           Effect.provideService(
             HostProcess.ExecutablePath,
-            "C:\\Program Files\\T3 Code\\ompanel.exe",
+            "C:\\Program Files\\Ompanel\\ompanel.exe",
           ),
           Effect.provideService(HostProcess.Arguments, [
-            "C:\\Program Files\\T3 Code\\ompanel.exe",
-            "C:\\Program Files\\T3 Code\\resources\\app.asar\\apps\\server\\dist\\bin.mjs",
+            "C:\\Program Files\\Ompanel\\ompanel.exe",
+            "C:\\Program Files\\Ompanel\\resources\\app.asar\\apps\\server\\dist\\bin.mjs",
           ]),
           Effect.provideService(HostProcess.IsExecutable, false),
           Effect.provideService(HostProcess.Platform, platform),

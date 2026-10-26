@@ -182,7 +182,7 @@ function wireToEntries(wire: ReadonlyArray<WireMessage>): {
     const pending = direction === "outgoing" ? agentRequests : t3Requests;
     const method = pending.get(String(message.id));
     if (method === undefined) {
-      // Grok answers internal requests on this stream; T3 drops them before replay.
+      // Grok answers internal requests on this stream; Ompanel drops them before replay.
       droppedFrames += 1;
       continue;
     }
@@ -511,7 +511,7 @@ const recordScenario = Effect.fn("recordGrokScenario")(function* (fixtureName: s
       generatedBy: "live-grok-recorder",
       grokVersion: initializeMeta.agentVersion ?? "unknown",
       normalization:
-        "Session ids are fixed UUIDs, the workspace is <workspace>, HOME is /home/grok-replay and the recording user is grok-replay. T3-owned prompt text, MCP servers and initialize params other than clientCapabilities and _meta are <any>. Personal skills, machine identity, account settings and announcement broadcasts are removed, as are responses to Grok-internal request ids that T3's protocol drops. Timestamps are kept as recorded.",
+        "Session ids are fixed UUIDs, the workspace is <workspace>, HOME is /home/grok-replay and the recording user is grok-replay. T3-owned prompt text, MCP servers and initialize params other than clientCapabilities and _meta are <any>. Personal skills, machine identity, account settings and announcement broadcasts are removed, as are responses to Grok-internal request ids that Ompanel's protocol drops. Timestamps are kept as recorded.",
       droppedFrames,
     },
     entries: [

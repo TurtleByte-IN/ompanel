@@ -422,7 +422,7 @@ export const EnvironmentConnectReachabilityCause = Schema.Literals([
 ]);
 export type EnvironmentConnectReachabilityCause = typeof EnvironmentConnectReachabilityCause.Type;
 
-/** Whether other devices can reach this environment through its T3 Connect tunnel. */
+/** Whether other devices can reach this environment through its Ompanel Connect tunnel. */
 export const EnvironmentConnectReachability = Schema.Union([
   Schema.Struct({
     status: Schema.Literal("reachable"),
@@ -473,7 +473,7 @@ export type T3ConnectTroubleshootingSection = (typeof T3_CONNECT_TROUBLESHOOTING
 
 /** Clients, the CLI, and server logs link here as "More info". */
 export function t3ConnectTroubleshootingUrl(section: T3ConnectTroubleshootingSection): string {
-  return `https://github.com/pingdotgg/t3code/blob/main/docs/user/t3-connect-troubleshooting.md#${section}`;
+  return `https://github.com/TurtleByte-IN/ompanel/blob/main/docs/user/t3-connect-troubleshooting.md#${section}`;
 }
 
 const REACHABILITY_SECTION = {

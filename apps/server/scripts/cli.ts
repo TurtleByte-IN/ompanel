@@ -192,7 +192,7 @@ const publishCmd = Command.make(
 ).pipe(Command.withDescription("Publish the ompanel launcher to npm."));
 
 const cli = Command.make("cli").pipe(
-  Command.withDescription("T3 server build & publish CLI."),
+  Command.withDescription("Ompanel server build & publish CLI."),
   Command.withSubcommands([buildCmd, buildExeCmd, publishCmd]),
 );
 

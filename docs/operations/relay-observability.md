@@ -1,6 +1,6 @@
 # Relay observability
 
-> For maintainers. Using T3 Code? See [docs/user](../user/).
+> For maintainers. Using Ompanel? See [docs/user](../user/).
 
 The relay Alchemy stack owns a shared Axiom trace setup:
 
@@ -70,7 +70,7 @@ managed endpoint, and with it the environment. On a forward, `relay.hook.upstrea
 `x-t3-hook-outcome` response header. A held request's delivery records the same on its
 `relay.inbox.deliver` span. The relay sends its own `traceparent` with each forward and drops any a
 sender supplied, and signs each forward (`x-t3-relay-delivery`) so the environment trusts the
-relay's delivery id, receive time and trace context only from the relay, so on environments that export to T3 Connect, the environment's
+relay's delivery id, receive time and trace context only from the relay, so on environments that export to Ompanel Connect, the environment's
 `ScheduledTaskService.triggerWebhook` span lands in the same trace. `relay.hook.rate_limit` says which
 budget ran out: `endpoint` or `hook`. `relay.hook.rate_limiter_failed_open` is set when the
 Cloudflare rate limiter was unavailable and the request went through unlimited.

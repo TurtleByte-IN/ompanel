@@ -164,7 +164,7 @@ describe("webhook route", () => {
     }),
   );
 
-  it.live("trusts no relay headers on an environment not linked to T3 Connect", () =>
+  it.live("trusts no relay headers on an environment not linked to Ompanel Connect", () =>
     Effect.gen(function* () {
       const received: Array<WebhookTriggerRequest> = [];
       const { handler, dispose } = handlerFor((request) => {

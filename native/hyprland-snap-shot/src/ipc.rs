@@ -139,13 +139,13 @@ pub fn destination(windows: Vec<Window>, pid: u32, title: &str) -> Result<Option
         .filter(|w| w.pid == pid && w.title == title && w.mapped && !w.hidden);
     let found = matches.next();
     if matches.next().is_some() {
-        return Err("More than one T3 Code window matches the capture destination.".into());
+        return Err("More than one Ompanel window matches the capture destination.".into());
     }
     Ok(found)
 }
 
 pub fn activate(pid: u32, title: &str) -> Result<()> {
-    // Subscribe before looking up a newly mapped T3 window, so no map/title event is missed.
+    // Subscribe before looking up a newly mapped Ompanel window, so no map/title event is missed.
     let socket = UnixStream::connect(session_directory()?.join(".socket2.sock"))?;
     let deadline = Instant::now() + Duration::from_secs(3);
     let mut events = BufReader::new(socket);
@@ -157,14 +157,14 @@ pub fn activate(pid: u32, title: &str) -> Result<()> {
             if request(&lua)?.trim() != "ok"
                 && request(&format!("/dispatch focuswindow address:0x{address:x}"))?.trim() != "ok"
             {
-                return Err("Hyprland could not focus T3 Code.".into());
+                return Err("Hyprland could not focus Ompanel.".into());
             }
             return Ok(());
         }
         events.get_ref().set_read_timeout(Some(
             deadline
                 .checked_duration_since(Instant::now())
-                .ok_or("T3 Code did not become visible.")?,
+                .ok_or("Ompanel did not become visible.")?,
         ))?;
         let mut event = Vec::new();
         if events.by_ref().take(8193).read_until(b'\n', &mut event)? == 0 || event.len() > 8192 {
@@ -195,18 +195,18 @@ mod tests {
     #[test]
     fn destination_requires_unique_process_and_title() {
         assert!(
-            destination(vec![window(2, "T3")], 1, "T3")
+            destination(vec![window(2, "Ompanel")], 1, "Ompanel")
                 .unwrap()
                 .is_none()
         );
         assert!(
-            destination(vec![window(1, "other")], 1, "T3")
+            destination(vec![window(1, "other")], 1, "Ompanel")
                 .unwrap()
                 .is_none()
         );
-        assert!(destination(vec![window(1, "T3"), window(1, "T3")], 1, "T3").is_err());
+        assert!(destination(vec![window(1, "Ompanel"), window(1, "Ompanel")], 1, "Ompanel").is_err());
         assert!(
-            destination(vec![window(2, "T3"), window(1, "T3")], 1, "T3")
+            destination(vec![window(2, "Ompanel"), window(1, "Ompanel")], 1, "Ompanel")
                 .unwrap()
                 .is_some()
         );

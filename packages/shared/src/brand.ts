@@ -3,6 +3,9 @@
  * see docs/omp/branding.md for the names that stay on purpose.
  */
 
+/** Display name for UI strings, window titles and client identification. */
+export const PRODUCT_NAME = "Ompanel";
+
 /** Lowercase identity for executables, URL schemes, OS service and profile names. */
 export const PRODUCT_SLUG = "ompanel";
 export const CLI_COMMAND = "ompanel";
@@ -16,6 +19,9 @@ export const LEGACY_HOME_DIR_NAME = ".t3";
 export const APP_ID = "in.turtlebyte.ompanel";
 
 export const REPOSITORY = "TurtleByte-IN/ompanel";
+export const REPOSITORY_URL = `https://github.com/${REPOSITORY}`;
+/** Download page for desktop builds and CLI archives (no hosted download site, blocker B-003). */
+export const RELEASES_URL = `${REPOSITORY_URL}/releases`;
 export const RAW_CONTENT_URL = `https://raw.githubusercontent.com/${REPOSITORY}/main`;
 
 export const UPSTREAM_PRODUCT_NAME = "T3 Code";

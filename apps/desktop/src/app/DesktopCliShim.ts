@@ -9,7 +9,7 @@ import { makeComponentLogger } from "./DesktopObservability.ts";
 // AppImage mounts change each run; the launcher must mount the image itself.
 const { logInfo, logWarning } = makeComponentLogger("desktop-cli-shim");
 
-export const MARKER = "Written by T3 Code: runs the desktop app's bundled ompanel CLI.";
+export const MARKER = "Written by Ompanel: runs the desktop app's bundled ompanel CLI.";
 
 const SERVER_ENTRY = "apps/server/dist/bin.mjs";
 
@@ -18,7 +18,7 @@ const shellWord = (value: string) => `'${value.replaceAll("'", `'"'"'`)}'`;
 const cmdText = (value: string) => value.replaceAll("%", "%%");
 const cmdWord = (value: string) => `"${cmdText(value)}"`;
 
-const MOVED = "T3 Code has moved or been removed. Open the app once to update this command.";
+const MOVED = "Ompanel has moved or been removed. Open the app once to update this command.";
 
 export type CliShimTarget =
   | { readonly kind: "appimage"; readonly appImage: string; readonly executableName: string }
