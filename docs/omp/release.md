@@ -44,9 +44,9 @@ this pipeline up. A candidate is a GitHub prerelease, is never marked latest, wo
 under `next`, and never runs the finalize job, so it never commits a version bump to `main`.
 Plain `vX.Y.Z` tags must point at a commit on `main`.
 
-Watch the run with `gh run watch -R TurtleByte-IN/ompanel`. It takes about an hour: the release
-reruns lint, typecheck and the test suites, builds six desktop targets and five CLI archives,
-publishes, then verifies the published release.
+Watch the run with `gh run watch -R TurtleByte-IN/ompanel`. It takes about half an hour (the first
+candidate took 27 minutes): the release reruns lint, typecheck and the test suites, builds six desktop
+targets and five CLI archives, publishes, then verifies the published release.
 
 Scheduled nightlies are off on the fork because each one is a full release run that competes with
 pull request CI for runners. Set the repository variable `OMPANEL_NIGHTLY_RELEASES` to `true` to
@@ -96,6 +96,10 @@ The installer picks the archive for the host, downloads `SHA256SUMS` and the arc
 release, refuses a sha256 mismatch, and links `ompanel` into `~/.local/bin`. Without
 `OMPANEL_VERSION` it installs the latest stable release, so until the first stable release exists
 only `OMPANEL_VERSION` works. [docs/user/install.md](../user/install.md) lists the other variables.
+
+Known issue: on macOS the CLI executable aborts at start (`SeaDeserializer::Read ... (magic) ==
+(kMagic)`) when `DYLD_INSERT_LIBRARIES` is set, as some window-management tools do, so the installer
+reports "the downloaded executable does not run" (ompanel#168). Unset the variable to install and run.
 
 ## Signing
 
