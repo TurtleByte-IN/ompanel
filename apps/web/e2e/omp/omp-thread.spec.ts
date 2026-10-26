@@ -259,7 +259,7 @@ test("opens Share live with the pairing warning, gated on the collab RPC", async
   if (hasCollab) {
     await expect(start).toBeEnabled();
   } else {
-    await expect(dialog.getByRole("alert")).toContainText("needs OMP RPC contract 1.7.0");
+    await expect(dialog.getByText(/needs OMP RPC contract 1\.7\.0/)).toBeVisible();
     await expect(start).toBeDisabled();
   }
   await screenshot("11-share-live-dialog");
