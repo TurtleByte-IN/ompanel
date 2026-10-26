@@ -37,14 +37,35 @@ const openPage = async (page: Page, path: string) => {
 
 const settingRow = (page: Page, key: string) => page.locator(`[data-setting="${key}"]`);
 
+/** Whether the client's cache (IndexedDB `server-config`) holds a server config listing OMP. */
+const ompProviderCached = (page: Page) =>
+  page.evaluate(async () => {
+    const opened = indexedDB.open("t3code:connection-runtime");
+    const database = Promise.withResolvers<IDBDatabase | null>();
+    opened.addEventListener("success", () => database.resolve(opened.result));
+    opened.addEventListener("error", () => database.resolve(null));
+    const connection = await database.promise;
+    if (connection === null || !connection.objectStoreNames.contains("server-config")) {
+      connection?.close();
+      return false;
+    }
+    const read = connection.transaction("server-config").objectStore("server-config").getAll();
+    const values = Promise.withResolvers<ReadonlyArray<unknown>>();
+    read.addEventListener("success", () => values.resolve(read.result));
+    read.addEventListener("error", () => values.resolve([]));
+    const stored = await values.promise;
+    connection.close();
+    return stored.some((value) => typeof value === "string" && value.includes('"driver":"omp"'));
+  });
+
 test("a full page load of an OMP settings page shows its settings", async () => {
   const { page, screenshot } = suite.current();
   await openPage(page, "/settings/omp-models");
   await expect(settingRow(page, "includeModelInPrompt")).toBeVisible();
-  // Give the client time to cache the environment's providers. From then on every load renders
-  // them before the connection is up, and an OMP page must wait for it before reading OMP
-  // instead of showing "OMP settings are unavailable."
-  await page.waitForTimeout(2_000);
+  // Once the client has cached the environment's providers, every load renders them before the
+  // connection is up, and an OMP page must wait for it before reading OMP instead of showing
+  // "OMP settings are unavailable."
+  await expect.poll(() => ompProviderCached(page)).toBe(true);
   for (const path of ["/settings/omp-routing", "/settings/omp-mcp", "/settings/omp-models"]) {
     await openPage(page, path);
     await expect(page.locator("[data-setting]").first()).toBeVisible();

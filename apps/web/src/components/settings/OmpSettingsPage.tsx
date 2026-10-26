@@ -20,6 +20,7 @@ import {
 import { useEffect, useState } from "react";
 
 import {
+  useEnvironmentConnectionStatus,
   useEnvironmentHasConnected,
   useEnvironmentProviders,
   usePrimaryEnvironmentId,
@@ -336,6 +337,7 @@ export function OmpSettingsPageBody({
 export function OmpSettingsPanel({ pageId }: { readonly pageId: OmpSettingsPageId }) {
   const environmentId = usePrimaryEnvironmentId();
   const hasConnected = useEnvironmentHasConnected(environmentId);
+  const connectionStatus = useEnvironmentConnectionStatus(environmentId);
   const providersByEnvironment = useEnvironmentProviders();
   const instances = (
     environmentId === null ? [] : (providersByEnvironment.get(environmentId) ?? [])
@@ -376,8 +378,10 @@ export function OmpSettingsPanel({ pageId }: { readonly pageId: OmpSettingsPageI
           </p>
         ) : !hasConnected ? (
           // A full page load shows the cached providers before the connection is up; the body
-          // reads OMP on mount, so it waits for the connection.
-          <p className="px-3 py-3 text-muted-foreground text-xs sm:px-4">Connecting…</p>
+          // reads OMP on mount, so it waits for the connection and shows its status meanwhile.
+          <p role="status" className="px-3 py-3 text-muted-foreground text-xs sm:px-4">
+            {connectionStatus}
+          </p>
         ) : (
           <OmpSettingsPageBody
             key={`${environmentId}:${instanceId}`}

@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   connectionCatalogDisplayUrl,
+  connectionStatusText,
   hasRelayRoute,
   type EnvironmentPresentation as BaseEnvironmentPresentation,
 } from "@t3tools/client-runtime/connection";
@@ -119,4 +120,13 @@ export function useEnvironmentHasConnected(environmentId: EnvironmentId | null):
   const isConnected = connected.includes(environmentId);
   if (isConnected && seen !== environmentId) setSeen(environmentId);
   return isConnected || seen === environmentId;
+}
+
+/**
+ * What to show while {@link useEnvironmentHasConnected} is false: the connection's own status,
+ * so a failed, offline or unsupported environment shows why instead of waiting forever.
+ */
+export function useEnvironmentConnectionStatus(environmentId: EnvironmentId | null): string {
+  const { presentation } = useEnvironmentPresentation(environmentId);
+  return presentation === null ? "Connecting..." : connectionStatusText(presentation.connection);
 }
