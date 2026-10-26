@@ -4,6 +4,7 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
+import * as NodeTimersPromises from "node:timers/promises";
 
 const env = process.env;
 const stateDir = env.FAKE_OMP_STATE;
@@ -46,7 +47,7 @@ let chain = Promise.resolve();
 function runSteps(steps, command) {
   chain = chain.then(async () => {
     for (const step of steps) {
-      if ("sleepMs" in step) await new Promise((resolve) => setTimeout(resolve, step.sleepMs));
+      if ("sleepMs" in step) await NodeTimersPromises.setTimeout(step.sleepMs);
       else if ("emit" in step) write(bindId(step.emit, command?.id));
       else if ("emitChunked" in step) writeChunked(bindId(step.emitChunked, command?.id));
       else if ("writeRaw" in step) process.stdout.write(step.writeRaw);
@@ -70,7 +71,8 @@ function runSteps(steps, command) {
       } else if ("exit" in step) {
         record(`exit:${step.exit}`);
         exitAfterFlush(step.exit);
-        await new Promise(() => {});
+        // Never resolves: nothing after `exit` may run.
+        await Promise.withResolvers().promise;
       }
     }
   });
