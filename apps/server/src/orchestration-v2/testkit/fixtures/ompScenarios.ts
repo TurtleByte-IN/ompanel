@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - checks run in the recorder too, outside vitest.
 import * as NodeAssert from "node:assert/strict";
 
-import type { RpcServerFrame } from "@t3tools/provider-omp/rpc";
+import type { AgentMessage, RpcServerFrame } from "@t3tools/provider-omp/rpc";
 import * as Effect from "effect/Effect";
 
 import type { OmpReplayScenario } from "../../Adapters/OmpAdapterV2.testkit.ts";
@@ -15,6 +15,23 @@ import type { OmpReplayScenario } from "../../Adapters/OmpAdapterV2.testkit.ts";
 
 const ofType = <T extends RpcServerFrame["type"]>(frames: ReadonlyArray<RpcServerFrame>, type: T) =>
   frames.filter((frame): frame is Extract<RpcServerFrame, { type: T }> => frame.type === type);
+
+/** A `message` entry's message; `get_entries` types entries as raw records. */
+const entryMessage = (entry: Record<string, unknown>): AgentMessage | undefined => {
+  const message = entry["message"];
+  // OMP's `SessionMessageEntry.message` is an `AgentMessage`.
+  return entry["type"] === "message" && typeof message === "object" && message !== null
+    ? (message as AgentMessage)
+    : undefined;
+};
+const isUserEntry = (entry: Record<string, unknown>) => entryMessage(entry)?.role === "user";
+const userText = (entry: Record<string, unknown>) => {
+  const message = entryMessage(entry);
+  if (message?.role !== "user") return undefined;
+  return typeof message.content === "string"
+    ? message.content
+    : message.content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("");
+};
 
 export const OMP_REPLAY_SCENARIOS: ReadonlyArray<OmpReplayScenario> = [
   {
@@ -125,6 +142,118 @@ export const OMP_REPLAY_SCENARIOS: ReadonlyArray<OmpReplayScenario> = [
         NodeAssert.equal(result.text, first.text);
         const after = yield* session.request("get_messages", undefined);
         NodeAssert.equal(after.messages.length, 0, "branch to the first message kept messages");
+      }),
+  },
+  {
+    name: "rewind",
+    description:
+      "`branch` to the second user message moves the session onto a new file that keeps the " +
+      "first exchange; `get_branch_messages` and `get_tree` show only the kept path, and the " +
+      "next prompt continues from there.",
+    run: (session) =>
+      Effect.gen(function* () {
+        yield* session.prompt("first question");
+        yield* session.prompt("second question");
+        const before = yield* session.request("get_state", undefined);
+        const listed = yield* session.request("get_entries", {});
+        const users = listed.entries.filter(isUserEntry);
+        NodeAssert.equal(users.length, 2, "two prompts are not two user entries");
+        const second = users[1]!;
+        const { messages } = yield* session.request("get_branch_messages", undefined);
+        NodeAssert.deepEqual(
+          messages.map((message) => message.entryId),
+          users.map((entry) => entry["id"]),
+        );
+        const from = session.frames.length;
+        const result = yield* session.request("branch", { entryId: String(second["id"]) });
+        NodeAssert.equal(result.cancelled, false);
+        NodeAssert.equal(result.text, "second question");
+        const after = yield* session.request("get_state", undefined);
+        NodeAssert.notEqual(after.sessionId, before.sessionId, "branch kept the session id");
+        NodeAssert.ok(after.sessionFile !== undefined && after.sessionFile !== before.sessionFile);
+        NodeAssert.equal(after.isStreaming, false);
+        NodeAssert.equal(
+          ofType(session.frames.slice(from), "session_info_update").length,
+          0,
+          "branch announced the new session; hosts read it from get_state",
+        );
+        const kept = yield* session.request("get_branch_messages", undefined);
+        NodeAssert.deepEqual(
+          kept.messages.map((message) => message.entryId),
+          [users[0]!["id"]],
+        );
+        const tree = yield* session.request("get_tree", undefined);
+        NodeAssert.equal(tree.tree.length, 1, "a branched session has one root");
+        NodeAssert.ok(typeof tree.leafId === "string");
+        yield* session.prompt("third question");
+        const history = yield* session.request("get_messages", undefined);
+        NodeAssert.deepEqual(
+          history.messages.map((message) => message.role),
+          ["user", "assistant", "user", "assistant"],
+        );
+        const since = yield* session.request("get_entries", { since: tree.leafId! });
+        NodeAssert.deepEqual(
+          since.entries.filter(isUserEntry).map(userText),
+          ["third question"],
+          "get_entries since the old leaf lists only the new turn",
+        );
+      }),
+  },
+  {
+    name: "fork",
+    description:
+      "`fork {entryId}` at the first answer writes a new session file holding the first " +
+      "exchange and moves the process onto it; the source file is unchanged.",
+    run: (session) =>
+      Effect.gen(function* () {
+        yield* session.prompt("first question");
+        yield* session.prompt("second question");
+        const source = yield* session.request("get_state", undefined);
+        const listed = yield* session.request("get_entries", {});
+        const firstAnswer = listed.entries.find(
+          (entry) => entryMessage(entry)?.role === "assistant",
+        );
+        NodeAssert.ok(firstAnswer !== undefined, "no assistant entry");
+        const { cancelled } = yield* session.request("fork", {
+          entryId: String(firstAnswer["id"]),
+        });
+        NodeAssert.equal(cancelled, false);
+        const forked = yield* session.request("get_state", undefined);
+        NodeAssert.notEqual(forked.sessionId, source.sessionId);
+        NodeAssert.ok(
+          forked.sessionFile !== undefined && forked.sessionFile !== source.sessionFile,
+        );
+        const kept = yield* session.request("get_branch_messages", undefined);
+        NodeAssert.deepEqual(
+          kept.messages.map((message) => message.text),
+          ["first question"],
+        );
+        yield* session.request("switch_session", { sessionPath: source.sessionFile! });
+        const back = yield* session.request("get_branch_messages", undefined);
+        NodeAssert.deepEqual(
+          back.messages.map((message) => message.text),
+          ["first question", "second question"],
+        );
+      }),
+  },
+  {
+    name: "fork_busy",
+    description:
+      "`fork` while the model streams is refused with `session_busy`; `get_state` reports " +
+      "`isStreaming` meanwhile.",
+    run: (session) =>
+      Effect.gen(function* () {
+        yield* session.prompt("first question");
+        const from = session.frames.length;
+        yield* session.request("prompt", { message: "slow answer please" });
+        yield* session.waitFor("streaming", (frame) => frame.type === "message_update", from);
+        const state = yield* session.request("get_state", undefined);
+        NodeAssert.equal(state.isStreaming, true);
+        const refused = yield* session.request("fork", {}).pipe(Effect.flip);
+        NodeAssert.equal(refused._tag, "OmpRpcCommandError");
+        NodeAssert.equal(refused._tag === "OmpRpcCommandError" && refused.code, "session_busy");
+        yield* session.request("abort", undefined);
+        yield* session.waitFor("prompt_result", (frame) => frame.type === "prompt_result", from);
       }),
   },
   {
