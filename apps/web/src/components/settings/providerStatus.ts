@@ -64,6 +64,14 @@ export function getProviderSummary(provider: ServerProvider | undefined) {
       detail: provider.message ?? "CLI not detected on PATH.",
     };
   }
+  // OMP runs but has no model or sign-in yet (a fresh install): the onboarding flow, not an error.
+  if (
+    provider.driver === "omp" &&
+    provider.status === "warning" &&
+    provider.auth.status === "unauthenticated"
+  ) {
+    return { headline: "Needs setup", detail: provider.message ?? null };
+  }
   if (provider.auth.status === "unauthenticated") {
     const authLabel = provider.auth.label ?? provider.auth.type;
     return {

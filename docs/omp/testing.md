@@ -2,14 +2,14 @@
 
 Six layers, from fastest to most faithful.
 
-| Layer           | Where                                                                                                                  | Drives                                                           |
-| --------------- | ---------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| Unit            | `packages/provider-omp/src/**/*.test.ts`                                                                               | Pure functions: launch arguments, approval-mode mapping, frames  |
-| Adapter         | `packages/provider-omp/src/server/adapter.test.ts` (and the process-layer tests next to it)                            | The adapter and thread process against the scripted fake `omp`   |
-| Control plane   | `packages/provider-omp/src/server/controlBinary.test.ts`                                                               | `OmpControlService` against the scripted control fake `omp`      |
-| Replay fixtures | `apps/server/src/orchestration-v2/testkit/OmpReplayFixtures.integration.test.ts`, fixtures in `testkit/fixtures/omp_*` | The process layer against stdout recorded from the pinned fork   |
-| End-to-end      | `apps/web/e2e/omp/omp-thread.spec.ts`, `omp-settings.spec.ts`, `omp-notify.spec.ts` (Playwright)                       | The web app and server against a real `omp` and a scripted model |
-| Live            | `apps/web/e2e/omp/omp-live.spec.ts` (Playwright, `OMPANEL_LIVE=1`)                                                     | The web app and server against a real `omp` and a real model     |
+| Layer           | Where                                                                                                                      | Drives                                                           |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| Unit            | `packages/provider-omp/src/**/*.test.ts`                                                                                   | Pure functions: launch arguments, approval-mode mapping, frames  |
+| Adapter         | `packages/provider-omp/src/server/adapter.test.ts` (and the process-layer tests next to it)                                | The adapter and thread process against the scripted fake `omp`   |
+| Control plane   | `packages/provider-omp/src/server/controlBinary.test.ts`                                                                   | `OmpControlService` against the scripted control fake `omp`      |
+| Replay fixtures | `apps/server/src/orchestration-v2/testkit/OmpReplayFixtures.integration.test.ts`, fixtures in `testkit/fixtures/omp_*`     | The process layer against stdout recorded from the pinned fork   |
+| End-to-end      | `apps/web/e2e/omp/omp-thread.spec.ts`, `omp-settings.spec.ts`, `omp-onboarding.spec.ts`, `omp-notify.spec.ts` (Playwright) | The web app and server against a real `omp` and a scripted model |
+| Live            | `apps/web/e2e/omp/omp-live.spec.ts` (Playwright, `OMPANEL_LIVE=1`)                                                         | The web app and server against a real `omp` and a real model     |
 
 The first four run in CI with the rest of the suite; none needs a model, an
 account or a built `omp`. The end-to-end test has its own CI job, `OMP E2E`,
@@ -77,7 +77,15 @@ Unscripted `get_state`, `new_session`, `switch_session`, `get_messages_page`
 records its user message and an emitted `agent_end` its messages; an accepted
 `host_cwd_change_result` moves the file into the new directory's bucket, as
 `/wt` does. `sessionStore(root, { autoResume: true })` starts on the bucket's
-newest session, like OMP's `autoResume`.
+newest session, like OMP's `autoResume`. Unscripted `export_html` writes a
+page of the stored session (title and message texts) to `outputPath`.
+
+With `FAKE_OMP_CONTRACT` at 1.7.0 or later the fake hosts one collab room like
+OMP's RPC (`collab_start`, `collab_status`, `collab_stop`, and a
+`collab_state` frame when the room starts or ends); an older contract answers
+them as unknown commands. Its links carry `FAKE_OMP_COLLAB_TOKEN`, so a test
+can check that the token reaches no journal or log
+(`threadMenuController.test.ts`).
 
 `fakeOmpFrames` builds contract-shaped frames: `promptTurn` (ack,
 `agent_start`, streamed thinking and text, an optional tool execution,
@@ -89,7 +97,8 @@ newest session, like OMP's `autoResume`.
 `testing/fakeOmpControl.fixture.mjs` stands in for the short-lived `omp`
 processes `OmpControlService` starts (`control.ts`): one-shot CLI commands
 (`--version`, `config list|set|reset|path`, `usage`, `stats`, `skill list`,
-`plugin list`, `agents unpack`, each with an optional `--profile`) and
+`plugin list`, `agents unpack`, `--export <session> <out>`, `share`, each with
+an optional `--profile`) and
 `--mode rpc` control servers (`get_login_providers`, `login`).
 `makeFakeOmpControl` in `testing/fakeOmpControl.ts` gives a scratch directory,
 an executable `omp`, a `workspace` and what the fake saw: `starts()` (pid,
@@ -113,7 +122,11 @@ const target = omp.target({
 });
 ```
 
-A CLI command prints `stdout`/`stderr` and exits with `exitCode`, or hangs.
+A CLI command prints `stdout`/`stderr` and exits with `exitCode`, or hangs;
+`--export` also writes its `html` to the output path. `target(script, { gh })`
+puts a fake GitHub CLI on the target's `PATH` whose `gh auth status` succeeds
+(`ready`) or fails (`signed_out`), or none (`missing`); the `PATH` then holds
+nothing else, so no test reaches a real `gh` or uploads anything.
 An RPC server runs `beforeReady`, writes `ready`, runs `afterReady` (the
 pinned `setWidget` and `available_commands_update` frames), then the steps of
 each command: `emit`, `respond`, `fail`, `raw`, `stderr`, `await` (a UI
@@ -210,6 +223,20 @@ with a full page load:
    enabled again, each after the confirmation that shows the command; `omp
    plugin list --json` agrees; Skills lists the plugin's skill, as `omp skill
    list` does. Nothing needs the network.
+
+`apps/web/e2e/omp/omp-onboarding.spec.ts` is P-07's [onboarding](onboarding.md)
+on a fresh OMP home (`freshOmpHome`: no `config.yml`, no `models.yml`), so the
+real `omp --mode rpc` refuses to start for want of a model (ompanel#144):
+
+1. the OMP card reads Needs setup, never Unavailable, and the Setup section
+   shows the sidecar found and `omp setup` as the current step;
+2. Accounts lists the login providers before setup (the placeholder-model
+   control server);
+3. Run omp setup opens the embedded terminal with the command typed; the test
+   then leaves the OMP home as the wizard would (`completeOmpSetup`: the
+   scripted model's `models.yml` and `modelRoles.default`), the section's
+   re-check sees OMP ready and hands over to Accounts, and a sign-in starts
+   there. OMP's own setup TUI is not driven.
 
 The fake login provider (`e2e/omp/fakeSignIn.ts`): OMP lists only built-in
 login providers in the control servers Ompanel starts (`--no-extensions`), so

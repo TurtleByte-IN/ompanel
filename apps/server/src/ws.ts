@@ -30,6 +30,7 @@ import {
   OmpPluginsOperationError,
   OmpSettingsOperationError,
   OmpSessionsOperationError,
+  OmpThreadMenuOperationError,
   type OmpImportSessionInput,
   type OmpListSessionsInput,
   CommandId,
@@ -1576,6 +1577,25 @@ export const layerWsRpc = (
         return instance.ompPlugins;
       });
 
+      const ompThreadMenuController = Effect.fn("ws.ompThreadMenu.controller")(function* (
+        instanceId: ProviderInstanceId,
+      ) {
+        const instance = yield* providerInstances.getInstance(instanceId);
+        if (instance === undefined) {
+          return yield* new OmpThreadMenuOperationError({
+            reason: "instance_not_found",
+            message: `Provider instance ${instanceId} was not found.`,
+          });
+        }
+        if (instance.ompThreadMenu === undefined) {
+          return yield* new OmpThreadMenuOperationError({
+            reason: "unsupported",
+            message: `Provider instance ${instanceId} has no OMP thread menu.`,
+          });
+        }
+        return instance.ompThreadMenu;
+      });
+
       const ompAgentFilesController = Effect.fn("ws.ompAgentFiles.controller")(function* (
         instanceId: ProviderInstanceId,
       ) {
@@ -2805,6 +2825,58 @@ export const layerWsRpc = (
             "provider.instance_id": input.instanceId,
             "omp.session_id": input.sessionId,
           }).pipe(Effect.andThen(importOmpSession(input))),
+        // Spans carry the instance and thread only: a page, a share URL or a collab link never.
+        [WS_METHODS.serverExportOmpThreadHtml]: (input) =>
+          Effect.annotateCurrentSpan({
+            "provider.instance_id": input.instanceId,
+            "thread.id": input.threadId,
+          }).pipe(
+            Effect.andThen(ompThreadMenuController(input.instanceId)),
+            Effect.flatMap((menu) => menu.exportHtml(input.threadId)),
+          ),
+        [WS_METHODS.serverShareOmpThreadGist]: (input) =>
+          Effect.annotateCurrentSpan({
+            "provider.instance_id": input.instanceId,
+            "thread.id": input.threadId,
+          }).pipe(
+            Effect.andThen(ompThreadMenuController(input.instanceId)),
+            Effect.flatMap((menu) => menu.shareGist(input.threadId)),
+          ),
+        [WS_METHODS.serverStartOmpThreadCollab]: (input) =>
+          Effect.annotateCurrentSpan({
+            "provider.instance_id": input.instanceId,
+            "thread.id": input.threadId,
+            "omp.collab_access": input.access,
+          }).pipe(
+            Effect.andThen(ompThreadMenuController(input.instanceId)),
+            Effect.flatMap((menu) =>
+              menu.startCollab({ threadId: input.threadId, access: input.access }),
+            ),
+          ),
+        [WS_METHODS.serverStopOmpThreadCollab]: (input) =>
+          Effect.annotateCurrentSpan({
+            "provider.instance_id": input.instanceId,
+            "thread.id": input.threadId,
+          }).pipe(
+            Effect.andThen(ompThreadMenuController(input.instanceId)),
+            Effect.flatMap((menu) => menu.stopCollab(input.threadId)),
+          ),
+        [WS_METHODS.serverGetOmpThreadCollab]: (input) =>
+          Effect.annotateCurrentSpan({
+            "provider.instance_id": input.instanceId,
+            "thread.id": input.threadId,
+          }).pipe(
+            Effect.andThen(ompThreadMenuController(input.instanceId)),
+            Effect.flatMap((menu) => menu.collabStatus(input.threadId)),
+          ),
+        [WS_METHODS.serverGetOmpThreadBranchTree]: (input) =>
+          Effect.annotateCurrentSpan({
+            "provider.instance_id": input.instanceId,
+            "thread.id": input.threadId,
+          }).pipe(
+            Effect.andThen(ompThreadMenuController(input.instanceId)),
+            Effect.flatMap((menu) => menu.branchTree(input.threadId)),
+          ),
         // File contents stay off spans; only which file is touched is recorded.
         [WS_METHODS.serverListOmpAgentFiles]: (input) =>
           Effect.annotateCurrentSpan({ "provider.instance_id": input.instanceId }).pipe(

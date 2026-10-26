@@ -7,9 +7,11 @@ import {
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import { OmpSettings } from "@t3tools/provider-omp/settings";
 
 const decodeClaudeSettings = Schema.decodeUnknownOption(ClaudeSettings);
 const decodeCodexSettings = Schema.decodeUnknownOption(CodexSettings);
+const decodeOmpSettings = Schema.decodeUnknownOption(OmpSettings);
 const SAFE_SHELL_BINARY_PATTERN = /^[A-Za-z0-9_./:\\-]+$/;
 
 function quoteProviderBinary(
@@ -38,7 +40,15 @@ export function getOnboardingProviderState(provider: ServerProvider | undefined)
   if (!provider.enabled || provider.status === "disabled") return "disabled";
   if (!provider.installed && provider.status === "warning" && provider.auth.status === "unknown")
     return "checking";
-  if (!provider.installed) return "install";
+  // OMP's only warning without a sign-in verdict is its first "Checking the OMP sidecar..."; it
+  // never installs from here (the sidecar is bundled or downloaded), so a missing one needs a look.
+  if (
+    provider.driver === "omp" &&
+    provider.status === "warning" &&
+    provider.auth.status === "unknown"
+  )
+    return "checking";
+  if (!provider.installed) return provider.driver === "omp" ? "attention" : "install";
   if (provider.auth.status === "unauthenticated") return "signIn";
   if (provider.status === "ready") return "ready";
   return "attention";
@@ -109,6 +119,15 @@ export function resolveOnboardingProviderLoginCommand(
     const config = decodeCodexSettings(instance?.config ?? {});
     const binaryPath = Option.isSome(config) ? config.value.binaryPath : "codex";
     return `${quoteProviderBinary(binaryPath, "codex", platform)} login`;
+  }
+
+  if (provider.driver === "omp") {
+    // OMP's step is its setup wizard (sign-in, default model), run with the instance's binary
+    // (bundled, downloaded or custom) and profile.
+    const config = decodeOmpSettings(instance?.config ?? {});
+    const profile = Option.isSome(config) ? config.value.profile : "";
+    const binary = quoteProviderBinary(provider.executable?.path ?? "omp", "omp", platform);
+    return `${binary}${profile === "" ? "" : ` --profile ${profile}`} setup`;
   }
 
   return provider.driver;

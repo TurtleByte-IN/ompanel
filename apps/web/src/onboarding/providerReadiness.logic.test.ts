@@ -229,3 +229,63 @@ describe("resolveOnboardingProviderLoginCommand", () => {
     ).toBe("codex login");
   });
 });
+
+describe("OMP onboarding readiness", () => {
+  const needsSetup: ServerProvider = {
+    ...readyCodex,
+    instanceId: ProviderInstanceId.make("omp"),
+    driver: ProviderDriverKind.make("omp"),
+    status: "warning",
+    auth: { status: "unauthenticated" },
+    message: "OMP has no model or sign-in yet. Run `omp setup`, then sign in under Accounts.",
+    executable: {
+      source: "bundled",
+      path: "/Applications/Ompanel.app/Contents/Resources/omp",
+    },
+  };
+  const ompSettings = (config: Record<string, unknown>) => ({
+    ...DEFAULT_SERVER_SETTINGS,
+    providerInstances: {
+      [ProviderInstanceId.make("omp")]: { driver: ProviderDriverKind.make("omp"), config },
+    },
+  });
+
+  it("offers `omp setup` for an OMP without a model, never an install", () => {
+    expect(getOnboardingProviderState(needsSetup)).toBe("signIn");
+    expect(
+      getOnboardingProviderState({
+        ...needsSetup,
+        installed: false,
+        status: "error",
+        auth: { status: "unknown" },
+      }),
+    ).toBe("attention");
+    // The first snapshot, before the sidecar answered.
+    expect(
+      getOnboardingProviderState({ ...needsSetup, auth: { status: "unknown" }, version: null }),
+    ).toBe("checking");
+  });
+
+  it("runs the resolved sidecar's setup wizard with the instance profile", () => {
+    expect(resolveOnboardingProviderLoginCommand(needsSetup, ompSettings({}), "darwin")).toBe(
+      "/Applications/Ompanel.app/Contents/Resources/omp setup",
+    );
+    expect(
+      resolveOnboardingProviderLoginCommand(
+        { ...needsSetup, executable: { source: "downloaded", path: "/Users/a b/.t3/omp" } },
+        ompSettings({ profile: "work" }),
+        "linux",
+      ),
+    ).toBe("'/Users/a b/.t3/omp' --profile work setup");
+    expect(
+      resolveOnboardingProviderLoginCommand(
+        {
+          ...needsSetup,
+          executable: { source: "downloaded", path: "C:\\Users\\A B\\AppData\\omp.exe" },
+        },
+        ompSettings({}),
+        "windows",
+      ),
+    ).toBe("& 'C:\\Users\\A B\\AppData\\omp.exe' setup");
+  });
+});

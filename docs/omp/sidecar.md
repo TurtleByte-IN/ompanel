@@ -72,6 +72,9 @@ The server never looks up `omp` on `PATH`. It takes the first of:
 A bundled or cached file whose sha256 differs is never run, and is never
 replaced by a download either: the status shows the refusal. A binary path
 set by hand is shown in the status as not checked against `omp.lock`.
+The provider snapshot's `executable` names the binary a check ran and its
+source (`custom`, `bundled` or `downloaded`); [onboarding](onboarding.md)
+shows it and runs `omp setup` with it.
 
 Every status check, and every spawn, resolves the sidecar again and re-hashes
 it. The file is opened once, its owner and mode are checked on that handle,

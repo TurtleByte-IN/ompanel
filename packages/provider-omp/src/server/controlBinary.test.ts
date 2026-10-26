@@ -364,7 +364,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       ),
     );
 
-    it.live("reports an omp that exits before ready", () =>
+    it.live("reports an omp that refuses to start without a model, even on the placeholder", () =>
       withFakeOmp((omp, control) =>
         Effect.gen(function* () {
           const error = yield* control
@@ -382,9 +382,11 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
               }),
             )
             .pipe(Effect.flip);
+          // Real stderr is read: the refusal is `unconfigured`, retried once on the placeholder
+          // model, which this fake refuses too.
           assert.deepStrictEqual(
             [error.operation, error.reason, error.exitCode],
-            ["login_providers", "exit", 1],
+            ["login_providers", "unconfigured", 1],
           );
         }),
       ),

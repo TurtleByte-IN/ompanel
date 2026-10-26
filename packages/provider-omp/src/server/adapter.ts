@@ -788,11 +788,14 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       yield* Queue.end(events);
     });
     // Frames are drained so the process never blocks on a full pipe. Only frame types are
-    // logged, never content.
+    // logged, never content. Collab room frames (`collab_*`) change nothing the thread shows and
+    // a room's links are capabilities, so they never reach the mapper or the journal.
     yield* process.frames.pipe(
       Stream.runForEach((frame) =>
         Effect.logDebug("omp frame", { type: frame.type }).pipe(
-          Effect.andThen(exclusive(handleFrame(frame))),
+          Effect.andThen(
+            String(frame.type).startsWith("collab_") ? Effect.void : exclusive(handleFrame(frame)),
+          ),
         ),
       ),
       Effect.matchEffect({

@@ -156,6 +156,8 @@ function decide(files, packages, full) {
       build,
       // Boots the server build; its own script is not a dependency of the server.
       boot_smoke: build || (files ?? []).includes("scripts/smoke-server-boot.ts"),
+      // Launches the built desktop app with the OMP sidecar on macOS, Windows and Linux.
+      desktop_smoke: build,
       test: tested.length > 0,
       // Empty means every package the Test job covers.
       test_packages: everything ? "" : tested.map((pkg) => pkg.name).join(" "),

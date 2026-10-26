@@ -51,6 +51,7 @@ import { ompLockVersionLabel } from "./telemetry.ts";
 import { ompUsageReader, type OmpUsageReaderEnv } from "./usage.ts";
 import { makeOmpUsageController } from "./usageController.ts";
 import { makeOmpPluginsController } from "./pluginsController.ts";
+import { makeOmpThreadMenuController } from "./threadMenuController.ts";
 
 const DRIVER_KIND = ProviderDriverKind.make("omp");
 const decodeOmpSettings = Schema.decodeSync(OmpSettings);
@@ -325,6 +326,19 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv, OmpUsageReader
         globalCwd: stateDirs.launcher,
         sessions: threadSessions,
         invalidateCatalog: catalog.invalidate,
+      }),
+      ompThreadMenu: makeOmpThreadMenuController({
+        control,
+        target: controlTarget,
+        globalCwd: stateDirs.launcher,
+        exportsDir: path.join(stateDirs.launcher, "exports"),
+        threadsDir: stateDirs.threads,
+        sessionsLocation,
+        sessions: threadSessions,
+        contractVersion: OMP_LOCK.contract.version,
+        ompVersion: ompLockVersionLabel(OMP_LOCK),
+        fileSystem,
+        path,
       }),
     } satisfies ProviderInstance;
   }),

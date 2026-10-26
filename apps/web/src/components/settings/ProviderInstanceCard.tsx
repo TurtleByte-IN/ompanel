@@ -60,6 +60,7 @@ import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { SettingResetButton, SettingsRow, SettingsSection } from "./settingsLayout";
 import { AcpSessionManagementSection } from "./AcpSessionManagementSection";
 import { OmpAccountsSection } from "./OmpAccountsSection";
+import { OmpOnboardingSection } from "./OmpOnboardingSection";
 import { OmpSessionImportSection } from "./OmpSessionImportSection";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { readCodexSetupMode } from "./CodexSetupSection.logic";
@@ -634,6 +635,8 @@ export function ProviderInstanceCard({
   projectOverride,
 }: ProviderInstanceCardProps) {
   const enabled = projectOverride?.effectiveEnabled ?? resolveProviderInstanceEnabled(instance);
+  // Onboarding's hand-over to the Accounts section below it.
+  const [ompAccountsRequest, setOmpAccountsRequest] = useState(0);
   const effectiveProvider = liveProvider && { ...liveProvider, enabled };
   const compatibility = enabled ? liveProvider?.compatibilityAdvisory : undefined;
   const statusKey = enabled ? getProviderStatusKey(effectiveProvider) : "disabled";
@@ -968,6 +971,8 @@ export function ProviderInstanceCard({
     return (
       <div
         data-slot="settings-row"
+        data-provider-instance={instanceId}
+        data-provider-status={statusKey}
         className={cn(
           "group flex min-h-18 items-center gap-3 px-3 py-3 transition-colors sm:px-4",
           selected ? "bg-muted/45" : "hover:bg-muted/25",
@@ -1237,6 +1242,15 @@ export function ProviderInstanceCard({
           readOnly={readOnly}
         />
       ) : null}
+      {environmentId !== undefined && liveProvider?.driver === "omp" && enabled ? (
+        <OmpOnboardingSection
+          environmentId={environmentId}
+          instanceId={instanceId}
+          provider={liveProvider}
+          readOnly={readOnly}
+          onOpenAccounts={() => setOmpAccountsRequest((request) => request + 1)}
+        />
+      ) : null}
       {environmentId !== undefined && liveProvider?.driver === "omp" ? (
         <OmpSessionImportSection
           environmentId={environmentId}
@@ -1247,9 +1261,11 @@ export function ProviderInstanceCard({
 
       {environmentId !== undefined && liveProvider?.driver === "omp" ? (
         <OmpAccountsSection
+          key={ompAccountsRequest}
           environmentId={environmentId}
           instanceId={instanceId}
           readOnly={readOnly}
+          openOnMount={ompAccountsRequest > 0}
         />
       ) : null}
 

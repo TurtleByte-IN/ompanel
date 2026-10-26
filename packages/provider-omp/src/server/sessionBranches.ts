@@ -2,7 +2,7 @@
  * Rewind and fork over OMP's session tree (docs/omp/sessions.md): each turn records its user
  * message entry, rewind `branch`es before the next turn's, fork `fork`s through the turn.
  */
-import type { OrchestrationV2ProviderTurn } from "@t3tools/contracts";
+import type { OmpBranchNode, OmpBranchTree, OrchestrationV2ProviderTurn } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -238,30 +238,6 @@ export const resolveOmpForkEntry = Effect.fnUntraced(function* (input: {
   return null;
 });
 
-/** One node of the branch view: a user or assistant message, a branch summary or a compaction. */
-export interface OmpBranchNode {
-  readonly entryId: string;
-  /** The nearest kept ancestor; null for a root. */
-  readonly parentId: string | null;
-  readonly kind: "user" | "assistant" | "branch_summary" | "compaction";
-  /** The first characters of a user message or summary; empty for an assistant message. */
-  readonly preview: string;
-  readonly timestamp: string | null;
-  readonly label: string | null;
-}
-
-/**
- * The session's branch tree for P-06's branch view. `nodes` are in depth-first order, parents
- * first; the tree's other entries (tool results, model and setting changes, labels) are folded
- * into their nearest kept ancestor. `activePath` runs from the root to the leaf the session
- * continues from.
- */
-export interface OmpBranchTree {
-  readonly nodes: ReadonlyArray<OmpBranchNode>;
-  readonly leafId: string | null;
-  readonly activePath: ReadonlyArray<string>;
-}
-
 const PREVIEW_CHARS = 160;
 
 const textOf = (content: unknown): string => {
@@ -295,7 +271,12 @@ function branchNodeKind(entry: unknown): { kind: OmpBranchNode["kind"]; text: st
   return null;
 }
 
-/** Reduces `get_tree` to the branch view; iterative, so a long session cannot exhaust the stack. */
+/**
+ * Reduces `get_tree` to P-06's branch view; iterative, so a long session cannot exhaust the
+ * stack. `nodes` are in depth-first order, parents first; the tree's other entries (tool
+ * results, model and setting changes, labels) are folded into their nearest kept ancestor.
+ * `activePath` runs from the root to the leaf the session continues from.
+ */
 export function ompBranchTree(tree: SessionTree): OmpBranchTree {
   const nodes: Array<OmpBranchNode> = [];
   /** Kept ancestor of every entry, for the leaf's path. */

@@ -21,6 +21,7 @@ import {
   OMP_CONTROL_KILL_GRACE_MS,
   OMP_CONTROL_RPC_ARGS,
   OMP_CONTROL_TIMEOUTS_MS,
+  OMP_SETUP_PLACEHOLDER_MODEL,
   type OmpControlBudget,
   type OmpControlError,
   type OmpControlService,
@@ -110,9 +111,18 @@ const SKILL_LIST_JSON = `${JSON.stringify(SKILL_LIST)}\n`;
 /** Answers one inbound RPC frame with the frames OMP would write. */
 type RpcServer = (frame: Record<string, unknown>) => ReadonlyArray<unknown>;
 type Behaviour =
-  | { readonly stdout: string; readonly exitCode: number }
+  | { readonly stdout: string; readonly exitCode: number; readonly stderr?: string }
   | { readonly rpc: RpcServer }
   | "hang";
+
+/** What `omp --mode rpc` prints at the pinned tag before exiting 1 on a fresh install. */
+const NO_MODEL_STDERR = [
+  "No default model selected. Use /login, set an API key environment variable, or select a local model with /model or --model.",
+  "",
+  "Set an API key environment variable:",
+  "  ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, etc.",
+  "",
+].join("\n");
 
 const CATALOG = [
   {
@@ -193,7 +203,10 @@ function handle(command: ChildProcess.StandardCommand, behaviour: Behaviour) {
     exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(behaviour.exitCode)),
     isRunning: Effect.succeed(false),
     stdout: Stream.succeed(encoder.encode(behaviour.stdout)),
-    stderr: Stream.empty,
+    stderr:
+      behaviour.stderr === undefined
+        ? Stream.empty
+        : Stream.succeed(encoder.encode(behaviour.stderr)),
   });
 }
 
@@ -214,6 +227,8 @@ function fakeOmp(
     readonly skills?: Behaviour;
     readonly plugins?: Behaviour;
     readonly update?: Behaviour;
+    /** RPC servers started without `--model` exit as a fresh install does; with it they run. */
+    readonly unconfigured?: boolean;
   } = {},
 ): FakeOmp {
   const launches: Array<ChildProcess.StandardCommand> = [];
@@ -235,7 +250,9 @@ function fakeOmp(
                 ? (input.plugins ?? { stdout: '{"npm":[],"marketplace":[]}\n', exitCode: 0 })
                 : command.args.includes("update")
                   ? (input.update ?? { stdout: "Current version: 18.12.6\n", exitCode: 0 })
-                  : (input.rpc ?? { rpc: answerLoginProviders });
+                  : input.unconfigured === true && !command.args.includes("--model")
+                    ? { stdout: "", exitCode: 1, stderr: NO_MODEL_STDERR }
+                    : (input.rpc ?? { rpc: answerLoginProviders });
     // The real spawner stops the process group when this scope closes.
     return Effect.addFinalizer(() => Effect.sync(() => void stopped++)).pipe(
       Effect.as(handle(command, behaviour)),
@@ -342,6 +359,54 @@ describe("OmpControlService.probe", () => {
         stage: "ready",
         reason: "exit",
       });
+    }),
+  );
+
+  it.effect("tells a fresh install's no-model refusal apart from a crash (ompanel#144)", () =>
+    Effect.gen(function* () {
+      const omp = fakeOmp({ unconfigured: true });
+      const [result, again] = yield* withControl(omp, (control) =>
+        Effect.all([control.probe(TARGET), control.probe(TARGET)]),
+      );
+      // Not cached: `omp setup` in a terminal ends this state, and the next check must see it.
+      assert.deepStrictEqual(again, result);
+      assert.lengthOf(
+        omp.launches.filter((launch) => launch.args.includes("--version")),
+        2,
+      );
+      assert.deepStrictEqual(result, {
+        status: "failed",
+        version: "18.12.6",
+        stage: "ready",
+        reason: "unconfigured",
+      });
+      // The probe never papers over the refusal with a placeholder model.
+      assert.isFalse(omp.launches.some((launch) => launch.args.includes("--model")));
+      const crashed = yield* withControl(
+        fakeOmp({ rpc: { stdout: "", exitCode: 1, stderr: "Segmentation fault\n" } }),
+        (control) => control.probe(TARGET),
+      );
+      assert.deepStrictEqual(crashed, {
+        status: "failed",
+        version: "18.12.6",
+        stage: "ready",
+        reason: "exit",
+      });
+    }),
+  );
+
+  it.effect("lists login providers on a fresh install through a placeholder model", () =>
+    Effect.gen(function* () {
+      const omp = fakeOmp({ unconfigured: true });
+      const list = yield* withControl(omp, (control) => control.loginProviders(TARGET));
+      assert.deepStrictEqual(list.providers, LOGIN_PROVIDERS);
+      const rpcLaunches = omp.launches.filter((launch) => launch.args.includes("rpc"));
+      assert.lengthOf(rpcLaunches, 2);
+      assert.isFalse(rpcLaunches[0]!.args.includes("--model"));
+      assert.deepStrictEqual(rpcLaunches[1]!.args.slice(-2), [
+        "--model",
+        OMP_SETUP_PLACEHOLDER_MODEL,
+      ]);
     }),
   );
 
