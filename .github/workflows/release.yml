@@ -1082,12 +1082,16 @@ jobs:
         uses: actions/checkout@v6
         with:
           ref: ${{ needs.preflight.outputs.ref }}
-          persist-credentials: false
           sparse-checkout: |
             /*
             !/.repos/
             !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
           sparse-checkout-cone-mode: false
+
+      # persist-credentials: false would make checkout's cleanup walk the
+      # orphaned .repos gitlinks and fail, so drop the stored token here.
+      - name: Forget the checkout token
+        run: git config --local --unset-all http.https://github.com/.extraheader || true
 
       - name: Setup dependencies
         uses: ./.github/actions/setup-ci-deps
