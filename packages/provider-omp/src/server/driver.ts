@@ -175,6 +175,11 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
       expectedContractVersion: OMP_LOCK.contract.version,
       threadSessions,
     });
+    // Text generation runs in its own empty directory, never the checkout or `launcher`.
+    const textGenerationCwd = path.join(stateDirs.launcher, "text-generation");
+    yield* (yield* FileSystem.FileSystem)
+      .makeDirectory(textGenerationCwd, { recursive: true, mode: 0o700 })
+      .pipe(Effect.ignore);
 
     return {
       instanceId,
@@ -185,7 +190,13 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
       enabled,
       snapshot,
       orchestrationAdapter,
-      textGeneration: makeOmpTextGeneration(),
+      textGeneration: yield* makeOmpTextGeneration({
+        // Same provisioning resolver as the probe: re-hashed right before every spawn.
+        resolveBinary: resolveBinary.pipe(Effect.map((sidecar) => sidecar.path)),
+        profile: effectiveConfig.profile,
+        environment: processEnv,
+        cwd: textGenerationCwd,
+      }),
       ompSettings: makeOmpSettingsController({
         engine: makeOmpSettingsEngine({
           control,
