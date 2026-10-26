@@ -59,7 +59,11 @@ const PAGE_PROJECT_KEYS: Record<SettingsPage, readonly ProjectScopedServerSettin
     "branchNamePrefix",
     "branchNameInstructions",
   ],
-  "agent-behavior": ["responseStreamingMode", "enableAgentBrowserAccess"],
+  "agent-behavior": [
+    "responseStreamingMode",
+    "enableAgentBrowserAccess",
+    "trustProjectAgentConfig",
+  ],
   maintenance: ["continueThreadsAfterServerUpdate"],
 };
 
@@ -426,6 +430,16 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       value={uniform("enableAgentBrowserAccess")}
                       disabled={disabledFor("enableAgentBrowserAccess")}
                       onValueChange={(value) => write({ enableAgentBrowserAccess: value })}
+                    />
+                  </SettingsSection>
+                  <SettingsSection title="Project agent config">
+                    <SettingsSwitchRow
+                      icon={{ ios: "checkmark.shield", android: "lock" }}
+                      label="Trust project agent config"
+                      subtitle="Let OMP use the project's own approval rules, MCP servers, extensions and hooks. Off by default."
+                      value={uniform("trustProjectAgentConfig")}
+                      disabled={disabledFor("trustProjectAgentConfig")}
+                      onValueChange={(value) => write({ trustProjectAgentConfig: value })}
                     />
                   </SettingsSection>
                 </>
