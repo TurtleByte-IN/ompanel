@@ -6,7 +6,11 @@ The three Icon Composer projects are the source of truth for full application ic
 - `nightly/app-icon.icon`
 - `prod/app-icon.icon`
 
-Each project uses `text.svg` for the T3 mark and `background.svg` when the background is a vector layer. Additional layers use semantic names that describe their role and placement.
+Each project uses `text.svg` for the mark and `background.svg` when the background is a vector layer. Additional layers use semantic names that describe their role and placement.
+
+## Ompanel placeholder mark
+
+The mark is a neutral placeholder until a real Ompanel logo exists: the word `omp` set in DM Sans (weight 900, optical size 40, OFL; the font ships in `apps/marketing/src/assets/fonts`) and converted to outlines, so it renders without fonts. Its source is the path in `prod/app-icon.icon/Assets/text.svg` (bounding box `16 47.375 96 33.25` on the 128×128 canvas). The same path data is inlined in `prod/logo.svg`, both `T3Wordmark` components, `apps/mobile/assets/widget/T3Mark.svg`, the Android notification drawable `agent_activity_mark.xml`, the desktop DMG backgrounds and the marketing nav. Copy it verbatim when you change the mark. The dimension lines in `dev/app-icon.icon/Assets/annotations.svg` measure this glyph.
 
 Run `vp run icons:export` from the repository root to regenerate the tracked iOS, Linux, Windows, and web assets. The development web exports are also copied to `apps/web/public` for the browser favicon and splash screen. Run `vp run icons:check` to verify that the generated assets and public copies match their sources without changing files.
 
@@ -30,6 +34,8 @@ Save the three exports to:
 - `prod/app-icon.icon` -> `prod/black-macos-1024.png`
 
 The result must be a 1024×1024 PNG with the classic macOS safe area: the opaque icon body is 824×824, inset 100 pixels on every side, with only the native Icon Composer shadow extending into the surrounding transparent canvas.
+
+The current macOS PNGs were not exported from the GUI. Each one was scripted: `ictool <project> --export-image --platform macOS --rendition Default --width 824 --height 824 --scale 1 --design-generation 26` (this renders the squircle-masked body), composited at a 100 px inset over the shadow-only pixels of the previous GUI export. The result meets the safe-area spec above. Replace them with real GUI exports when convenient.
 
 To have Codex perform the native exports, paste this prompt into a task opened at the repository root:
 
@@ -63,5 +69,8 @@ is instead rendered from the same Icon Composer SVG sources by `vp run icons:exp
 - `apps/mobile/assets/android-splash-icon-*.png`: the two layers composed into one 288dp image, so
   the splash mask reproduces the launcher icon's framing.
 
-Rerun the export after changing a layer SVG. `android-icon-mark.png` remains a flat silhouette for
-Android's monochrome themed icon.
+Rerun the export after changing a layer SVG, and update `TEXT` in `scripts/export-android-icons.ts`
+if the mark's bounding box changes. `android-icon-mark.png` (432 px, Android's monochrome themed
+icon) and `android-notification-icon.png` (96 px) are not part of the export. They are flat white
+renders of the `text.svg` path, about two thirds of the canvas wide and centered. Re-render them by
+hand when the mark changes.
