@@ -98,6 +98,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverSetAcpRegistryProvider]: AuthProvidersManageScope,
   [WS_METHODS.serverDisableAcpRegistryProvider]: AuthProvidersManageScope,
   [WS_METHODS.serverLogoutAcpRegistry]: AuthProvidersManageScope,
+  // Reads come back with credentials redacted by OMP.
+  [WS_METHODS.serverReadOmpSettings]: AuthOrchestrationReadScope,
   [WS_METHODS.serverDiscoverSourceControl]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetTraceDiagnostics]: AuthDiagnosticsReadScope,
   [WS_METHODS.serverGetProcessDiagnostics]: AuthDiagnosticsReadScope,

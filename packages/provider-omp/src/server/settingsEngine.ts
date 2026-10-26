@@ -8,14 +8,17 @@ import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
+import type {
+  OmpConfigScope,
+  OmpSettingsField,
+  OmpSettingsForm,
+  OmpThreadOverrideResult,
+} from "@t3tools/contracts";
+
 import {
   buildOmpSettingsForm,
   ompConfigValueFits,
   ompThreadRpcCommand,
-  type OmpConfigScope,
-  type OmpSettingsField,
-  type OmpSettingsForm,
-  type OmpThreadOverrideRoute,
   type OmpThreadRpcCommand,
 } from "../configForm.ts";
 import type { OmpControlError, OmpControlService, OmpControlTarget } from "./control.ts";
@@ -29,6 +32,7 @@ export class OmpSettingsError extends Schema.TaggedError<OmpSettingsError>()("Om
     "thread_not_open",
     "no_value",
     "invalid_overlay",
+    "not_thread_overridable",
     "credential",
   ]),
 }) {
@@ -44,6 +48,8 @@ export class OmpSettingsError extends Schema.TaggedError<OmpSettingsError>()("Om
         return `${this.key} can only be overridden while the thread's OMP session is running.`;
       case "no_value":
         return `${this.key} has no configured value to restore.`;
+      case "not_thread_overridable":
+        return `${this.key} follows the thread's launch flags and cannot be overridden per thread.`;
       case "credential":
         return `${this.key} is a stored credential; change it with OMP sign-in or an environment variable, or reset it.`;
       case "invalid_overlay":
@@ -107,11 +113,6 @@ export interface OmpSettingsWriteResult {
   readonly overriddenBy?: string;
   /** Open threads now marked restart required. */
   readonly restartRequired: ReadonlyArray<string>;
-}
-
-export interface OmpThreadOverrideResult {
-  readonly route: OmpThreadOverrideRoute;
-  readonly restartRequired: boolean;
 }
 
 export interface OmpSettingsEngine {
@@ -292,12 +293,23 @@ export const makeOmpSettingsEngine = (deps: {
     } satisfies OmpThreadOverrideResult;
   });
 
+  const threadOverridableField = Effect.fn("OmpSettingsEngine.threadOverridableField")(function* (
+    target: OmpControlTarget,
+    key: string,
+  ) {
+    const field = yield* writableField(target, key);
+    if (field.threadOverride === "none") {
+      return yield* new OmpSettingsError({ key, reason: "not_thread_overridable" });
+    }
+    return field;
+  });
+
   const setThreadOverride = Effect.fn("OmpSettingsEngine.setThreadOverride")(function* (
     target: OmpControlTarget,
     threadId: string,
     input: { readonly key: string; readonly value: unknown },
   ) {
-    const field = yield* writableField(target, input.key);
+    const field = yield* threadOverridableField(target, input.key);
     yield* checkAssignable(field, input.value);
     return field.threadOverride === "rpc"
       ? yield* sendToThread(threadId, field.key, ompThreadRpcCommand(field.key, input.value))
@@ -309,7 +321,7 @@ export const makeOmpSettingsEngine = (deps: {
     threadId: string,
     key: string,
   ) {
-    const field = yield* writableField(target, key);
+    const field = yield* threadOverridableField(target, key);
     if (field.threadOverride === "overlay") return yield* updateOverlay(threadId, field, undefined);
     // A session RPC override has no "unset": send the value the config layers resolve to.
     if (!("value" in field)) return yield* new OmpSettingsError({ key, reason: "no_value" });

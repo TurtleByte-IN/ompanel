@@ -5,6 +5,7 @@ import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthPreviewOperateScope,
+  AuthProvidersManageScope,
   AuthSettingsWriteScope,
   AuthSourceControlWriteScope,
   type AuthEnvironmentScope,
@@ -17,6 +18,12 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.previewClose]: AuthPreviewOperateScope,
   [WS_METHODS.serverRunStorageCleanup]: AuthSettingsWriteScope,
   [WS_METHODS.serverCheckOtlpEndpoint]: AuthSettingsWriteScope,
+  // OMP's own config files belong to the provider install, like its other provider settings.
+  [WS_METHODS.serverWriteOmpSetting]: AuthProvidersManageScope,
+  [WS_METHODS.serverResetOmpSetting]: AuthProvidersManageScope,
+  // A thread override changes what one running thread does, like other thread operations.
+  [WS_METHODS.serverSetOmpThreadOverride]: AuthOrchestrationOperateScope,
+  [WS_METHODS.serverClearOmpThreadOverride]: AuthOrchestrationOperateScope,
   [WS_METHODS.pullRequestsRunAction]: AuthSourceControlWriteScope,
   [WS_METHODS.pullRequestsUpdate]: AuthSourceControlWriteScope,
   [WS_METHODS.pullRequestsComment]: AuthSourceControlWriteScope,

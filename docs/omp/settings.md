@@ -55,19 +55,47 @@ launch scope yet, so the list is maintained by hand.
 
 An override changes one key for one thread:
 
-- If OMP has a session-only RPC command for the key, the engine sends it. The
-  thread must be running. These commands never write `config.yml`:
-  `tools.approvalMode` → `set_approval_mode`, `advisor.enabled` → `set_advisor`,
-  `defaultThinkingLevel` → `set_thinking_level`, `steeringMode` /
+- If the pinned RPC contract has a session-only command for the key, the
+  engine sends it to the running thread. These commands never write
+  `config.yml`: `defaultThinkingLevel` → `set_thinking_level`, `steeringMode` /
   `followUpMode` / `interruptMode` → `set_*_mode`, `compaction.enabled` →
   `set_auto_compaction`, `retry.enabled` → `set_auto_retry`,
-  `providers.cacheWarming` → `set_cache_warming`. Clearing the override sends
-  the value the config layers resolve to.
+  `providers.cacheWarming` → `set_cache_warming`. The thread must be running.
+  Clearing the override sends the value the config layers resolve to.
+- `tools.approvalMode` cannot be overridden per thread. Every thread starts
+  with `--approval-mode` from its runtime mode, and a flag outranks overlays.
 - For any other key, the engine edits the thread's `--config` overlay. The
   overlay is a comment line followed by JSON, which OMP's YAML loader reads
-  unchanged. OMP reloads the overlay live, so only launch-scoped keys mark the
-  thread "restart required".
+  unchanged. It is replaced by a rename, so OMP's live reload never reads half
+  a file. OMP reloads the overlay live, so only launch-scoped keys mark the
+  thread "restart required". The overlay survives a respawn.
 
-The engine reaches threads through `OmpThreadSettingsHost`. The thread session
-layer implements it, and it must keep an existing overlay when it respawns a
-thread.
+`set_approval_mode` and `set_advisor` (O-2) are not in the pinned contract
+1.0.0. `advisor.enabled` goes through the overlay, which OMP applies live.
+
+## Restart required
+
+The adapter registers every running thread with the instance's thread
+registry (`server/threadSessions.ts`). When a launch-scoped key changes for
+a thread, the session's provider state gains `restartRequired: [keys]`
+(`OrchestrationV2ProviderSession`), which reaches the thread projection
+through `provider_session.updated`. The next model selection change on that
+session returns `restart_session` from `planSelectionTransition`. Stopping
+the thread's session also restarts it, and its replacement starts clean.
+
+## Server API
+
+The OMP provider instance exposes the engine as `ompSettings`. The server
+serves it over these RPC methods:
+
+| Method                          | Scope                   |
+| ------------------------------- | ----------------------- |
+| `server.readOmpSettings`        | `orchestration:read`    |
+| `server.writeOmpSetting`        | `providers:manage`      |
+| `server.resetOmpSetting`        | `providers:manage`      |
+| `server.setOmpThreadOverride`   | `orchestration:operate` |
+| `server.clearOmpThreadOverride` | `orchestration:operate` |
+
+A `projectId` selects the project layer, at the project's workspace root.
+Without one, calls run in `<stateDir>/omp`, which has no project config. Errors
+are `OmpSettingsOperationError` and never carry `omp` output.

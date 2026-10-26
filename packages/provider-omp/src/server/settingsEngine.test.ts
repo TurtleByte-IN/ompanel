@@ -5,7 +5,9 @@ import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
-import type { OmpConfigType, OmpThreadRpcCommand } from "../configForm.ts";
+import type { OmpConfigType } from "@t3tools/contracts";
+
+import type { OmpThreadRpcCommand } from "../configForm.ts";
 import { makeOmpControlService, type OmpControlTarget } from "./control.ts";
 import {
   makeOmpSettingsEngine,
@@ -25,6 +27,7 @@ interface FakeSetting {
 
 const SETTINGS: Readonly<Record<string, FakeSetting>> = {
   "tools.approvalMode": { type: "enum", default: "yolo" },
+  "compaction.enabled": { type: "boolean", default: true },
   "compaction.thresholdPercent": { type: "number", default: 80 },
   modelRoles: { type: "record", default: {} },
   "memory.backend": { type: "enum", default: "off" },
@@ -210,7 +213,8 @@ describe("OmpSettingsEngine.read", () => {
       assert.strictEqual(byKey.get("memory.backend")?.source, "global");
       assert.strictEqual(byKey.get("memory.backend")?.value, "local");
       assert.isTrue(byKey.get("memory.backend")?.launchScoped);
-      assert.strictEqual(byKey.get("tools.approvalMode")?.threadOverride, "rpc");
+      assert.strictEqual(byKey.get("tools.approvalMode")?.threadOverride, "none");
+      assert.strictEqual(byKey.get("compaction.enabled")?.threadOverride, "rpc");
 
       const credential = byKey.get("exa.apiKey");
       assert.isTrue(credential?.redacted);
@@ -441,13 +445,16 @@ describe("per-thread overrides", () => {
       const threads = fakeThreads(OPEN_THREADS);
       const result = yield* withEngine(omp, threads, (engine) =>
         engine.setThreadOverride(TARGET, "thread-app", {
-          key: "tools.approvalMode",
-          value: "always-ask",
+          key: "compaction.enabled",
+          value: false,
         }),
       );
       assert.deepStrictEqual(result, { route: "rpc", restartRequired: false });
       assert.deepStrictEqual(threads.commands, [
-        { threadId: "thread-app", command: { type: "set_approval_mode", mode: "always-ask" } },
+        {
+          threadId: "thread-app",
+          command: { type: "set_auto_compaction", params: { enabled: false } },
+        },
       ]);
       assert.strictEqual(threads.overlays.get("thread-app"), EMPTY_OVERLAY);
       assert.isFalse(omp.launches.some((args) => configAction(args) !== "list"));
@@ -486,7 +493,7 @@ describe("per-thread overrides", () => {
   it.effect("clearing drops the overlay key or restores the configured value over RPC", () =>
     Effect.gen(function* () {
       const threads = fakeThreads(OPEN_THREADS);
-      const omp = fakeOmpConfig({ global: { "tools.approvalMode": "write" } });
+      const omp = fakeOmpConfig({ global: { "compaction.enabled": false } });
       yield* withEngine(omp, threads, (engine) =>
         Effect.all([
           engine.setThreadOverride(TARGET, "thread-app", {
@@ -494,13 +501,16 @@ describe("per-thread overrides", () => {
             value: { default: "a/b" },
           }),
           engine.clearThreadOverride(TARGET, "thread-app", "modelRoles"),
-          engine.clearThreadOverride(TARGET, "thread-app", "tools.approvalMode"),
+          engine.clearThreadOverride(TARGET, "thread-app", "compaction.enabled"),
         ]),
       );
       const overlay = threads.overlays.get("thread-app")!;
       assert.deepStrictEqual(JSON.parse(overlay.slice(overlay.indexOf("\n") + 1)), {});
       assert.deepStrictEqual(threads.commands, [
-        { threadId: "thread-app", command: { type: "set_approval_mode", mode: "write" } },
+        {
+          threadId: "thread-app",
+          command: { type: "set_auto_compaction", params: { enabled: false } },
+        },
       ]);
     }),
   );
@@ -510,11 +520,31 @@ describe("per-thread overrides", () => {
       const threads = fakeThreads([]);
       const error = yield* withEngine(fakeOmpConfig(), threads, (engine) =>
         engine
-          .setThreadOverride(TARGET, "thread-closed", { key: "tools.approvalMode", value: "write" })
+          .setThreadOverride(TARGET, "thread-closed", { key: "compaction.enabled", value: false })
           .pipe(Effect.flip),
       );
       assert.strictEqual(error._tag === "OmpSettingsError" && error.reason, "thread_not_open");
       assert.deepStrictEqual(threads.commands, []);
+    }),
+  );
+
+  it.effect("refuse the approval mode, which the thread's launch flag sets", () =>
+    Effect.gen(function* () {
+      const threads = fakeThreads(OPEN_THREADS);
+      const errors = yield* withEngine(fakeOmpConfig(), threads, (engine) =>
+        Effect.all([
+          engine
+            .setThreadOverride(TARGET, "thread-app", { key: "tools.approvalMode", value: "write" })
+            .pipe(Effect.flip),
+          engine.clearThreadOverride(TARGET, "thread-app", "tools.approvalMode").pipe(Effect.flip),
+        ]),
+      );
+      assert.deepStrictEqual(
+        errors.map((error) => (error._tag === "OmpSettingsError" ? error.reason : error._tag)),
+        ["not_thread_overridable", "not_thread_overridable"],
+      );
+      assert.deepStrictEqual(threads.commands, []);
+      assert.strictEqual(threads.overlays.get("thread-app"), EMPTY_OVERLAY);
     }),
   );
 });

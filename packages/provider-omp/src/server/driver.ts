@@ -31,6 +31,9 @@ import { makeOmpAdapter } from "./adapter.ts";
 import { makeOmpControlService } from "./control.ts";
 import { makeOmpPidfiles } from "./pidfiles.ts";
 import { ompStateDirs } from "./session.ts";
+import { makeOmpSettingsController } from "./settingsController.ts";
+import { makeOmpSettingsEngine } from "./settingsEngine.ts";
+import { makeOmpThreadSessions, makeOmpThreadSettingsHost } from "./threadSessions.ts";
 import { OMP_BUNDLED_SIDECAR_ENV } from "./sidecar.ts";
 import { makeOmpSidecarProvisioner } from "./sidecarInstall.ts";
 import { buildInitialOmpProviderSnapshot, ompProviderSnapshot } from "./status.ts";
@@ -139,6 +142,10 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
     // Session processes: pidfiles are swept at boot, so trees a crashed server left are killed.
     const platform = yield* HostProcess.Platform;
     const stateDirs = ompStateDirs(path, host.paths.stateDir);
+    // Global-only settings calls run here: a directory Ompanel owns, with no project config.
+    yield* (yield* FileSystem.FileSystem)
+      .makeDirectory(stateDirs.launcher, { recursive: true, mode: 0o700 })
+      .pipe(Effect.ignore);
     const pidfiles = yield* makeOmpPidfiles({ dir: stateDirs.pidfiles, platform });
     yield* pidfiles.sweep.pipe(
       Effect.tap((entries) =>
@@ -150,6 +157,11 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
       ),
       Effect.forkDetach,
     );
+    const resolveBinary = resolver
+      .resolve({ overridePath: effectiveConfig.binaryPath, bundledPath, cacheDir })
+      .pipe(Effect.provide(FetchHttpClient.layer));
+    // Running threads, shared by the adapter (which registers them) and the settings engine.
+    const threadSessions = makeOmpThreadSessions();
     const orchestrationAdapter = yield* makeOmpAdapter({
       instanceId,
       profile: effectiveConfig.profile,
@@ -157,15 +169,11 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
       platform,
       defaultCwd: host.paths.cwd,
       // Same provisioning resolver as the probe: re-hashed right before every spawn.
-      resolveBinary: resolver
-        .resolve({ overridePath: effectiveConfig.binaryPath, bundledPath, cacheDir })
-        .pipe(
-          Effect.provide(FetchHttpClient.layer),
-          Effect.map((sidecar) => sidecar.path),
-        ),
+      resolveBinary: resolveBinary.pipe(Effect.map((sidecar) => sidecar.path)),
       dirs: stateDirs,
       pidfiles,
       expectedContractVersion: OMP_LOCK.contract.version,
+      threadSessions,
     });
 
     return {
@@ -178,6 +186,27 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
       snapshot,
       orchestrationAdapter,
       textGeneration: makeOmpTextGeneration(),
+      ompSettings: makeOmpSettingsController({
+        engine: makeOmpSettingsEngine({
+          control,
+          threads: yield* makeOmpThreadSettingsHost({
+            sessions: threadSessions,
+            threadsDir: stateDirs.threads,
+          }),
+        }),
+        sessions: threadSessions,
+        target: (cwd) =>
+          resolveBinary.pipe(
+            Effect.map((sidecar) => ({
+              binaryPath: sidecar.path,
+              binaryIdentity: sidecar.identity,
+              profile: effectiveConfig.profile,
+              environment: processEnv,
+              cwd,
+            })),
+          ),
+        globalCwd: stateDirs.launcher,
+      }),
     } satisfies ProviderInstance;
   }),
 };

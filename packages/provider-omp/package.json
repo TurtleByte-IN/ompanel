@@ -11,15 +11,13 @@
       "types": "./src/settings.ts",
       "import": "./src/settings.ts"
     },
-<<<<<<< HEAD
     "./rpc": {
       "types": "./src/rpc.ts",
       "import": "./src/rpc.ts"
-=======
+    },
     "./configForm": {
       "types": "./src/configForm.ts",
       "import": "./src/configForm.ts"
->>>>>>> c5dcee1937 (feat(provider-omp): OMP settings engine on omp config list/set/reset with source layers, restart marker and thread overrides (K-03))
     },
     "./server": {
       "types": "./src/server.ts",

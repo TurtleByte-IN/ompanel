@@ -1,10 +1,10 @@
-import {
-  ompConfigValueFits,
-  type OmpConfigScope,
-  type OmpConfigSource,
-  type OmpSettingsField,
-  type OmpSettingsForm as OmpSettingsFormModel,
-} from "@t3tools/provider-omp/configForm";
+import type {
+  OmpConfigScope,
+  OmpConfigSource,
+  OmpSettingsField,
+  OmpSettingsForm as OmpSettingsFormModel,
+} from "@t3tools/contracts";
+import { ompConfigValueFits } from "@t3tools/provider-omp/configForm";
 import { useState } from "react";
 
 import { Badge } from "../ui/badge";

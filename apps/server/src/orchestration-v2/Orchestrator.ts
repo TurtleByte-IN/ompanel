@@ -4377,6 +4377,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 current: targetRun.modelSelection,
                 target: input.modelSelection,
                 sessionCapabilities: session.providerSession.capabilities,
+                providerSessionId,
               }),
             ),
             Effect.mapError(

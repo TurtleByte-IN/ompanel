@@ -10,6 +10,12 @@ import type {
   ProviderInstanceId,
   ServerProvider,
   ServerProviderWorkspaceSnapshot,
+  OmpConfigScope,
+  OmpSettingsForm,
+  OmpSettingsOperationError,
+  OmpSettingsWriteResult,
+  OmpThreadOverrideResult,
+  ThreadId,
 } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
 import type * as Schema from "effect/Schema";
@@ -75,6 +81,35 @@ export interface ProviderInstance {
       readonly providerId: string;
     }) => Effect.Effect<void, AcpRegistryOperationError>;
   };
+  /** OMP's own settings (`omp config`), read and written through the instance's omp. */
+  readonly ompSettings?: ProviderOmpSettingsController;
+}
+
+/** `cwd` selects the project layer; `undefined` reads and writes global layers only. */
+export interface ProviderOmpSettingsController {
+  readonly read: (input: {
+    readonly cwd: string | undefined;
+  }) => Effect.Effect<OmpSettingsForm, OmpSettingsOperationError>;
+  readonly write: (input: {
+    readonly cwd: string | undefined;
+    readonly scope: OmpConfigScope;
+    readonly key: string;
+    readonly value: unknown;
+  }) => Effect.Effect<OmpSettingsWriteResult, OmpSettingsOperationError>;
+  readonly reset: (input: {
+    readonly cwd: string | undefined;
+    readonly scope: OmpConfigScope;
+    readonly key: string;
+  }) => Effect.Effect<OmpSettingsWriteResult, OmpSettingsOperationError>;
+  readonly setThreadOverride: (input: {
+    readonly threadId: ThreadId;
+    readonly key: string;
+    readonly value: unknown;
+  }) => Effect.Effect<OmpThreadOverrideResult, OmpSettingsOperationError>;
+  readonly clearThreadOverride: (input: {
+    readonly threadId: ThreadId;
+    readonly key: string;
+  }) => Effect.Effect<OmpThreadOverrideResult, OmpSettingsOperationError>;
 }
 
 export interface ProviderContinuationIdentity {

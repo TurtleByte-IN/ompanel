@@ -27,12 +27,9 @@ import type {
   LoginProvider,
   ReadyEvent,
 } from "../../contract/src/wire.generated.ts";
-import {
-  OmpConfigList,
-  OmpConfigResetResult,
-  type OmpConfigScope,
-  OmpConfigSetResult,
-} from "../configForm.ts";
+import type { OmpConfigScope } from "@t3tools/contracts";
+
+import { OmpConfigList, OmpConfigResetResult, OmpConfigSetResult } from "../configForm.ts";
 
 /** Hard deadline per operation, from spawn to exit. */
 export const OMP_CONTROL_TIMEOUTS_MS = {
