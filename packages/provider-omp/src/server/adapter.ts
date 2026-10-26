@@ -1,4 +1,5 @@
 import type {
+  ChatAttachment,
   OrchestrationV2ProviderCapabilities,
   OrchestrationV2ProviderSession,
   ProviderInstanceId,
@@ -9,6 +10,14 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderHostTools from "@t3tools/provider-core/server/ProviderHostTools";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
+import {
+  t3AcpPromptWithInstructions,
+  type T3AcpInstructionState,
+} from "@t3tools/provider-core/server/orchestrationInstructions";
+import {
+  isProviderNativeImageAttachment,
+  providerMessageTextWithAttachmentPaths,
+} from "@t3tools/provider-core/server/attachmentPrompt";
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
 import type * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -23,7 +32,11 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
-import type { RpcServerFrame, SessionState } from "../../contract/src/wire.generated.ts";
+import type {
+  ImageContent,
+  RpcServerFrame,
+  SessionState,
+} from "../../contract/src/wire.generated.ts";
 import type { OmpCommandHooks } from "./commands.ts";
 import { makeOmpHostBridge } from "./hostTools.ts";
 import { ompApprovalModeFor } from "./launch.ts";
@@ -92,6 +105,10 @@ const SUBAGENT_REVIVE_TIMEOUT_MS = 60_000;
 const SESSION_CHANGE_TIMEOUT_MS = 60_000;
 /** Reads of the session tree for a rewind or fork, which list user messages or entries. */
 const TREE_READ_TIMEOUT_MS = 30_000;
+/** A steer or follow-up is acknowledged once OMP admitted it (hooks, skill images included). */
+const STEER_REQUEST_TIMEOUT_MS = 30_000;
+/** OMP acknowledges an abort once the agent loop stopped, which can wait on a tool call. */
+const ABORT_REQUEST_TIMEOUT_MS = 15_000;
 
 /**
  * What an `omp --mode rpc-ui` session supports. Rollback maps to OMP's `branch`, a fork to
@@ -123,7 +140,9 @@ const OMP_PROVIDER_CAPABILITIES = {
     emitsTurnCompleted: true,
     supportsInterrupt: true,
     supportsActiveSteering: true,
-    supportsSteeringByInterruptRestart: false,
+    // A forced restart (a selection change mid-turn, "interrupt and send") stops the turn and
+    // starts the new attempt with `abort_and_prompt` (docs/omp/composer.md).
+    supportsSteeringByInterruptRestart: true,
     supportsQueuedMessages: true,
     terminalStatusQuality: "strong",
   },
@@ -211,16 +230,9 @@ export interface OmpAdapterOptions {
   readonly sessions: OmpSessionsLocation;
   /** The instance's `/` and `$` catalog: pushed command lists in, `$skill` prompt rewrite out. */
   readonly commands?: OmpCommandHooks;
+  /** Where T3 saved a message's attachment; absent, attachments are named but not sent. */
+  readonly resolveAttachmentPath?: (attachment: ChatAttachment) => string | null;
 }
-
-/** Operations other Ompanel items wire up; this build refuses them. */
-const unavailable = (operation: string) =>
-  Effect.fail(
-    new ProviderAdapter.ProviderAdapterProtocolError({
-      driver: OMP_PROVIDER,
-      detail: `OMP ${operation} is not available in this Ompanel build yet`,
-    }),
-  );
 
 const protocolError = (detail: string, reason?: ProviderAdapter.ProviderAdapterFailureReason) =>
   new ProviderAdapter.ProviderAdapterProtocolError({
@@ -879,6 +891,49 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       }
     });
 
+    /**
+     * A message as OMP takes it (`prompt`, `steer`, `follow_up`, `abort_and_prompt`): the text,
+     * with every attachment named by its saved path, and image attachments as image blocks.
+     */
+    const promptPayload = Effect.fnUntraced(function* (
+      text: string,
+      attachments: ReadonlyArray<ChatAttachment>,
+    ) {
+      const resolvePath = options.resolveAttachmentPath ?? (() => null);
+      const images: Array<ImageContent> = [];
+      for (const attachment of attachments) {
+        if (!isProviderNativeImageAttachment(attachment)) continue;
+        const path = resolvePath(attachment);
+        if (path === null) continue;
+        const bytes = yield* fileSystem
+          .readFile(path)
+          .pipe(
+            Effect.mapError((error) =>
+              protocolError(`Attachment ${attachment.name} could not be read: ${error.message}`),
+            ),
+          );
+        images.push({
+          type: "image",
+          data: Buffer.from(bytes).toString("base64"),
+          mimeType: attachment.mimeType,
+        });
+      }
+      const message = providerMessageTextWithAttachmentPaths({
+        text,
+        attachments,
+        resolveAttachmentPath: resolvePath,
+      });
+      return images.length === 0 ? { message } : { message, images };
+    });
+
+    /**
+     * The interaction mode OMP last heard about. RPC has no plan mode (`/plan` is TUI-only), so
+     * Plan reaches OMP as an instruction on the first prompt after each mode change. Every
+     * process starts from Default, so default-mode prompts stay verbatim in the session.
+     */
+    let instructionState: T3AcpInstructionState = { interactionMode: "default", hasT3Mcp: false };
+    /** The run and attempt of the last turn, to tell a restarted attempt from a new run. */
+    let lastTurn: { readonly runId: string; readonly attemptId: string } | null = null;
     let appliedSessionName: string | null = null;
     const startTurn = Effect.fnUntraced(function* (
       turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
@@ -916,6 +971,20 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
             Effect.ignore,
           );
       }
+      const state: T3AcpInstructionState = {
+        interactionMode: turnInput.runtimePolicy.interactionMode,
+        hasT3Mcp: false,
+      };
+      const text = t3AcpPromptWithInstructions({
+        prompt: promptText,
+        state,
+        previousState: instructionState,
+      });
+      // A leading slash command (a rewritten `$skill` too) goes out unwrapped; the mode is
+      // stated on a later prompt.
+      const stated =
+        text !== promptText || instructionState.interactionMode === state.interactionMode;
+      const payload = yield* promptPayload(text, turnInput.message.attachments);
       const providerTurnId = yield* exclusive(
         Effect.gen(function* () {
           if (mapper.hasActiveTurn) {
@@ -932,31 +1001,42 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
           return mapper.activeProviderTurnId;
         }),
       );
+      if (stated) instructionState = state;
+      // A new attempt of the last turn's run is T3 restarting it ("interrupt and send", a
+      // selection change): OMP aborts whatever it still runs or holds and takes the prompt.
+      const restart =
+        lastTurn !== null &&
+        lastTurn.runId === turnInput.runId &&
+        lastTurn.attemptId !== turnInput.attemptId;
+      lastTurn = { runId: turnInput.runId, attemptId: turnInput.attemptId };
       // The reply is echoed onto the frame stream, behind any `command_output` the prompt
       // produced, and settles the turn there. A prompt that never reached OMP settles here.
-      yield* process
-        .request("prompt", { message: promptText }, { timeoutMs: null, echoResponse: true })
-        .pipe(
-          Effect.catchTags({
-            OmpRpcError: (error) =>
-              exclusive(
-                mapper.activeProviderTurnId === providerTurnId
-                  ? finalize(
-                      {
-                        status: "failed",
-                        failure: makeProviderFailure({
-                          message: error.message,
-                          class: "transport_error",
-                        }),
-                      },
-                      false,
-                    )
-                  : Effect.void,
-              ),
-          }),
-          Effect.ignore,
-          Effect.forkIn(scope),
-        );
+      const requestOptions = { timeoutMs: null, echoResponse: true } as const;
+      yield* (
+        restart
+          ? process.request("abort_and_prompt", payload, requestOptions)
+          : process.request("prompt", payload, requestOptions)
+      ).pipe(
+        Effect.catchTags({
+          OmpRpcError: (error) =>
+            exclusive(
+              mapper.activeProviderTurnId === providerTurnId
+                ? finalize(
+                    {
+                      status: "failed",
+                      failure: makeProviderFailure({
+                        message: error.message,
+                        class: "transport_error",
+                      }),
+                    },
+                    false,
+                  )
+                : Effect.void,
+            ),
+        }),
+        Effect.ignore,
+        Effect.forkIn(scope),
+      );
     });
 
     const respond = Effect.fnUntraced(function* (
@@ -978,6 +1058,66 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       mapper.providerThread?.id === providerThread.id
         ? Effect.void
         : Effect.fail(protocolError("OMP subagent requested for a different provider thread"));
+
+    const assertActiveTurn = (providerTurnId: string) =>
+      mapper.activeProviderTurnId === providerTurnId
+        ? Effect.void
+        : Effect.fail(protocolError(`OMP turn ${providerTurnId} is not active`));
+
+    /**
+     * A message for the running turn. OMP injects a `steer` into the live agent loop (after
+     * the current tool call, or at the turn's end under `interruptMode: wait`); once the loop
+     * has ended it can only take a `follow_up`, which it runs when the session resumes.
+     */
+    const steerTurn = Effect.fnUntraced(function* (
+      steerInput: ProviderAdapter.ProviderAdapterV2SteerInput,
+    ) {
+      yield* assertActiveTurn(steerInput.providerTurnId);
+      const payload = yield* promptPayload(steerInput.message.text, steerInput.message.attachments);
+      const requestOptions = { timeoutMs: STEER_REQUEST_TIMEOUT_MS };
+      yield* (
+        mapper.agentEnded
+          ? process.request("follow_up", payload, requestOptions)
+          : process.request("steer", payload, requestOptions)
+      ).pipe(Effect.mapError(subagentRequestError));
+    });
+
+    /**
+     * Stop. OMP aborts the turn and settles it with `prompt_result: aborted`. Messages OMP still
+     * holds would run after an `abort` (its queue drains), so with any queued the turn stops
+     * with `abort_and_restore_queue` instead and the withdrawn messages are listed on it.
+     */
+    const interruptTurn = Effect.fnUntraced(function* (
+      interruptInput: ProviderAdapter.ProviderAdapterV2InterruptInput,
+    ) {
+      if (mapper.activeProviderTurnId === null && interruptInput.requestRuntimeRestart === true) {
+        return;
+      }
+      yield* assertActiveTurn(interruptInput.providerTurnId);
+      const queue = mapper.queue;
+      const withdrawable = queue.steering.length - queue.liveSteered + queue.followUp.length;
+      if (withdrawable <= 0) {
+        return yield* process
+          .request("abort", undefined, { timeoutMs: ABORT_REQUEST_TIMEOUT_MS })
+          .pipe(Effect.mapError(subagentRequestError));
+      }
+      const restored = yield* process
+        .request("abort_and_restore_queue", undefined, { timeoutMs: ABORT_REQUEST_TIMEOUT_MS })
+        .pipe(Effect.mapError(subagentRequestError));
+      yield* exclusive(
+        Effect.gen(function* () {
+          yield* emit(
+            mapper.withdrawnQueue(
+              {
+                steering: restored.steering.map((message) => message.text),
+                followUp: restored.followUp.map((message) => message.text),
+              },
+              yield* DateTime.now,
+            ),
+          );
+        }),
+      );
+    });
 
     const controlSubagent = Effect.fnUntraced(function* (
       controlInput: Parameters<
@@ -1397,8 +1537,30 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
         ),
       controlSubagent,
       readSubagentTranscript,
-      steerTurn: () => unavailable("steering"),
-      interruptTurn: () => unavailable("interrupts"),
+      steerTurn: (steerInput) =>
+        steerTurn(steerInput).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProviderAdapter.ProviderAdapterSteerRunError({
+                driver: OMP_PROVIDER,
+                providerThreadId: steerInput.providerThread.id,
+                providerTurnId: steerInput.providerTurnId,
+                cause,
+              }),
+          ),
+        ),
+      interruptTurn: (interruptInput) =>
+        interruptTurn(interruptInput).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProviderAdapter.ProviderAdapterInterruptError({
+                driver: OMP_PROVIDER,
+                providerThreadId: interruptInput.providerThread.id,
+                providerTurnId: interruptInput.providerTurnId,
+                cause,
+              }),
+          ),
+        ),
       respondToRuntimeRequest: (requestInput) =>
         exclusive(respond(requestInput)).pipe(
           Effect.mapError(

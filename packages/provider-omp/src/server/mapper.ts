@@ -152,7 +152,38 @@ interface ActiveTurn {
   compaction: { readonly nativeItemId: string; readonly startedAt: DateTime.Utc } | null;
   /** Staged `ast_edit` proposals, re-emitted once the agent resolves or rejects them. */
   readonly proposals: Map<string, { readonly startedAt: DateTime.Utc; readonly body: ItemBody }>;
+  /** After `agent_end`: the agent loop is done and only background work can wake it again. */
+  agentEnded: boolean;
+  /** The queue card while OMP holds messages for this turn, so each snapshot updates it. */
+  queueCard: { readonly nativeItemId: string; readonly startedAt: DateTime.Utc } | null;
 }
+
+/** OMP's displayable steering and follow-up queue (`queue_update`). */
+export interface OmpQueueSnapshot {
+  readonly steering: ReadonlyArray<string>;
+  readonly followUp: ReadonlyArray<string>;
+  /** Leading `steering` entries already sent into the streaming response. */
+  readonly liveSteered: number;
+}
+
+const EMPTY_QUEUE: OmpQueueSnapshot = { steering: [], followUp: [], liveSteered: 0 };
+
+/** The queue card's text: what OMP still holds, in the order it delivers it. */
+const queueCardText = (queue: OmpQueueSnapshot): { summary: string; detail?: string } => {
+  const pending = queue.steering.length + queue.followUp.length;
+  if (pending === 0) return { summary: "OMP delivered every queued message" };
+  const lines = [
+    ...queue.steering.map(
+      (message, index) =>
+        `${index < queue.liveSteered ? "Steering (sent)" : "Steering"}: ${message}`,
+    ),
+    ...queue.followUp.map((message) => `Follow-up: ${message}`),
+  ];
+  return {
+    summary: `${pending} message${pending === 1 ? "" : "s"} queued in OMP`,
+    detail: lines.join("\n"),
+  };
+};
 
 interface BoundThread {
   providerThread: OrchestrationV2ProviderThread;
@@ -458,6 +489,8 @@ export class OmpThreadMapper {
   #session: OrchestrationV2ProviderSession;
   #thread: BoundThread | null = null;
   #turn: ActiveTurn | null = null;
+  /** OMP's last queue snapshot; the queue belongs to the session and can outlive a turn. */
+  #queue: OmpQueueSnapshot = EMPTY_QUEUE;
   readonly #instanceId: OmpThreadMapperOptions["instanceId"];
 
   constructor(options: OmpThreadMapperOptions) {
@@ -480,6 +513,18 @@ export class OmpThreadMapper {
   /** The prompt request of the active turn, while one is being answered. */
   get activeProviderTurnId(): OrchestrationV2ProviderTurn["id"] | null {
     return this.#turn?.providerTurn.id ?? null;
+  }
+
+  /**
+   * Whether the active turn's agent loop already ended: a steer can no longer land in it, so
+   * a message for the turn is delivered as OMP's follow-up instead.
+   */
+  get agentEnded(): boolean {
+    return this.#turn?.agentEnded === true;
+  }
+
+  get queue(): OmpQueueSnapshot {
+    return this.#queue;
   }
 
   /**
@@ -640,6 +685,8 @@ export class OmpThreadMapper {
       noticeCount: 0,
       compaction: null,
       proposals: new Map(),
+      agentEnded: false,
+      queueCard: null,
     };
     // The orchestrator owns the provider thread row; keep its identity for later updates.
     thread.providerThread = {
@@ -683,8 +730,28 @@ export class OmpThreadMapper {
           ...this.#sessionInfo(stringField(f, "sessionId"), stringField(f, "title"), now),
         );
         break;
+      case "agent_start":
+      case "agent_end":
+        if (turn !== null) turn.agentEnded = frame.type === "agent_end";
+        break;
+      case "queue_update": {
+        this.#queue = {
+          steering: Array.isArray(f["steering"])
+            ? f["steering"].filter((entry): entry is string => typeof entry === "string")
+            : [],
+          followUp: Array.isArray(f["followUp"])
+            ? f["followUp"].filter((entry): entry is string => typeof entry === "string")
+            : [],
+          liveSteered: typeof f["liveSteered"] === "number" ? f["liveSteered"] : 0,
+        };
+        if (turn !== null) events.push(...this.#queueCard(turn, now));
+        break;
+      }
       case "response": {
-        if (turn === null || f["command"] !== "prompt" || turn.promptId !== null) break;
+        // `abort_and_prompt` starts a turn exactly like `prompt` (adapter `startTurn`).
+        const command = f["command"];
+        if (turn === null || turn.promptId !== null) break;
+        if (command !== "prompt" && command !== "abort_and_prompt") break;
         turn.promptId = typeof f["id"] === "string" ? f["id"] : "";
         if (f["success"] !== true) {
           settled = {
@@ -1164,6 +1231,62 @@ export class OmpThreadMapper {
         ...body,
       } as OrchestrationV2TurnItem,
     };
+  }
+
+  /**
+   * One card per turn for OMP's queue: it shows what OMP still holds after each snapshot and
+   * completes once the queue is empty. An empty queue with no card shows nothing.
+   */
+  #queueCard(turn: ActiveTurn, now: DateTime.Utc): Array<Event> {
+    const queue = this.#queue;
+    const pending = queue.steering.length + queue.followUp.length;
+    if (turn.queueCard === null) {
+      if (pending === 0) return [];
+      turn.queueCard = { nativeItemId: `queue:${turn.providerTurn.id}`, startedAt: now };
+    }
+    const { nativeItemId, startedAt } = turn.queueCard;
+    const status = pending === 0 ? "completed" : "running";
+    if (pending === 0) turn.queueCard = null;
+    return [
+      this.#node(turn, nativeItemId, "system", status, startedAt, pending === 0 ? now : null),
+      this.#item(turn, nativeItemId, status, startedAt, now, {
+        title: "OMP queue",
+        type: "notification",
+        source: { kind: "system" },
+        outcome: "updated",
+        ...queueCardText(queue),
+      }),
+    ];
+  }
+
+  /**
+   * A Stop withdrew messages OMP still held (`abort_and_restore_queue`), so they never ran:
+   * say which, on the stopped turn, and close its queue card.
+   */
+  withdrawnQueue(
+    restored: {
+      readonly steering: ReadonlyArray<string>;
+      readonly followUp: ReadonlyArray<string>;
+    },
+    now: DateTime.Utc,
+  ): Array<Event> {
+    const turn = this.#turn;
+    this.#queue = EMPTY_QUEUE;
+    if (turn === null) return [];
+    const events = this.#queueCard(turn, now);
+    const withdrawn = [...restored.steering, ...restored.followUp];
+    if (withdrawn.length === 0) return events;
+    return [
+      ...events,
+      ...this.#oneShotItem(turn, "queue-withdrawn", now, {
+        title: "OMP queue",
+        type: "notification",
+        source: { kind: "system" },
+        outcome: "updated",
+        summary: `Stopped before ${withdrawn.length} queued message${withdrawn.length === 1 ? "" : "s"} ran`,
+        detail: withdrawn.join("\n"),
+      }),
+    ];
   }
 
   #oneShotItem(turn: ActiveTurn, prefix: string, now: DateTime.Utc, body: ItemBody): Array<Event> {

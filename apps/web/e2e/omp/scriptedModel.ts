@@ -6,6 +6,9 @@ import * as NodeFS from "node:fs";
 import * as NodeHttp from "node:http";
 import * as NodePath from "node:path";
 
+/** A user message containing `stall:` gets a reply that streams its first words, then hangs. */
+const STALL_PREFIX = "stall:";
+const STALLED_REPLY = "Working on it, slowly.";
 /** A user message containing `run: <command>` makes the model call the shell tool with it. */
 const RUN_PREFIX = "run: ";
 /**
@@ -101,6 +104,7 @@ const scriptedReply = (request: ChatRequest): Reply => {
     const tool = offered.has("terminal") ? "terminal" : "bash";
     return { tool, args: { command } };
   }
+  if (userText.includes(STALL_PREFIX)) return { text: STALLED_REPLY };
   return { text: STREAMED_PARAGRAPHS.join("\n\n") };
 };
 
@@ -123,6 +127,23 @@ const sleep = (ms: number) => {
 /** Text streams one word per chunk, 120 ms apart, so the UI renders it in pieces. */
 const streamReply = async (response: NodeHttp.ServerResponse, reply: Reply) => {
   response.writeHead(200, { "content-type": "text/event-stream" });
+  if ("text" in reply && reply.text === STALLED_REPLY) {
+    // The first words, then nothing until the client hangs up (OMP's abort) or a minute passes.
+    response.write(
+      sse({
+        ...BASE,
+        choices: [
+          { index: 0, delta: { role: "assistant", content: reply.text }, finish_reason: null },
+        ],
+      }),
+    );
+    const deadline = Date.now() + 60_000;
+    while (!response.destroyed && !response.socket?.destroyed && Date.now() < deadline) {
+      await sleep(100);
+    }
+    if (!response.writableEnded && !response.destroyed) response.end("data: [DONE]\n\n");
+    return;
+  }
   if ("text" in reply) {
     const words = reply.text.startsWith("{") ? [reply.text] : reply.text.split(/(?<=\s)/);
     for (const [index, word] of words.entries()) {
