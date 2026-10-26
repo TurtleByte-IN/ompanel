@@ -13,6 +13,7 @@ import {
 import {
   OMP_MODEL_ROLES,
   OMP_SETTINGS_PAGES,
+  OMP_WEB_SEARCH_ROLE,
   ompSettingsPageForm,
   type OmpSettingsPageId,
 } from "@t3tools/provider-omp/settingsPages";
@@ -98,6 +99,114 @@ const CONTROLS: NonNullable<OmpSettingsFormProps["controls"]> = {
   ),
 };
 
+function recordOf(field: OmpSettingsField): Readonly<Record<string, unknown>> {
+  return typeof field.value === "object" && field.value !== null && !Array.isArray(field.value)
+    ? (field.value as Readonly<Record<string, unknown>>)
+    : {};
+}
+
+/** `record` with `key` set to `value`, or without `key` when `value` is undefined. */
+function withEntry(record: Readonly<Record<string, unknown>>, key: string, value: unknown) {
+  return Object.fromEntries([
+    ...Object.entries(record).filter(([name]) => name !== key),
+    ...(value === undefined ? [] : [[key, value]]),
+  ]);
+}
+
+/** The `web` role of `modelRoles`: the first search provider; other roles are kept as they are. */
+function WebSearchRoleEditor({
+  field,
+  onWrite,
+}: {
+  readonly field: OmpSettingsField;
+  readonly onWrite: (value: unknown) => void;
+}) {
+  const roles = recordOf(field);
+  const current = roles[OMP_WEB_SEARCH_ROLE];
+  return (
+    <DraftInput
+      aria-label={`modelRoles.${OMP_WEB_SEARCH_ROLE}`}
+      placeholder="web/exa"
+      disabled={field.readOnly}
+      value={typeof current === "string" ? current : ""}
+      onCommit={(next) => {
+        const provider = next.trim();
+        onWrite(withEntry(roles, OMP_WEB_SEARCH_ROLE, provider === "" ? undefined : provider));
+      }}
+    />
+  );
+}
+
+/** The `web` chain of `retry.fallbackChains`: providers tried after the role's, comma-separated. */
+function WebSearchChainEditor({
+  field,
+  onWrite,
+}: {
+  readonly field: OmpSettingsField;
+  readonly onWrite: (value: unknown) => void;
+}) {
+  const chains = recordOf(field);
+  const current = chains[OMP_WEB_SEARCH_ROLE];
+  return (
+    <DraftInput
+      aria-label={`retry.fallbackChains.${OMP_WEB_SEARCH_ROLE}`}
+      placeholder="web/searxng, web/duckduckgo"
+      disabled={field.readOnly}
+      value={Array.isArray(current) ? current.join(", ") : ""}
+      onCommit={(next) => {
+        const chain = next
+          .split(",")
+          .map((provider) => provider.trim())
+          .filter((provider) => provider !== "");
+        onWrite(withEntry(chains, OMP_WEB_SEARCH_ROLE, chain.length === 0 ? undefined : chain));
+      }}
+    />
+  );
+}
+
+/** Search shows only the `web` entries of the shared role and chain records. */
+const SEARCH_CONTROLS: NonNullable<OmpSettingsFormProps["controls"]> = {
+  ...CONTROLS,
+  modelRoles: (field, onWrite) => <WebSearchRoleEditor field={field} onWrite={onWrite} />,
+  "retry.fallbackChains": (field, onWrite) => (
+    <WebSearchChainEditor field={field} onWrite={onWrite} />
+  ),
+};
+
+const TERMINAL_ONLY_NOTE = "Terminal-only: OMP's terminal UI reads it; Ompanel does not use it.";
+
+/** OMP has no PTY setting: `--no-pty` / `PI_NO_PTY` turn it off, and `rpc-ui` always does. */
+function PtyNote() {
+  return (
+    <div className="flex flex-col gap-1.5" data-setting-static="pty">
+      <div className="flex flex-wrap items-center gap-2">
+        <code className="text-xs">PTY</code>
+        <span className="text-muted-foreground text-xs">Off · read-only</span>
+      </div>
+      <p className="text-muted-foreground text-xs">
+        OMP has no setting for it. Bash runs without a pseudo-terminal in Ompanel threads because
+        OMP's rpc-ui mode forces it off; in the terminal app, <code>--no-pty</code> or{" "}
+        <code>PI_NO_PTY=1</code> turn it off.
+      </p>
+    </div>
+  );
+}
+
+function KeybindingsNote() {
+  return (
+    <div className="flex flex-col gap-1.5" data-setting-static="keybindings.yml">
+      <div className="flex flex-wrap items-center gap-2">
+        <code className="text-xs">keybindings.yml</code>
+        <span className="text-muted-foreground text-xs">Terminal-only · read-only</span>
+      </div>
+      <p className="text-muted-foreground text-xs">
+        Key bindings for OMP's terminal UI, in <code>keybindings.yml</code> in OMP's agent
+        directory. Ompanel's own shortcuts are under Keybindings.
+      </p>
+    </div>
+  );
+}
+
 /** One OMP settings page for one OMP instance: reads through the engine, writes globally. */
 export function OmpSettingsPageBody({
   environmentId,
@@ -167,7 +276,8 @@ export function OmpSettingsPageBody({
         <OmpSettingsForm
           form={ompSettingsPageForm(form, page)}
           scope={SCOPE}
-          controls={CONTROLS}
+          controls={pageId === "search" ? SEARCH_CONTROLS : CONTROLS}
+          {...(page.terminalOnly ? { readOnlyNote: TERMINAL_ONLY_NOTE } : {})}
           onWrite={(key, value) =>
             void writeSetting({
               environmentId,
@@ -182,6 +292,8 @@ export function OmpSettingsPageBody({
           }
         />
       )}
+      {pageId === "runtime" ? <PtyNote /> : null}
+      {pageId === "terminal" ? <KeybindingsNote /> : null}
       {pageId === "advisor" ? (
         <OmpAgentFilesSection environmentId={environmentId} instanceId={instanceId} />
       ) : null}

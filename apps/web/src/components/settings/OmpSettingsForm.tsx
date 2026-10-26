@@ -33,6 +33,8 @@ export interface OmpSettingsFormProps {
   readonly controls?: Readonly<
     Record<string, (field: OmpSettingsField, onWrite: (value: unknown) => void) => ReactNode>
   >;
+  /** Why a non-env read-only field is read-only; defaults to the path-scoped explanation. */
+  readonly readOnlyNote?: string;
 }
 
 function JsonField({
@@ -136,7 +138,14 @@ function FieldControl({
 }
 
 /** Renders the settings engine's form: one row per OMP setting, grouped by key prefix. */
-export function OmpSettingsForm({ form, scope, onWrite, onReset, controls }: OmpSettingsFormProps) {
+export function OmpSettingsForm({
+  form,
+  scope,
+  onWrite,
+  onReset,
+  controls,
+  readOnlyNote = "Can hold entries scoped to other folders, which this view cannot show; edit it in OMP's config file.",
+}: OmpSettingsFormProps) {
   const groups = new Map<string, OmpSettingsField[]>();
   for (const field of form.fields) {
     const fields = groups.get(field.group);
@@ -178,7 +187,7 @@ export function OmpSettingsForm({ form, scope, onWrite, onReset, controls }: Omp
                 <p className="text-muted-foreground text-xs">
                   {field.source === "env"
                     ? "Set by an environment variable; change it where OMP is launched."
-                    : "Can hold entries scoped to other folders, which this view cannot show; edit it in OMP's config file."}
+                    : readOnlyNote}
                 </p>
               ) : field.credential ? (
                 <p className="text-muted-foreground text-xs">

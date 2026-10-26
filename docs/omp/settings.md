@@ -107,8 +107,9 @@ are `OmpSettingsOperationError` and never carry `omp` output.
 
 ## Settings pages
 
-Settings → OMP Models & Roles, Routing, Thinking, Advisor & Agents, Sampling and
-Approvals & Tools each show a slice of
+Settings → OMP Models & Roles, Routing, Thinking, Advisor & Agents, Sampling,
+Approvals & Tools, Memory, Context, Modes, Runtime, Search, Discovery and
+Terminal prefs each show a slice of
 the engine's form for the primary environment's OMP instance (a picker appears
 when it runs several). The pages write the global layer and add no write path
 of their own; env-set keys stay read-only and credentials reset-only. The key
@@ -124,6 +125,13 @@ against the pinned registry.
 | Advisor & Agents  | `advisor.*`, `task.agentAdvisor` (one rule per subagent: `on`, `off` or a model), plus the `WATCHDOG.yml` and `agents/` file editors below                                                                   |
 | Sampling          | `temperature`, `topP`, `topK`, `minP`, `presencePenalty`, `repetitionPenalty`, `textVerbosity`, `personality`, `tier.*`                                                                                      |
 | Approvals & Tools | `tools.approvalMode`, `tools.approval` (rules editor), `bash.patterns` (ordered rules editor), `bashInterceptor.*`, `tools.intentTracing`, `tools.xdev`, `tools.xdevDocs`, `tools.xdevInlineDevices`         |
+| Memory            | `memory.backend` (`off` `local` `hindsight` `mnemopi` `sharpshooter`), `memories.*` (local), `hindsight.*`, `mnemopi.*`, `sharpshooter.*`; `hindsight.apiToken`, `mnemopi.*ApiKey` are reset-only            |
+| Context           | `compaction.*` (incl. `compaction.methodOrder`)                                                                                                                                                              |
+| Modes             | `plan.*`, `goal.*`, `loop.*`                                                                                                                                                                                 |
+| Runtime           | `eval.*` (incl. `eval.py`, `eval.js`), `providers.tinyModelDevice`, `providers.tinyModelDtype`, plus a read-only PTY row                                                                                     |
+| Search            | `web_search.enabled`, `modelRoles` (`web` role only), `retry.fallbackChains` (`web` chain only), `providers.webSearchTimeoutSeconds`, `exa.*`, `searxng.*`                                                   |
+| Discovery         | `enabledProviders` / `disabledProviders` (read-only), `skills.enabled`, `skills.enable*` sources, `commands.enableClaudeUser/Project`, `mcp.enableProjectConfig`, `contextFiles.extra`                       |
+| Terminal prefs    | `startup.*`, `theme.*`, `statusLine.*`, `tui.*`, `terminal.*`, all read-only and marked terminal-only, plus a `keybindings.yml` note                                                                         |
 
 `modelRoles` covers OMP's 16 roles: `default smol slow vision plan commit tiny
 memory task advisor widget image web speech dictation judge` (OMP has no
@@ -136,6 +144,32 @@ already resolved for its working directory, and the engine has no raw read, so
 writing the shown value back would delete every entry scoped to another
 folder. The pages show these three read-only (`OMP_PATH_SCOPED_KEYS`), with no
 Reset; edit them in OMP's config file.
+
+### Memory, runtime, search and terminal prefs
+
+OMP starts protocol sessions (RPC, ACP) with `memory.backend` off unless a
+config layer sets it, so the Memory page's global value is what turns memory on
+for Ompanel threads.
+
+OMP has no PTY setting. `--no-pty` and `PI_NO_PTY` turn it off in the terminal
+app, and `rpc-ui` mode (Ompanel's threads) always runs bash without one, so the
+Runtime page shows PTY as a read-only row.
+
+`web_search` picks providers through the `web` model role: `modelRoles.web`
+is the first `web/<provider>` selector and `retry.fallbackChains.web` the rest
+(OMP migrated the old `providers.webSearch*` order there). The Search page
+edits only those two entries and writes every other role and chain back as it
+read them.
+
+Terminal prefs (`terminalOnly` in `OMP_SETTINGS_PAGES`) are read only by OMP's
+terminal UI; every field there is read-only, with no Reset. `keybindings.yml` is
+a file in the agent directory, not a setting.
+
+PRD §7 keys the pinned OMP does not register: `compaction.strategy` (now
+`compaction.methodOrder`), any PTY key, a `web_search` provider-order key (now
+the `web` role) and an Exa API key (`exa.*` has only `enabled` and
+`searchDelayMs`; the key comes from sign-in or `EXA_API_KEY`). A test asserts
+these stay absent.
 
 ### Approvals
 

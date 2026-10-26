@@ -29,9 +29,16 @@ import { Route as ChatSettingsProvidersRouteImport } from './routes/_chat.settin
 import { Route as ChatSettingsProjectsRouteImport } from './routes/_chat.settings.projects'
 import { Route as ChatSettingsOpenSourceLicensesRouteImport } from './routes/_chat.settings.open-source-licenses'
 import { Route as ChatSettingsOmpThinkingRouteImport } from './routes/_chat.settings.omp-thinking'
+import { Route as ChatSettingsOmpTerminalRouteImport } from './routes/_chat.settings.omp-terminal'
+import { Route as ChatSettingsOmpSearchRouteImport } from './routes/_chat.settings.omp-search'
 import { Route as ChatSettingsOmpSamplingRouteImport } from './routes/_chat.settings.omp-sampling'
+import { Route as ChatSettingsOmpRuntimeRouteImport } from './routes/_chat.settings.omp-runtime'
 import { Route as ChatSettingsOmpRoutingRouteImport } from './routes/_chat.settings.omp-routing'
+import { Route as ChatSettingsOmpModesRouteImport } from './routes/_chat.settings.omp-modes'
 import { Route as ChatSettingsOmpModelsRouteImport } from './routes/_chat.settings.omp-models'
+import { Route as ChatSettingsOmpMemoryRouteImport } from './routes/_chat.settings.omp-memory'
+import { Route as ChatSettingsOmpDiscoveryRouteImport } from './routes/_chat.settings.omp-discovery'
+import { Route as ChatSettingsOmpContextRouteImport } from './routes/_chat.settings.omp-context'
 import { Route as ChatSettingsOmpApprovalsRouteImport } from './routes/_chat.settings.omp-approvals'
 import { Route as ChatSettingsOmpAdvisorRouteImport } from './routes/_chat.settings.omp-advisor'
 import { Route as ChatSettingsKeybindingsRouteImport } from './routes/_chat.settings.keybindings'
@@ -147,9 +154,24 @@ const ChatSettingsOmpThinkingRoute = ChatSettingsOmpThinkingRouteImport.update({
   path: '/omp-thinking',
   getParentRoute: () => ChatSettingsRoute,
 } as any)
+const ChatSettingsOmpTerminalRoute = ChatSettingsOmpTerminalRouteImport.update({
+  id: '/omp-terminal',
+  path: '/omp-terminal',
+  getParentRoute: () => ChatSettingsRoute,
+} as any)
+const ChatSettingsOmpSearchRoute = ChatSettingsOmpSearchRouteImport.update({
+  id: '/omp-search',
+  path: '/omp-search',
+  getParentRoute: () => ChatSettingsRoute,
+} as any)
 const ChatSettingsOmpSamplingRoute = ChatSettingsOmpSamplingRouteImport.update({
   id: '/omp-sampling',
   path: '/omp-sampling',
+  getParentRoute: () => ChatSettingsRoute,
+} as any)
+const ChatSettingsOmpRuntimeRoute = ChatSettingsOmpRuntimeRouteImport.update({
+  id: '/omp-runtime',
+  path: '/omp-runtime',
   getParentRoute: () => ChatSettingsRoute,
 } as any)
 const ChatSettingsOmpRoutingRoute = ChatSettingsOmpRoutingRouteImport.update({
@@ -157,9 +179,30 @@ const ChatSettingsOmpRoutingRoute = ChatSettingsOmpRoutingRouteImport.update({
   path: '/omp-routing',
   getParentRoute: () => ChatSettingsRoute,
 } as any)
+const ChatSettingsOmpModesRoute = ChatSettingsOmpModesRouteImport.update({
+  id: '/omp-modes',
+  path: '/omp-modes',
+  getParentRoute: () => ChatSettingsRoute,
+} as any)
 const ChatSettingsOmpModelsRoute = ChatSettingsOmpModelsRouteImport.update({
   id: '/omp-models',
   path: '/omp-models',
+  getParentRoute: () => ChatSettingsRoute,
+} as any)
+const ChatSettingsOmpMemoryRoute = ChatSettingsOmpMemoryRouteImport.update({
+  id: '/omp-memory',
+  path: '/omp-memory',
+  getParentRoute: () => ChatSettingsRoute,
+} as any)
+const ChatSettingsOmpDiscoveryRoute =
+  ChatSettingsOmpDiscoveryRouteImport.update({
+    id: '/omp-discovery',
+    path: '/omp-discovery',
+    getParentRoute: () => ChatSettingsRoute,
+  } as any)
+const ChatSettingsOmpContextRoute = ChatSettingsOmpContextRouteImport.update({
+  id: '/omp-context',
+  path: '/omp-context',
   getParentRoute: () => ChatSettingsRoute,
 } as any)
 const ChatSettingsOmpApprovalsRoute =
@@ -250,9 +293,16 @@ export interface FileRoutesByFullPath {
   '/settings/keybindings': typeof ChatSettingsKeybindingsRoute
   '/settings/omp-advisor': typeof ChatSettingsOmpAdvisorRoute
   '/settings/omp-approvals': typeof ChatSettingsOmpApprovalsRoute
+  '/settings/omp-context': typeof ChatSettingsOmpContextRoute
+  '/settings/omp-discovery': typeof ChatSettingsOmpDiscoveryRoute
+  '/settings/omp-memory': typeof ChatSettingsOmpMemoryRoute
   '/settings/omp-models': typeof ChatSettingsOmpModelsRoute
+  '/settings/omp-modes': typeof ChatSettingsOmpModesRoute
   '/settings/omp-routing': typeof ChatSettingsOmpRoutingRoute
+  '/settings/omp-runtime': typeof ChatSettingsOmpRuntimeRoute
   '/settings/omp-sampling': typeof ChatSettingsOmpSamplingRoute
+  '/settings/omp-search': typeof ChatSettingsOmpSearchRoute
+  '/settings/omp-terminal': typeof ChatSettingsOmpTerminalRoute
   '/settings/omp-thinking': typeof ChatSettingsOmpThinkingRoute
   '/settings/open-source-licenses': typeof ChatSettingsOpenSourceLicensesRoute
   '/settings/projects': typeof ChatSettingsProjectsRoute
@@ -286,9 +336,16 @@ export interface FileRoutesByTo {
   '/settings/keybindings': typeof ChatSettingsKeybindingsRoute
   '/settings/omp-advisor': typeof ChatSettingsOmpAdvisorRoute
   '/settings/omp-approvals': typeof ChatSettingsOmpApprovalsRoute
+  '/settings/omp-context': typeof ChatSettingsOmpContextRoute
+  '/settings/omp-discovery': typeof ChatSettingsOmpDiscoveryRoute
+  '/settings/omp-memory': typeof ChatSettingsOmpMemoryRoute
   '/settings/omp-models': typeof ChatSettingsOmpModelsRoute
+  '/settings/omp-modes': typeof ChatSettingsOmpModesRoute
   '/settings/omp-routing': typeof ChatSettingsOmpRoutingRoute
+  '/settings/omp-runtime': typeof ChatSettingsOmpRuntimeRoute
   '/settings/omp-sampling': typeof ChatSettingsOmpSamplingRoute
+  '/settings/omp-search': typeof ChatSettingsOmpSearchRoute
+  '/settings/omp-terminal': typeof ChatSettingsOmpTerminalRoute
   '/settings/omp-thinking': typeof ChatSettingsOmpThinkingRoute
   '/settings/open-source-licenses': typeof ChatSettingsOpenSourceLicensesRoute
   '/settings/projects': typeof ChatSettingsProjectsRoute
@@ -324,9 +381,16 @@ export interface FileRoutesById {
   '/_chat/settings/keybindings': typeof ChatSettingsKeybindingsRoute
   '/_chat/settings/omp-advisor': typeof ChatSettingsOmpAdvisorRoute
   '/_chat/settings/omp-approvals': typeof ChatSettingsOmpApprovalsRoute
+  '/_chat/settings/omp-context': typeof ChatSettingsOmpContextRoute
+  '/_chat/settings/omp-discovery': typeof ChatSettingsOmpDiscoveryRoute
+  '/_chat/settings/omp-memory': typeof ChatSettingsOmpMemoryRoute
   '/_chat/settings/omp-models': typeof ChatSettingsOmpModelsRoute
+  '/_chat/settings/omp-modes': typeof ChatSettingsOmpModesRoute
   '/_chat/settings/omp-routing': typeof ChatSettingsOmpRoutingRoute
+  '/_chat/settings/omp-runtime': typeof ChatSettingsOmpRuntimeRoute
   '/_chat/settings/omp-sampling': typeof ChatSettingsOmpSamplingRoute
+  '/_chat/settings/omp-search': typeof ChatSettingsOmpSearchRoute
+  '/_chat/settings/omp-terminal': typeof ChatSettingsOmpTerminalRoute
   '/_chat/settings/omp-thinking': typeof ChatSettingsOmpThinkingRoute
   '/_chat/settings/open-source-licenses': typeof ChatSettingsOpenSourceLicensesRoute
   '/_chat/settings/projects': typeof ChatSettingsProjectsRoute
@@ -362,9 +426,16 @@ export interface FileRouteTypes {
     | '/settings/keybindings'
     | '/settings/omp-advisor'
     | '/settings/omp-approvals'
+    | '/settings/omp-context'
+    | '/settings/omp-discovery'
+    | '/settings/omp-memory'
     | '/settings/omp-models'
+    | '/settings/omp-modes'
     | '/settings/omp-routing'
+    | '/settings/omp-runtime'
     | '/settings/omp-sampling'
+    | '/settings/omp-search'
+    | '/settings/omp-terminal'
     | '/settings/omp-thinking'
     | '/settings/open-source-licenses'
     | '/settings/projects'
@@ -398,9 +469,16 @@ export interface FileRouteTypes {
     | '/settings/keybindings'
     | '/settings/omp-advisor'
     | '/settings/omp-approvals'
+    | '/settings/omp-context'
+    | '/settings/omp-discovery'
+    | '/settings/omp-memory'
     | '/settings/omp-models'
+    | '/settings/omp-modes'
     | '/settings/omp-routing'
+    | '/settings/omp-runtime'
     | '/settings/omp-sampling'
+    | '/settings/omp-search'
+    | '/settings/omp-terminal'
     | '/settings/omp-thinking'
     | '/settings/open-source-licenses'
     | '/settings/projects'
@@ -435,9 +513,16 @@ export interface FileRouteTypes {
     | '/_chat/settings/keybindings'
     | '/_chat/settings/omp-advisor'
     | '/_chat/settings/omp-approvals'
+    | '/_chat/settings/omp-context'
+    | '/_chat/settings/omp-discovery'
+    | '/_chat/settings/omp-memory'
     | '/_chat/settings/omp-models'
+    | '/_chat/settings/omp-modes'
     | '/_chat/settings/omp-routing'
+    | '/_chat/settings/omp-runtime'
     | '/_chat/settings/omp-sampling'
+    | '/_chat/settings/omp-search'
+    | '/_chat/settings/omp-terminal'
     | '/_chat/settings/omp-thinking'
     | '/_chat/settings/open-source-licenses'
     | '/_chat/settings/projects'
@@ -600,11 +685,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatSettingsOmpThinkingRouteImport
       parentRoute: typeof ChatSettingsRoute
     }
+    '/_chat/settings/omp-terminal': {
+      id: '/_chat/settings/omp-terminal'
+      path: '/omp-terminal'
+      fullPath: '/settings/omp-terminal'
+      preLoaderRoute: typeof ChatSettingsOmpTerminalRouteImport
+      parentRoute: typeof ChatSettingsRoute
+    }
+    '/_chat/settings/omp-search': {
+      id: '/_chat/settings/omp-search'
+      path: '/omp-search'
+      fullPath: '/settings/omp-search'
+      preLoaderRoute: typeof ChatSettingsOmpSearchRouteImport
+      parentRoute: typeof ChatSettingsRoute
+    }
     '/_chat/settings/omp-sampling': {
       id: '/_chat/settings/omp-sampling'
       path: '/omp-sampling'
       fullPath: '/settings/omp-sampling'
       preLoaderRoute: typeof ChatSettingsOmpSamplingRouteImport
+      parentRoute: typeof ChatSettingsRoute
+    }
+    '/_chat/settings/omp-runtime': {
+      id: '/_chat/settings/omp-runtime'
+      path: '/omp-runtime'
+      fullPath: '/settings/omp-runtime'
+      preLoaderRoute: typeof ChatSettingsOmpRuntimeRouteImport
       parentRoute: typeof ChatSettingsRoute
     }
     '/_chat/settings/omp-routing': {
@@ -614,11 +720,39 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatSettingsOmpRoutingRouteImport
       parentRoute: typeof ChatSettingsRoute
     }
+    '/_chat/settings/omp-modes': {
+      id: '/_chat/settings/omp-modes'
+      path: '/omp-modes'
+      fullPath: '/settings/omp-modes'
+      preLoaderRoute: typeof ChatSettingsOmpModesRouteImport
+      parentRoute: typeof ChatSettingsRoute
+    }
     '/_chat/settings/omp-models': {
       id: '/_chat/settings/omp-models'
       path: '/omp-models'
       fullPath: '/settings/omp-models'
       preLoaderRoute: typeof ChatSettingsOmpModelsRouteImport
+      parentRoute: typeof ChatSettingsRoute
+    }
+    '/_chat/settings/omp-memory': {
+      id: '/_chat/settings/omp-memory'
+      path: '/omp-memory'
+      fullPath: '/settings/omp-memory'
+      preLoaderRoute: typeof ChatSettingsOmpMemoryRouteImport
+      parentRoute: typeof ChatSettingsRoute
+    }
+    '/_chat/settings/omp-discovery': {
+      id: '/_chat/settings/omp-discovery'
+      path: '/omp-discovery'
+      fullPath: '/settings/omp-discovery'
+      preLoaderRoute: typeof ChatSettingsOmpDiscoveryRouteImport
+      parentRoute: typeof ChatSettingsRoute
+    }
+    '/_chat/settings/omp-context': {
+      id: '/_chat/settings/omp-context'
+      path: '/omp-context'
+      fullPath: '/settings/omp-context'
+      preLoaderRoute: typeof ChatSettingsOmpContextRouteImport
       parentRoute: typeof ChatSettingsRoute
     }
     '/_chat/settings/omp-approvals': {
@@ -719,9 +853,16 @@ interface ChatSettingsRouteChildren {
   ChatSettingsKeybindingsRoute: typeof ChatSettingsKeybindingsRoute
   ChatSettingsOmpAdvisorRoute: typeof ChatSettingsOmpAdvisorRoute
   ChatSettingsOmpApprovalsRoute: typeof ChatSettingsOmpApprovalsRoute
+  ChatSettingsOmpContextRoute: typeof ChatSettingsOmpContextRoute
+  ChatSettingsOmpDiscoveryRoute: typeof ChatSettingsOmpDiscoveryRoute
+  ChatSettingsOmpMemoryRoute: typeof ChatSettingsOmpMemoryRoute
   ChatSettingsOmpModelsRoute: typeof ChatSettingsOmpModelsRoute
+  ChatSettingsOmpModesRoute: typeof ChatSettingsOmpModesRoute
   ChatSettingsOmpRoutingRoute: typeof ChatSettingsOmpRoutingRoute
+  ChatSettingsOmpRuntimeRoute: typeof ChatSettingsOmpRuntimeRoute
   ChatSettingsOmpSamplingRoute: typeof ChatSettingsOmpSamplingRoute
+  ChatSettingsOmpSearchRoute: typeof ChatSettingsOmpSearchRoute
+  ChatSettingsOmpTerminalRoute: typeof ChatSettingsOmpTerminalRoute
   ChatSettingsOmpThinkingRoute: typeof ChatSettingsOmpThinkingRoute
   ChatSettingsOpenSourceLicensesRoute: typeof ChatSettingsOpenSourceLicensesRoute
   ChatSettingsProjectsRoute: typeof ChatSettingsProjectsRoute
@@ -743,9 +884,16 @@ const ChatSettingsRouteChildren: ChatSettingsRouteChildren = {
   ChatSettingsKeybindingsRoute: ChatSettingsKeybindingsRoute,
   ChatSettingsOmpAdvisorRoute: ChatSettingsOmpAdvisorRoute,
   ChatSettingsOmpApprovalsRoute: ChatSettingsOmpApprovalsRoute,
+  ChatSettingsOmpContextRoute: ChatSettingsOmpContextRoute,
+  ChatSettingsOmpDiscoveryRoute: ChatSettingsOmpDiscoveryRoute,
+  ChatSettingsOmpMemoryRoute: ChatSettingsOmpMemoryRoute,
   ChatSettingsOmpModelsRoute: ChatSettingsOmpModelsRoute,
+  ChatSettingsOmpModesRoute: ChatSettingsOmpModesRoute,
   ChatSettingsOmpRoutingRoute: ChatSettingsOmpRoutingRoute,
+  ChatSettingsOmpRuntimeRoute: ChatSettingsOmpRuntimeRoute,
   ChatSettingsOmpSamplingRoute: ChatSettingsOmpSamplingRoute,
+  ChatSettingsOmpSearchRoute: ChatSettingsOmpSearchRoute,
+  ChatSettingsOmpTerminalRoute: ChatSettingsOmpTerminalRoute,
   ChatSettingsOmpThinkingRoute: ChatSettingsOmpThinkingRoute,
   ChatSettingsOpenSourceLicensesRoute: ChatSettingsOpenSourceLicensesRoute,
   ChatSettingsProjectsRoute: ChatSettingsProjectsRoute,

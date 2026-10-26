@@ -49,6 +49,33 @@ const REGISTRY: Readonly<Record<string, { type: OmpConfigType; default: unknown;
   "tools.xdev": { type: "boolean", default: true },
   "tools.xdevDocs": { type: "enum", default: "catalog" },
   "tools.xdevInlineDevices": { type: "array", default: [] },
+  "memory.backend": { type: "enum", default: "off" },
+  "memories.maxRolloutAgeDays": { type: "number", default: 30 },
+  "hindsight.apiUrl": { type: "string", default: "" },
+  "hindsight.apiToken": { type: "string", default: "" },
+  "mnemopi.recallLimit": { type: "number", default: 8 },
+  "sharpshooter.model": { type: "string", default: "" },
+  "compaction.methodOrder": { type: "array", default: ["snapshot", "summary"] },
+  "compaction.thresholdPercent": { type: "number", default: 80 },
+  "plan.enabled": { type: "boolean", default: true },
+  "goal.continuationModes": { type: "array", default: [] },
+  "loop.mode": { type: "enum", default: "prompt" },
+  "eval.py": { type: "boolean", default: true },
+  "eval.js": { type: "boolean", default: true },
+  "providers.tinyModelDevice": { type: "enum", default: "auto", env: true },
+  "providers.tinyModelDtype": { type: "enum", default: "auto" },
+  "web_search.enabled": { type: "boolean", default: true },
+  "providers.webSearchTimeoutSeconds": { type: "number", default: 30 },
+  "exa.enabled": { type: "boolean", default: true },
+  "searxng.endpoint": { type: "string", default: "" },
+  "searxng.token": { type: "string", default: "" },
+  "skills.enableClaudeUser": { type: "boolean", default: true },
+  "commands.enableClaudeProject": { type: "boolean", default: true },
+  "mcp.enableProjectConfig": { type: "boolean", default: true },
+  "contextFiles.extra": { type: "array", default: [] },
+  "startup.quiet": { type: "boolean", default: false },
+  "theme.dark": { type: "string", default: "titanium" },
+  "statusLine.preset": { type: "enum", default: "default" },
 };
 
 /** The settings engine over an in-memory global layer: every write re-reads the list. */
@@ -560,5 +587,149 @@ describe("OMP settings pages", () => {
     });
     await expect.poll(() => document.querySelector("[data-agent-file]")).toBeNull();
     expect(files.has("agents/reviewer.md")).toBe(false);
+  });
+
+  const renderK04c = (
+    pageId: "memory" | "context" | "modes" | "runtime" | "search" | "discovery" | "terminal",
+  ) =>
+    render(
+      <OmpSettingsPageBody environmentId={environmentId} instanceId={instanceId} pageId={pageId} />,
+    );
+
+  it("Memory switches the backend and keeps backend credentials reset-only", async () => {
+    resetEngine();
+    await using screen = await renderK04c("memory");
+    const backend = screen.getByRole("textbox", { name: "memory.backend" });
+    await expect.element(backend).toHaveValue("off");
+    await expect.element(screen.getByLabelText("hindsight.apiToken")).toBeDisabled();
+    await userEvent.clear(backend);
+    await userEvent.type(backend, "mnemopi{Enter}");
+
+    expect(commands.write).toHaveBeenCalledExactlyOnceWith({
+      environmentId,
+      input: { instanceId, scope: "global", key: "memory.backend", value: "mnemopi" },
+    });
+    await expect.poll(() => row("memory.backend")?.textContent).toContain("Global");
+    await expect.element(backend).toHaveValue("mnemopi");
+    expect(row("mnemopi.recallLimit")?.textContent).toContain("Default");
+  });
+
+  it("Context sets the compaction threshold and shows methodOrder", async () => {
+    resetEngine();
+    await using screen = await renderK04c("context");
+    expect(row("compaction.methodOrder")).not.toBeNull();
+    const threshold = screen.getByRole("textbox", { name: "compaction.thresholdPercent" });
+    await userEvent.clear(threshold);
+    await userEvent.type(threshold, "65{Enter}");
+
+    expect(commands.write).toHaveBeenCalledExactlyOnceWith({
+      environmentId,
+      input: { instanceId, scope: "global", key: "compaction.thresholdPercent", value: 65 },
+    });
+    await expect.poll(() => row("compaction.thresholdPercent")?.textContent).toContain("Global");
+    await expect.element(threshold).toHaveValue("65");
+  });
+
+  it("Modes turns plan mode off and shows the re-read value", async () => {
+    resetEngine();
+    await using screen = await renderK04c("modes");
+    const plan = screen.getByRole("switch", { name: "plan.enabled" });
+    await expect.element(plan).toBeChecked();
+    await userEvent.click(plan);
+
+    expect(commands.write).toHaveBeenCalledExactlyOnceWith({
+      environmentId,
+      input: { instanceId, scope: "global", key: "plan.enabled", value: false },
+    });
+    await expect.poll(() => row("plan.enabled")?.textContent).toContain("Global");
+    await expect.element(plan).not.toBeChecked();
+  });
+
+  it("Runtime turns Python eval off and shows PTY read-only", async () => {
+    resetEngine();
+    await using screen = await renderK04c("runtime");
+    await expect
+      .element(screen.getByRole("textbox", { name: "providers.tinyModelDevice" }))
+      .toBeDisabled();
+    const pty = document.querySelector('[data-setting-static="pty"]');
+    expect(pty?.textContent).toContain("read-only");
+    expect(pty?.textContent).toContain("PI_NO_PTY");
+    expect(pty?.querySelector("input, button")).toBeNull();
+
+    const python = screen.getByRole("switch", { name: "eval.py" });
+    await userEvent.click(python);
+    expect(commands.write).toHaveBeenCalledExactlyOnceWith({
+      environmentId,
+      input: { instanceId, scope: "global", key: "eval.py", value: false },
+    });
+    await expect.poll(() => row("eval.py")?.textContent).toContain("Global");
+    await expect.element(python).not.toBeChecked();
+  });
+
+  it("Search edits the web role and its fallback chain, keeping other roles and chains", async () => {
+    resetEngine();
+    engine.global.set("retry.fallbackChains", { default: ["openai/gpt-5"] });
+    await using screen = await renderK04c("search");
+    // Only the web entries of the shared records are offered here.
+    expect(document.querySelectorAll("[data-model-role]")).toHaveLength(0);
+    await expect.element(screen.getByLabelText("searxng.token")).toBeDisabled();
+
+    await userEvent.type(screen.getByRole("textbox", { name: "modelRoles.web" }), "web/exa{Enter}");
+    expect(commands.write).toHaveBeenLastCalledWith({
+      environmentId,
+      input: {
+        instanceId,
+        scope: "global",
+        key: "modelRoles",
+        value: { default: "anthropic/claude-sonnet-4-5", web: "web/exa" },
+      },
+    });
+    await expect.poll(() => row("modelRoles")?.textContent).toContain("Global");
+
+    const chain = screen.getByRole("textbox", { name: "retry.fallbackChains.web" });
+    await userEvent.type(chain, "web/searxng, web/duckduckgo{Enter}");
+    expect(commands.write).toHaveBeenLastCalledWith({
+      environmentId,
+      input: {
+        instanceId,
+        scope: "global",
+        key: "retry.fallbackChains",
+        value: { default: ["openai/gpt-5"], web: ["web/searxng", "web/duckduckgo"] },
+      },
+    });
+    await expect.element(chain).toHaveValue("web/searxng, web/duckduckgo");
+  });
+
+  it("Discovery toggles Claude skills and keeps provider lists read-only", async () => {
+    resetEngine();
+    await using screen = await renderK04c("discovery");
+    for (const key of ["enabledProviders", "disabledProviders"]) {
+      await expect.element(screen.getByRole("textbox", { name: key })).toBeDisabled();
+    }
+    const skills = screen.getByRole("switch", { name: "skills.enableClaudeUser" });
+    await userEvent.click(skills);
+    expect(commands.write).toHaveBeenCalledExactlyOnceWith({
+      environmentId,
+      input: { instanceId, scope: "global", key: "skills.enableClaudeUser", value: false },
+    });
+    await expect.poll(() => row("skills.enableClaudeUser")?.textContent).toContain("Global");
+    await expect.element(skills).not.toBeChecked();
+  });
+
+  it("Terminal prefs shows every key read-only and marked terminal-only", async () => {
+    resetEngine();
+    engine.global.set("startup.quiet", true);
+    await using screen = await renderK04c("terminal");
+    await expect.element(screen.getByRole("switch", { name: "startup.quiet" })).toBeDisabled();
+    await expect.element(screen.getByRole("textbox", { name: "theme.dark" })).toBeDisabled();
+    for (const key of ["startup.quiet", "theme.dark", "statusLine.preset"]) {
+      expect(row(key)?.textContent).toContain("Terminal-only");
+      expect(row(key)?.querySelector("button")).toBeNull();
+    }
+    expect(row("startup.quiet")?.textContent).toContain("Global");
+    expect(
+      document.querySelector('[data-setting-static="keybindings.yml"]')?.textContent,
+    ).toContain("Terminal-only");
+    expect(commands.write).not.toHaveBeenCalled();
   });
 });
