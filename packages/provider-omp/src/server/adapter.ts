@@ -8,6 +8,7 @@ import type {
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ProviderHostTools from "@t3tools/provider-core/server/ProviderHostTools";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import {
@@ -39,8 +40,25 @@ import type {
 } from "../../contract/src/wire.generated.ts";
 import type { OmpCommandHooks } from "./commands.ts";
 import { makeOmpHostBridge } from "./hostTools.ts";
+import {
+  isOmpRunYield,
+  makeOmpJournalWriter,
+  ompJournalDetachedEntry,
+  ompJournalDetachedTail,
+  ompJournalEventsEntry,
+  ompJournalOpenEntry,
+  ompJournalPath,
+  ompRunOutcome,
+  OmpDetachedRun,
+  OmpJournaledMapper,
+  OmpJournaledSubagents,
+  OmpJournaledUiRequests,
+  OmpJournalRecorder,
+  OmpToolUpdateCoalescer,
+  readOmpJournalTail,
+} from "./journal.ts";
 import { ompApprovalModeFor } from "./launch.ts";
-import { OMP_PROVIDER, OmpThreadMapper, type OmpTurnOutcome } from "./mapper.ts";
+import { OMP_PROVIDER, type OmpTurnOutcome } from "./mapper.ts";
 import type { OmpSessionsLocation } from "./ompSessions.ts";
 import type { OmpRpcRequestError } from "./rpcProcess.ts";
 import type { OmpPidfiles } from "./pidfiles.ts";
@@ -76,16 +94,10 @@ import type { OmpSidecarError } from "./sidecar.ts";
 import {
   isOmpCancelRequest,
   isOmpDialogRequest,
-  OmpUiRequests,
   type OmpCancelRequest,
   type OmpDialogRequest,
 } from "./uiRequests.ts";
-import {
-  OMP_REVIVE_CONTRACT,
-  OmpSubagentTracker,
-  ompSubagentControls,
-  ompTranscriptPage,
-} from "./subagents.ts";
+import { OMP_REVIVE_CONTRACT, ompSubagentControls, ompTranscriptPage } from "./subagents.ts";
 
 /** Streamed text is held this long so a burst of deltas becomes one update. */
 const STREAM_FLUSH = Duration.millis(50);
@@ -115,7 +127,7 @@ const ABORT_REQUEST_TIMEOUT_MS = 15_000;
  * `fork` (docs/omp/sessions.md); delegation reaches T3's provider-agnostic thread MCP through
  * OMP's own subagents.
  */
-const OMP_PROVIDER_CAPABILITIES = {
+export const OMP_PROVIDER_CAPABILITIES = {
   runtimePolicy: { enforcement: "client-boundary" },
   sessions: {
     supportsMultipleProviderThreadsPerSession: false,
@@ -273,6 +285,8 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
   const mcpSessions = Option.getOrUndefined(
     yield* Effect.serviceOption(McpProviderSessions.McpProviderSessions),
   );
+  // The live layer inside the T3 server; elsewhere offers are dropped (the default).
+  const continuations = yield* ProviderContinuationRequests.ProviderContinuationRequests;
 
   const withAdapterFiles = <A, E>(
     effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path>,
@@ -346,6 +360,19 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
     );
 
     const scope = yield* Effect.scope;
+    // The journal (journal.ts, docs/omp/journal.md). A run the previous process saw start while
+    // no turn was attached, and no turn took, is carried over for this process's next turn.
+    const journalFile = ompJournalPath(path, options.dirs.threads, input.threadId);
+    const carried = ompJournalDetachedTail(
+      (yield* readOmpJournalTail(journalFile).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+      )).entries,
+    );
+    const journal = yield* makeOmpJournalWriter(journalFile).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+    );
+    const recorder = new OmpJournalRecorder(journal.record);
     const hostBridge = yield* makeOmpHostBridge({
       process,
       threadId: input.threadId,
@@ -354,29 +381,62 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       mcpSession: mcpSessions === undefined ? undefined : yield* mcpSessions.read(input.threadId),
     });
     const now = yield* DateTime.now;
-    const mapper = new OmpThreadMapper({
-      instanceId: options.instanceId,
-      providerSession: {
-        id: input.providerSessionId,
-        driver: OMP_PROVIDER,
-        providerInstanceId: options.instanceId,
-        status: "ready",
-        cwd,
-        model: input.modelSelection.model,
-        capabilities: OMP_PROVIDER_CAPABILITIES,
-        createdAt: now,
-        updatedAt: now,
-        lastError: null,
-      } satisfies OrchestrationV2ProviderSession,
-    });
-    const uiRequests = new OmpUiRequests({ providerSessionId: input.providerSessionId });
+    const mapper = new OmpJournaledMapper(
+      {
+        instanceId: options.instanceId,
+        providerSession: {
+          id: input.providerSessionId,
+          driver: OMP_PROVIDER,
+          providerInstanceId: options.instanceId,
+          status: "ready",
+          cwd,
+          model: input.modelSelection.model,
+          capabilities: OMP_PROVIDER_CAPABILITIES,
+          createdAt: now,
+          updatedAt: now,
+          lastError: null,
+        } satisfies OrchestrationV2ProviderSession,
+      },
+      recorder,
+    );
+    recorder.record(
+      ompJournalOpenEntry({
+        threadId: input.threadId,
+        instanceId: options.instanceId,
+        contractVersion: process.contractVersion,
+        providerSession: mapper.providerSession,
+        now,
+      }),
+    );
+    const uiRequests = new OmpJournaledUiRequests(
+      { providerSessionId: input.providerSessionId },
+      recorder,
+    );
     /** OMP's answer deadlines, by native request id. */
     const dialogTimers = new Map<string, Fiber.Fiber<void>>();
     const subagentControls = ompSubagentControls(process.contractVersion);
-    const subagents = new OmpSubagentTracker({
-      instanceId: options.instanceId,
-      controls: subagentControls,
-    });
+    const subagents = new OmpJournaledSubagents(
+      { instanceId: options.instanceId, controls: subagentControls },
+      recorder,
+    );
+    /** A run OMP started with no turn attached, waiting for one (see `offerWake`). */
+    const detached = new OmpDetachedRun();
+    /** A parked job keeps updating its tool while the run waits: those lines are thinned. */
+    const detachedUpdates = new OmpToolUpdateCoalescer();
+    const recordDetached = (frame: { readonly type: string }, at: DateTime.Utc) => {
+      const entry = ompJournalDetachedEntry(frame, at);
+      for (const line of detachedUpdates.admit(frame, entry, DateTime.toEpochMillis(at))) {
+        journal.record(line);
+      }
+    };
+    detached.adopt(carried);
+    for (const frame of carried) recordDetached(frame, now);
+    /** The continuation T3 was asked for, until a turn takes the run or T3 declines it. */
+    let wake: object | null = null;
+    /** The last `prompt_result` said a background job can still wake the session. */
+    let awaitingWake = false;
+    /** The active turn is a continuation: no prompt, the run's yield ends it. */
+    let autonomousTurn = false;
     const events = yield* Queue.unbounded<
       ProviderAdapter.ProviderAdapterV2Event,
       ProviderAdapter.ProviderAdapterV2Error | Cause.Done
@@ -474,6 +534,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
     });
 
     const finalize = Effect.fnUntraced(function* (outcome: OmpTurnOutcome, refresh: boolean) {
+      autonomousTurn = false;
       // Usage and todos live in the session, not in `prompt_result`: read them once per turn.
       const read = <A, E>(effect: Effect.Effect<A, E>) =>
         refresh ? effect.pipe(Effect.option) : Effect.succeed(Option.none<A>());
@@ -545,21 +606,9 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
     /** A Stop is waiting for `abort_and_restore_queue`; the turn's end waits with it. */
     let stopInFlight = false;
     let deferredSettle: OmpTurnOutcome | null = null;
-    const handleFrame = Effect.fnUntraced(function* (frame: RpcServerFrame) {
-      if (isOmpDialogRequest(frame) || isOmpCancelRequest(frame)) {
-        return yield* handleDialogFrame(frame);
-      }
-      if (frame.type === "subagent_lifecycle" || frame.type === "subagent_progress") {
-        yield* emit(subagents.handleFrame(frame, mapper.subagentScope, yield* DateTime.now));
-        return;
-      }
-      if (frame.type === "available_commands_update") {
-        if (options.commands !== undefined) {
-          yield* options.commands.onAvailableCommands(cwd, frame.commands);
-        }
-        return;
-      }
-      if (yield* hostBridge.handleFrame(frame)) return;
+
+    /** Feeds one frame to the active turn (or to nothing, outside one) and settles it when due. */
+    const mapFrame = Effect.fnUntraced(function* (frame: { readonly type: string }) {
       const result = mapper.handleFrame(frame, yield* DateTime.now);
       yield* emit(result.events);
       if (result.streaming && !flushScheduled) {
@@ -586,10 +635,73 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
             Effect.forkIn(scope),
           );
       }
-      if (result.settled === null) return;
+      // A continuation has no prompt, so no `prompt_result`: the run's yield ends it.
+      const settledTurn =
+        result.settled ??
+        (autonomousTurn && mapper.hasActiveTurn && isOmpRunYield(frame)
+          ? ompRunOutcome(frame)
+          : null);
+      if (settledTurn === null) return;
       // A Stop waiting for OMP's answer ends the turn once it has it (`interruptTurn`).
-      if (stopInFlight) deferredSettle = result.settled;
-      else yield* finalize(result.settled, true);
+      if (stopInFlight) deferredSettle = settledTurn;
+      else yield* finalize(settledTurn, true);
+    });
+
+    /**
+     * Asks T3 to run a continuation turn for the detached run (`adapter_buffered`: the turn
+     * replays what OMP already sent). Needs a bound thread; one bound later asks then.
+     */
+    const offerWake = Effect.fnUntraced(function* () {
+      const thread = mapper.providerThread;
+      const appThreadId = thread?.appThreadId;
+      if (thread == null || appThreadId == null || wake !== null || !detached.pending) return;
+      const current = {};
+      wake = current;
+      yield* Effect.logInfo("omp started a run on its own; asking for a continuation", {
+        providerThreadId: thread.id,
+      });
+      yield* continuations.offer({
+        threadId: appThreadId,
+        providerThreadId: thread.id,
+        driver: OMP_PROVIDER,
+        detail: null,
+        // A user turn may have taken the run meanwhile; then nothing is left to continue.
+        dispatchIfCurrent: (dispatch) =>
+          wake === current && detached.pending
+            ? Effect.map(dispatch, Option.some)
+            : Effect.succeed(Option.none()),
+        clearIfCurrent: () =>
+          Effect.sync(() => {
+            if (wake === current) wake = null;
+          }),
+      });
+    });
+
+    const handleFrame = Effect.fnUntraced(function* (frame: RpcServerFrame) {
+      if (isOmpDialogRequest(frame) || isOmpCancelRequest(frame)) {
+        return yield* handleDialogFrame(frame);
+      }
+      if (frame.type === "subagent_lifecycle" || frame.type === "subagent_progress") {
+        yield* emit(subagents.handleFrame(frame, mapper.subagentScope, yield* DateTime.now));
+        return;
+      }
+      if (frame.type === "available_commands_update") {
+        if (options.commands !== undefined) {
+          yield* options.commands.onAvailableCommands(cwd, frame.commands);
+        }
+        return;
+      }
+      if (yield* hostBridge.handleFrame(frame)) return;
+      if (frame.type === "prompt_result") awaitingWake = frame.sessionSettled === false;
+      if (frame.type === "session_settled") awaitingWake = false;
+      // A run OMP started with no turn attached waits for one instead of being dropped.
+      if (!mapper.hasActiveTurn && !sessionChanging && detached.accepts(frame)) {
+        detached.push(frame);
+        recordDetached(frame, yield* DateTime.now);
+        if (frame.type === "agent_start") yield* offerWake();
+        return;
+      }
+      yield* mapFrame(frame);
     });
 
     let settled = false;
@@ -762,18 +874,20 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       );
       yield* emit(result.events);
       yield* recordSession(state);
+      // A run the previous process left waiting reattaches once the thread is known again.
+      yield* offerWake();
       if (existing?.lastRunOrdinal === null && (state.messageCount ?? 0) > 0) {
         const sessionId = state.sessionId;
         yield* readHistory(threadId, sessionId).pipe(
-          Effect.flatMap((messages) =>
-            emit(
-              messages.map((message) => ({
-                type: "message.updated" as const,
-                driver: OMP_PROVIDER,
-                message,
-              })),
-            ),
-          ),
+          Effect.flatMap((messages) => {
+            const imported = messages.map((message) => ({
+              type: "message.updated" as const,
+              driver: OMP_PROVIDER,
+              message,
+            }));
+            recorder.record(ompJournalEventsEntry(imported));
+            return emit(imported);
+          }),
           Effect.catch((error) =>
             Effect.logWarning("omp session history not loaded", {
               sessionId,
@@ -980,6 +1094,9 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
           "previous_turn_active",
         );
       }
+      // T3 dispatches a continuation for a run OMP started on its own (`offerWake`).
+      const isContinuation =
+        turnInput.message.createdBy === "agent" && turnInput.message.creationSource === "provider";
       yield* applyApprovalMode(turnInput.runtimePolicy);
       // OMP expands a skill only as `/skill:<name>`; the composer writes `$<name>`.
       const promptText =
@@ -1024,9 +1141,45 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
           }
           turnStartedAt = DateTime.toEpochMillis(yield* DateTime.now);
           yield* emit(mapper.startTurn(turnInput, yield* DateTime.now));
-          return mapper.activeProviderTurnId;
+          const turnId = mapper.activeProviderTurnId;
+          // The turn takes a run OMP started on its own: its frames so far are this turn's first.
+          // A continuation has no prompt; the run's yield, replayed here or still to come, ends it.
+          wake = null;
+          const run = detached.take();
+          // The turn records the frames it takes; held detached lines are not needed any more.
+          detachedUpdates.drain();
+          autonomousTurn = isContinuation;
+          let replayed = 0;
+          while (replayed < run.frames.length && mapper.activeProviderTurnId === turnId) {
+            yield* mapFrame(run.frames[replayed]!);
+            replayed += 1;
+          }
+          // The run yielded inside the replay: a later run OMP started waits for its own turn.
+          const next = run.frames.findIndex(
+            (frame, index) => index >= replayed && frame.type === "agent_start",
+          );
+          if (next !== -1) {
+            const now = yield* DateTime.now;
+            const rest = run.frames.slice(next);
+            if (run.fromPreviousProcess) detached.adopt(rest);
+            else for (const frame of rest) detached.push(frame);
+            for (const frame of rest) recordDetached(frame, now);
+            yield* offerWake();
+          }
+          if (isContinuation && mapper.activeProviderTurnId === turnId) {
+            if (run.frames.length === 0) {
+              // A user turn took the run first: nothing is left to continue.
+              yield* finalize({ status: "completed" }, true);
+            } else if (run.fromPreviousProcess) {
+              // The process that ran it has exited; the run cannot go on.
+              yield* finalize({ status: "interrupted" }, true);
+            }
+          }
+          return turnId;
         }),
       );
+      // A continuation sends nothing: no instructions reached OMP, and no prompt to restart.
+      if (isContinuation) return;
       if (stated) instructionState = state;
       // A new attempt of the last turn's run is T3 restarting it ("interrupt and send", a
       // selection change): OMP aborts whatever it still runs or holds and takes the prompt.
@@ -1553,6 +1706,9 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       },
       events: Stream.fromQueue(events),
       backgroundTasksEndWithProcess: true,
+      // A background job can still wake the session, or a run it woke waits for its turn: idle
+      // release would kill the process and the job with it.
+      hasPendingBackgroundWork: Effect.sync(() => awaitingWake || detached.pending),
       ensureThread: (threadInput) =>
         bindThread(threadInput.threadId, threadInput.existingProviderThread).pipe(
           Effect.mapError(

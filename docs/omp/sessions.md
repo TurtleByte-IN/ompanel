@@ -45,7 +45,8 @@ When the thread binds, the adapter records the session in the thread's state
 directory, `<stateDir>/omp/threads/<thread id>/session.json`
 (`{version, threadId, sessionId, reportedSessionId, sessionFile}`,
 owner-only), and again whenever `get_state` (read after each turn) reports a
-change.
+change. The same directory holds the thread's frame journal, `journal.ndjson`
+([journal.md](journal.md)).
 
 Two ids matter. `sessionId` is the file's own id: the one in its name and
 header, which `/wt` keeps. `reportedSessionId` is what `get_state` reports. In
