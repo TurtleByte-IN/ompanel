@@ -392,8 +392,32 @@ jobs:
       # No Electron setup here: `t3` (apps/server) has no Electron dependency
       # and none of its tests touch the runtime. Only the non-server `test`
       # job, which covers @t3tools/desktop, needs the download.
+      # Cache the pinned browser and skip apt unless shared libraries are
+      # missing, as ci.yml does: a slow apt mirror otherwise eats the budget.
+      - name: Resolve Playwright version
+        id: playwright_version
+        run: echo "version=$(node -p "require('./apps/server/node_modules/playwright-core/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Chromium
+        id: chromium_cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-shell-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright_version.outputs.version }}
+
       - name: Install Chromium for server browser integration tests
-        run: node apps/server/node_modules/playwright-core/cli.js install --with-deps --only-shell chromium
+        if: steps.chromium_cache.outputs.cache-hit != 'true'
+        run: node apps/server/node_modules/playwright-core/cli.js install --only-shell chromium
+
+      - uses: ./.github/actions/setup-apt-mirrors
+
+      - name: Install missing Chromium system dependencies
+        run: |
+          browser=$(find "$HOME/.cache/ms-playwright" -name chrome-headless-shell -type f -print -quit)
+          test -n "$browser"
+          if ldd "$browser" | grep '=> not found'; then
+            node apps/server/node_modules/playwright-core/cli.js install-deps chromium
+          fi
 
       - name: Test
         run: vp run --filter t3 test --shard ${{ matrix.shard }}/${{ strategy.job-total }}
@@ -1119,6 +1143,9 @@ jobs:
       - name: Serve from the installed CLI and download the OMP sidecar
         timeout-minutes: 10
         run: node scripts/smoke-cli-archive.ts --executable "$OMPANEL_CLI" --expect-version "$VERSION" --omp-sidecar
+
+      - uses: ./.github/actions/setup-apt-mirrors
+        if: runner.os == 'Linux'
 
       - name: Install a virtual display
         if: runner.os == 'Linux'
