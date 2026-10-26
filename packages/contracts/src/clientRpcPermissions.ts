@@ -24,6 +24,12 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   // A thread override changes what one running thread does, like other thread operations.
   [WS_METHODS.serverSetOmpThreadOverride]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverClearOmpThreadOverride]: AuthOrchestrationOperateScope,
+  // Sharing sends the thread outside T3: a gist on GitHub, or a live link through OMP's relay that
+  // bypasses pairing. A room's status carries its links, so reading it needs operate too.
+  [WS_METHODS.serverShareOmpThreadGist]: AuthOrchestrationOperateScope,
+  [WS_METHODS.serverStartOmpThreadCollab]: AuthOrchestrationOperateScope,
+  [WS_METHODS.serverStopOmpThreadCollab]: AuthOrchestrationOperateScope,
+  [WS_METHODS.serverGetOmpThreadCollab]: AuthOrchestrationOperateScope,
   // Signing in and out of OMP's providers changes the provider install's stored credentials.
   [WS_METHODS.serverStartOmpSignIn]: AuthProvidersManageScope,
   [WS_METHODS.serverAnswerOmpSignIn]: AuthProvidersManageScope,

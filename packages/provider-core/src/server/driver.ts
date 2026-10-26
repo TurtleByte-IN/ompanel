@@ -38,6 +38,13 @@ import type {
   OmpPluginsReloadResult,
   OmpSkillsList,
   OmpUpdateCheck,
+  OmpBranchTree,
+  OmpCollabAccess,
+  OmpCollabStatus,
+  OmpCollabStopResult,
+  OmpExportHtmlResult,
+  OmpShareGistResult,
+  OmpThreadMenuOperationError,
   ThreadId,
 } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
@@ -121,6 +128,39 @@ export interface ProviderInstance {
   readonly ompUsage?: ProviderOmpUsageController;
   /** Settings → OMP → Plugins and Skills: `omp plugin`, `omp skill list`, `omp update --check`. */
   readonly ompPlugins?: ProviderOmpPluginsController;
+  /** A thread's OMP menu: Export HTML, Share gist, Share live (`/collab`), Branch tree. */
+  readonly ompThreadMenu?: ProviderOmpThreadMenuController;
+}
+
+/**
+ * A thread's OMP menu. Export HTML and Share gist work from the thread's session file when its
+ * OMP process is not running; Share live and the branch tree need the running session.
+ */
+export interface ProviderOmpThreadMenuController {
+  /** `export_html` in the running session, else `omp --export` on its file. */
+  readonly exportHtml: (
+    threadId: ThreadId,
+  ) => Effect.Effect<OmpExportHtmlResult, OmpThreadMenuOperationError>;
+  /** `omp share <session file> --gist`, refused before anything uploads unless `gh` is signed in. */
+  readonly shareGist: (
+    threadId: ThreadId,
+  ) => Effect.Effect<OmpShareGistResult, OmpThreadMenuOperationError>;
+  /** RPC `collab_start`; needs a sidecar with the collab RPC (contract 1.7.0). */
+  readonly startCollab: (input: {
+    readonly threadId: ThreadId;
+    readonly access: OmpCollabAccess;
+  }) => Effect.Effect<OmpCollabStatus, OmpThreadMenuOperationError>;
+  readonly stopCollab: (
+    threadId: ThreadId,
+  ) => Effect.Effect<OmpCollabStopResult, OmpThreadMenuOperationError>;
+  /** RPC `collab_status`; an idle thread or an older sidecar reports no room. */
+  readonly collabStatus: (
+    threadId: ThreadId,
+  ) => Effect.Effect<OmpCollabStatus, OmpThreadMenuOperationError>;
+  /** RPC `get_tree`, reduced to the branch view. */
+  readonly branchTree: (
+    threadId: ThreadId,
+  ) => Effect.Effect<OmpBranchTree, OmpThreadMenuOperationError>;
 }
 
 /**

@@ -72,6 +72,12 @@ export const OMP_CONTROL_TIMEOUTS_MS = {
   pluginCommand: 180_000,
   /** `omp update --check`: one request to OMP's release service. */
   update: 20_000,
+  /** `omp --export <session file> <out.html>`: renders the whole session into one page. */
+  export: 60_000,
+  /** `gh auth status`: verifies the stored token with GitHub. */
+  ghAuth: 10_000,
+  /** `omp share --gist`: seals the session, then `gh gist create` uploads it. */
+  share: 120_000,
 } as const;
 export type OmpControlBudget = keyof typeof OMP_CONTROL_TIMEOUTS_MS;
 
@@ -149,7 +155,10 @@ export type OmpControlOperation =
   | "plugin_command"
   | "marketplace_list"
   | "marketplace_discover"
-  | "update_check";
+  | "update_check"
+  | "export_html"
+  | "gh_auth"
+  | "share_gist";
 
 /** Carries no process output: stderr and stdout may contain credentials. */
 export class OmpControlError extends Schema.TaggedError<OmpControlError>()("OmpControlError", {
@@ -175,6 +184,9 @@ export class OmpControlError extends Schema.TaggedError<OmpControlError>()("OmpC
     "marketplace_list",
     "marketplace_discover",
     "update_check",
+    "export_html",
+    "gh_auth",
+    "share_gist",
   ]),
   reason: Schema.Literals([
     "missing",
@@ -606,7 +618,50 @@ export interface OmpControlService {
   readonly updateCheck: (
     target: OmpControlTarget,
   ) => Effect.Effect<OmpUpdateCheck, OmpControlError>;
+  /**
+   * `omp [--profile p] --export <sessionFile> <outputPath>` (60 s): the session file as one
+   * self-contained HTML page, as RPC `export_html` renders a running session.
+   */
+  readonly exportHtml: (
+    target: OmpControlTarget,
+    input: { readonly sessionFile: string; readonly outputPath: string },
+  ) => Effect.Effect<void, OmpControlError>;
+  /**
+   * `gh auth status` in the target's environment (10 s): whether `omp share --gist` can create a
+   * gist there. OMP falls back to its share server when it cannot, so this runs first.
+   */
+  readonly gistReady: (target: OmpControlTarget) => Effect.Effect<"ready" | "missing" | "signed_out">;
+  /** `omp [--profile p] share <sessionFile> --gist` (120 s): uploads, so never retried. */
+  readonly shareGist: (
+    target: OmpControlTarget,
+    sessionFile: string,
+  ) => Effect.Effect<OmpShareReport, OmpControlError>;
 }
+
+/** What `omp share` printed: the viewer link, the gist behind it, and whether it trimmed. */
+export interface OmpShareReport {
+  readonly url: string;
+  /** Null when OMP could not create the gist and used its share server. */
+  readonly gistUrl: string | null;
+  readonly truncated: boolean;
+}
+
+/** Parses `omp share`'s `Share URL:` / `Gist:` / `Note:` lines; null without a share URL. */
+export const parseOmpShareOutput = (stdout: string): OmpShareReport | null => {
+  const value = (label: string) =>
+    stdout
+      .split("\n")
+      .find((line) => line.startsWith(`${label}: `))
+      ?.slice(label.length + 2)
+      .trim();
+  const url = value("Share URL");
+  if (url === undefined || url === "") return null;
+  return {
+    url,
+    gistUrl: value("Gist") || null,
+    truncated: stdout.includes("Note: large content was trimmed"),
+  };
+};
 
 export interface OmpControlServiceOptions {
   readonly timeoutsMs?: Partial<Record<OmpControlBudget, number>>;
@@ -1293,6 +1348,53 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
     return parseOmpUpdateCheck(stdout);
   });
 
+  const exportHtml = Effect.fn("OmpControl.exportHtml")(function* (
+    target: OmpControlTarget,
+    input: { readonly sessionFile: string; readonly outputPath: string },
+  ) {
+    yield* runText("export_html", "export", target, [
+      "--export",
+      input.sessionFile,
+      input.outputPath,
+    ]);
+  });
+
+  /** A deadline, a failed spawn or a non-zero exit all mean `omp share` would not make a gist. */
+  const gistReady = (target: OmpControlTarget) =>
+    withDeadline(
+      "gh_auth",
+      "ghAuth",
+      spawnAndCollect(
+        "gh",
+        ChildProcess.make("gh", ["auth", "status"], {
+          cwd: target.cwd,
+          env: target.environment,
+          extendEnv: false,
+          stdin: "ignore",
+          forceKillAfter: killGraceMs,
+        }),
+      ),
+    ).pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.map((result) => (result.code === 0 ? ("ready" as const) : ("signed_out" as const))),
+      Effect.catch((cause) =>
+        Effect.succeed(isCommandMissingCause(cause) ? ("missing" as const) : ("signed_out" as const)),
+      ),
+      Effect.withSpan("OmpControl.gistReady"),
+    );
+
+  const shareGist = Effect.fn("OmpControl.shareGist")(function* (
+    target: OmpControlTarget,
+    sessionFile: string,
+  ) {
+    const stdout = yield* runText("share_gist", "share", target, ["share", sessionFile, "--gist"]);
+    const report = parseOmpShareOutput(stdout);
+    if (report === null) {
+      return yield* new OmpControlError({ operation: "share_gist", reason: "invalid" });
+    }
+    return report;
+  });
+
   interface CacheEntry {
     readonly deferred: Deferred.Deferred<unknown, unknown>;
     settledAt: number | null;
@@ -1365,5 +1467,8 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
       yield* invalidate;
     }),
     updateCheck,
+    exportHtml,
+    gistReady,
+    shareGist,
   } satisfies OmpControlService;
 });

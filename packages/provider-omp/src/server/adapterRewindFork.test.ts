@@ -12,6 +12,7 @@ import {
   RunAttemptId,
   RunId,
   ThreadId,
+  type OmpBranchTree,
   type OrchestrationV2AppThread,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
@@ -28,7 +29,6 @@ import { makeOmpAdapter } from "./adapter.ts";
 import { readOmpSessionHead, readOmpThreadSessionRecord } from "./ompSessions.ts";
 import { makeOmpPidfiles } from "./pidfiles.ts";
 import { ompStateDirs } from "./session.ts";
-import type { OmpBranchTree } from "./sessionBranches.ts";
 import { makeOmpThreadSessions } from "./threadSessions.ts";
 import {
   type FakeOmpState,
