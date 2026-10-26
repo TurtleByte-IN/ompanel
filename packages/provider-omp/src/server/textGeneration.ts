@@ -12,9 +12,9 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { OmpAnsi } from "./ompAnsi.ts";
 import type { OmpSidecarError } from "./sidecar.ts";
 
-export const OMP_TEXT_GENERATION_TIMEOUT_MS = 180_000;
+const OMP_TEXT_GENERATION_TIMEOUT_MS = 180_000;
 /** The model slug that defers to the OMP profile's own role configuration. */
-export const OMP_DEFAULT_MODEL_SLUG = "default";
+const OMP_DEFAULT_MODEL_SLUG = "default";
 const STDERR_DETAIL_MAX_CHARS = 2_000;
 
 const isTextGenerationError = Schema.is(TextGenerationError);
@@ -30,11 +30,11 @@ export interface OmpTextGenerationOptions {
  * The OMP model role for an operation: `@tiny` for thread titles, `@commit` for the
  * source-control writers (commit message, PR content, branch name), as `omp commit` does.
  */
-export const ompTextGenerationRole = (operation: TextGenerationOperations.Operation) =>
+const ompTextGenerationRole = (operation: TextGenerationOperations.Operation) =>
   operation === "generateThreadTitle" ? "@tiny" : "@commit";
 
 /** `omp -p` one-shot args; the prompt is piped on stdin so diffs never hit argv limits. */
-export const ompTextGenerationArgs = (input: {
+const ompTextGenerationArgs = (input: {
   readonly operation: TextGenerationOperations.Operation;
   readonly model: string;
   readonly profile: string;
