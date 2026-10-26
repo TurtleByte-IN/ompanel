@@ -16,6 +16,8 @@ import {
   migrateLegacyHomeOnStartup,
 } from "./legacyHomeMigration.ts";
 
+const UPSTREAM_PAIRING_CREDENTIAL = "upstream-pairing-credential-7d1f";
+
 /** A database shaped like the server's: events, plus the credentials upstream issued. */
 function writeDatabase(file: string, input: { readonly events: ReadonlyArray<string> }) {
   const db = new NodeSqlite.DatabaseSync(file);
@@ -24,7 +26,8 @@ function writeDatabase(file: string, input: { readonly events: ReadonlyArray<str
       PRAGMA journal_mode = WAL;
       CREATE TABLE orchestration_v2_events (id TEXT PRIMARY KEY);
       CREATE TABLE auth_sessions (session_id TEXT PRIMARY KEY);
-      CREATE TABLE auth_pairing_links (id TEXT PRIMARY KEY);
+      CREATE TABLE auth_pairing_links (id TEXT PRIMARY KEY, credential TEXT);
+      CREATE TABLE scheduled_tasks (task_id TEXT PRIMARY KEY, webhook_token TEXT, webhook_secret TEXT);
     `);
     for (const id of input.events) {
       db.prepare("INSERT INTO orchestration_v2_events (id) VALUES (?)").run(id);
@@ -40,7 +43,8 @@ function seedDatabase(file: string, events: ReadonlyArray<string>) {
   const db = writeDatabase(file, { events });
   db.exec(`
     INSERT INTO auth_sessions (session_id) VALUES ('upstream-device');
-    INSERT INTO auth_pairing_links (id) VALUES ('upstream-link');
+    INSERT INTO auth_pairing_links (id, credential) VALUES ('upstream-link', '${UPSTREAM_PAIRING_CREDENTIAL}');
+    INSERT INTO scheduled_tasks VALUES ('nightly', 'upstream-webhook-token', 'upstream-webhook-secret');
   `);
   db.close();
 }
@@ -57,6 +61,10 @@ function readDatabase(file: string) {
       events: ids("orchestration_v2_events"),
       sessions: ids("auth_sessions"),
       pairingLinks: ids("auth_pairing_links"),
+      webhooks: db
+        .prepare("SELECT webhook_token, webhook_secret FROM scheduled_tasks")
+        .all()
+        .map((row) => [row.webhook_token, row.webhook_secret]),
     };
   } finally {
     db.close();
@@ -77,6 +85,8 @@ const seedLegacyHome = Effect.fn("test.seedLegacyHome")(function* () {
   yield* write("settings.json", '{"theme":"dark"}');
   yield* write("secrets/server-signing-key", "signing");
   yield* write("secrets/cloud-link-ed25519-key-pair", "relay-key");
+  yield* write("device/hosts/abc.json", '{"daemonAuthToken":"upstream-daemon"}');
+  yield* write("keybindings.json", '[{"key":"mod+j","command":"terminal.toggle"}]');
   yield* write("attachments/thread/image.png", "png");
   yield* write("logs/server.trace.ndjson", "trace");
   yield* write("environment-id", "upstream-environment");
@@ -153,10 +163,66 @@ describe("migrateLegacyHome", () => {
 
       assert.isFalse(yield* exists(path.join(target, "secrets", "server-signing-key")));
       assert.isFalse(yield* exists(path.join(target, "secrets", "cloud-link-ed25519-key-pair")));
+      assert.isFalse(yield* exists(path.join(target, "device")));
       const copied = readDatabase(path.join(target, "statev2.sqlite"));
       assert.deepStrictEqual(copied.sessions, []);
       assert.deepStrictEqual(copied.pairingLinks, []);
+      assert.deepStrictEqual(copied.webhooks, [[null, null]]);
+      // Deleted rows must not survive in free pages of the copied file.
+      const bytes = yield* (yield* FileSystem.FileSystem).readFile(
+        path.join(target, "statev2.sqlite"),
+      );
+      assert.notInclude(Buffer.from(bytes).toString("latin1"), UPSTREAM_PAIRING_CREDENTIAL);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("copies rows that are still only in upstream's write-ahead log", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { home, legacy, target } = yield* seedLegacyHome();
+      const writer = new NodeSqlite.DatabaseSync(path.join(legacy, "statev2.sqlite"));
+      try {
+        writer.exec("PRAGMA wal_autocheckpoint = 0");
+        writer.prepare("INSERT INTO orchestration_v2_events (id) VALUES (?)").run("wal-only-event");
+        assert.isTrue(yield* fs.exists(path.join(legacy, "statev2.sqlite-wal")));
+
+        assert.equal((yield* migrateLegacyHome(home)).status, "migrated");
+      } finally {
+        writer.close();
+      }
+      assert.deepStrictEqual(readDatabase(path.join(target, "statev2.sqlite")).events, [
+        "upstream-event",
+        "wal-only-event",
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect.each(["home", "userdata", "database"] as const)(
+    "refuses a symlinked upstream %s instead of following it",
+    (linked) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const { home, legacy, target } = yield* seedLegacyHome();
+        const elsewhere = yield* fs.makeTempDirectoryScoped({ prefix: "ompanel-relocated-" });
+        const link =
+          linked === "home"
+            ? path.join(home, ".t3")
+            : linked === "userdata"
+              ? legacy
+              : path.join(legacy, "statev2.sqlite");
+        const moved = path.join(elsewhere, path.basename(link));
+        yield* fs.rename(link, moved);
+        yield* fs.symlink(moved, link);
+
+        assert.deepStrictEqual(yield* migrateLegacyHome(home), {
+          status: "legacy-home-symlinked",
+          path: link,
+        });
+        assert.isFalse(yield* exists(target));
+        assert.isFalse(yield* exists(path.join(home, ".ompanel", LEGACY_HOME_MIGRATION_MARKER)));
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("copies a v1-only home and its rows reach the v2 import", () =>
@@ -310,8 +376,11 @@ describe("migrateLegacyHome", () => {
       assert.isFalse(yield* exists(target));
       assert.isFalse(yield* exists(path.join(home, ".ompanel", LEGACY_HOME_MIGRATION_MARKER)));
 
-      // That start went on to create Ompanel's own empty database; then T3 Code quit.
+      // That start went on to create Ompanel's own empty database and default keybindings;
+      // then T3 Code quit.
       yield* createEmptyOmpanelDatabase(target);
+      yield* fs.writeFileString(path.join(target, "keybindings.json"), "[]");
+      yield* fs.writeFileString(path.join(target, "keybindings-migrations"), "late-default\n");
       yield* fs.remove(runtime);
 
       assert.equal((yield* migrateLegacyHome(home)).status, "migrated");
@@ -323,10 +392,17 @@ describe("migrateLegacyHome", () => {
         name.startsWith(".legacy-home-migration-replaced-"),
       );
       assert.equal(replaced.length, 1);
-      assert.deepStrictEqual(
-        readDatabase(path.join(home, ".ompanel", replaced[0]!, "statev2.sqlite")).sessions,
-        ["ompanel-desktop"],
+      const replacedDir = path.join(home, ".ompanel", replaced[0]!);
+      assert.deepStrictEqual(readDatabase(path.join(replacedDir, "statev2.sqlite")).sessions, [
+        "ompanel-desktop",
+      ]);
+      // Upstream's customised keybindings win over the defaults the deferred start wrote.
+      assert.equal(
+        yield* read(path.join(target, "keybindings.json")),
+        '[{"key":"mod+j","command":"terminal.toggle"}]',
       );
+      assert.isFalse(yield* exists(path.join(target, "keybindings-migrations")));
+      assert.equal(yield* read(path.join(replacedDir, "keybindings.json")), "[]");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

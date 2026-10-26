@@ -347,7 +347,7 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     }
   }
   yield* fs.makeDirectory(cwd, { recursive: true });
-  yield* migrateLegacyHomeOnStartup(derivedPaths.stateDir);
+  const legacyHomeMigrationPending = yield* migrateLegacyHomeOnStartup(derivedPaths.stateDir);
   yield* ServerConfig.ensureServerDirectories(derivedPaths);
   const persistedObservabilitySettings = yield* loadPersistedObservabilitySettings(
     derivedPaths.settingsPath,
@@ -375,6 +375,8 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
   const resourceMonitorPath = bootstrap?.resourceMonitorPath;
   const autoBootstrapProjectFromCwd = Option.getOrElse(
     resolveOptionPrecedence(
+      // A bootstrap project would count as Ompanel's own data and stop the deferred copy for good.
+      legacyHomeMigrationPending ? Option.some(false) : Option.none(),
       Option.fromUndefinedOr(options?.forceAutoBootstrapProjectFromCwd),
       isHeadlessStartup ? Option.some(false) : Option.none(),
       normalizedFlags.autoBootstrapProjectFromCwd,

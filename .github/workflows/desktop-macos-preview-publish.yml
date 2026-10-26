@@ -196,7 +196,9 @@ jobs:
       # build run's number reproduces the version baked into the bundle, and
       # .env.example holds the public T3 Connect identifiers the bundle was
       # compiled with, which the signed app's passkey entitlement must match.
-      # Both are validated before they reach a file name or an entitlement.
+      # Ompanel ships them empty (cloud off), so an unset value passes through
+      # as empty. Both are validated before they reach a file name or an
+      # entitlement.
       - id: version
         name: Resolve preview version and public configuration
         if: steps.gate.outputs.eligible == 'true'
@@ -228,8 +230,8 @@ jobs:
             output="${key%%:*}"
             name="${key##*:}"
             value="$(sed -n "s/^${name}=//p" "$RUNNER_TEMP/head.env.example" | head -n 1)"
-            if [[ ! "$value" =~ ^[A-Za-z0-9._:/-]+$ ]]; then
-              echo "$name is missing or malformed in .env.example at $HEAD_SHA." >&2
+            if [[ ! "$value" =~ ^[A-Za-z0-9._:/-]*$ ]]; then
+              echo "$name is malformed in .env.example at $HEAD_SHA." >&2
               exit 1
             fi
             echo "${output}=${value}" >> "$GITHUB_OUTPUT"

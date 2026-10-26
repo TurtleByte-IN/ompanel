@@ -3,6 +3,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeEvents from "node:events";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
+import * as NodeSqlite from "node:sqlite";
 
 import { assert, expect, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -14,6 +15,7 @@ import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import {
   DesktopBackendBootstrap,
@@ -30,7 +32,10 @@ import {
   SERVICE_LAUNCHER_CONTEXT_ENV,
   SERVICE_LAUNCHER_PROTOCOL,
 } from "../cloud/serviceProtocol.ts";
+import * as ServerConfig from "../config.ts";
 import { deriveServerPaths } from "../config.ts";
+import * as Keybindings from "../keybindings.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { resolveServerConfig } from "./config.ts";
 
 const deriveExplicitServerPaths = (baseDir: string, devUrl: URL | undefined) =>
@@ -908,6 +913,85 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         host: undefined,
         privateNetworkOnly: undefined,
       });
+    }),
+  );
+
+  it.effect("a web start during a deferred T3 Code copy leaves the next start free to copy", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "ompanel-deferred-start-" });
+      const legacy = path.join(home, ".t3", "userdata");
+      yield* fs.makeDirectory(legacy, { recursive: true });
+      const upstream = new NodeSqlite.DatabaseSync(path.join(legacy, "statev2.sqlite"));
+      upstream.exec(`
+        CREATE TABLE orchestration_v2_events (id TEXT PRIMARY KEY);
+        INSERT INTO orchestration_v2_events VALUES ('upstream-event');
+      `);
+      upstream.close();
+      yield* fs.writeFileString(path.join(legacy, "keybindings.json"), "[]");
+      const project = path.join(home, "project");
+      const start = resolveServerConfig(
+        { ...minimalWebFlags(""), baseDir: Option.none(), cwd: Option.some(project) },
+        Option.none(),
+      ).pipe(
+        Effect.provideService(HostProcess.HomeDirectory, home),
+        Effect.provide(
+          Layer.merge(NetService.layer, ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))),
+        ),
+      );
+      // What a real start persists before any user acts: the migrated schema and default keybindings.
+      const runServer = Effect.fn("test.runServer")(function* (
+        config: Effect.Success<typeof start>,
+      ) {
+        yield* Effect.gen(function* () {
+          yield* (yield* SqlClient.SqlClient)`SELECT 1`;
+          yield* (yield* Keybindings.Keybindings).syncDefaultKeybindingsOnStartup;
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              SqlitePersistence.layerFromPath(config.dbPath),
+              Keybindings.layer.pipe(Layer.provide(ServerConfig.layer(config))),
+            ),
+          ),
+          Effect.scoped,
+        );
+      });
+
+      const deferred = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const t3Code = yield* liveProcess;
+          yield* fs.writeFileString(
+            path.join(legacy, "server-runtime.json"),
+            yield* encodeUnknownJson({
+              version: 1,
+              pid: t3Code.pid,
+              port: 3773,
+              origin: "http://127.0.0.1:3773",
+              startedAt: "2026-10-01T00:00:00.000Z",
+            }),
+          );
+          return yield* start;
+        }),
+      );
+      // The bootstrap project and "New thread" would count as Ompanel's own data.
+      expect(deferred.autoBootstrapProjectFromCwd).toBe(false);
+      expect(yield* fs.exists(path.join(home, ".ompanel", "legacy-home-migration.json"))).toBe(
+        false,
+      );
+      yield* runServer(deferred);
+
+      const next = yield* start;
+      expect(next.autoBootstrapProjectFromCwd).toBe(true);
+      const copied = new NodeSqlite.DatabaseSync(next.dbPath, { readOnly: true });
+      try {
+        expect(copied.prepare("SELECT id FROM orchestration_v2_events").all()).toEqual([
+          { id: "upstream-event" },
+        ]);
+      } finally {
+        copied.close();
+      }
+      expect(yield* fs.readFileString(next.keybindingsConfigPath)).toBe("[]");
     }),
   );
 });
