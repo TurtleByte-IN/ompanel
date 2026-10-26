@@ -41,6 +41,36 @@ cancelled job fails it. Through it, every pull request is gated on:
   desktop backend), then stay up 15 s. An exit at any point fails the job, so a
   backend that would crash-loop in the desktop app cannot merge. Run the same
   command locally after `vp run --filter t3 build`.
+- desktop on every OS: `Desktop Smoke macOS arm64`, `Linux x64`, `Linux arm64`,
+  `Windows x64` and `Windows arm64`, for the same changes. Each builds the
+  desktop app and server (`vp run --filter @t3tools/desktop --filter t3 build`)
+  on its own runner, then runs `node apps/desktop/scripts/smoke-omp.mjs`
+  (under `xvfb-run` on Linux). The script launches `dist-electron/boot.cjs`,
+  the entry the packaged app runs, with a throwaway home and OMP enabled with
+  no binary path. `omp --mode rpc` exits when no default model resolves
+  (ompanel#144), so the throwaway OMP home gets a loopback model provider
+  that is never prompted. On macOS the app runs with `--use-mock-keychain`,
+  since a locked runner keychain would block the main process with a prompt.
+  It passes only when the backend logs ready and answers
+  `/.well-known/t3/environment`, the main window opens, and the OMP row on
+  Settings → Providers turns ready. It then checks that the sidecar that ran
+  is this platform's `omp.lock` asset: downloaded into
+  `<OMPANEL_HOME>/tools/omp/<tag>/` with the sha256 in the lock. A screenshot
+  of the providers page and the app's log are uploaded as
+  `desktop-smoke-<platform>-<arch>`; on failure the backend logs and the
+  output of the cached sidecar run with the status check's flags are too.
+  The job has only `contents: read` (no OIDC token), and the script drops
+  `ACTIONS_*`, `GITHUB_TOKEN` and `GH_TOKEN` from the environment the app and
+  the downloaded sidecar inherit. A first check that ends in "did not answer
+  within 10 s" (a cold first start, ompanel#147) gets one refresh after the
+  30 s probe cache expires; any other error fails at once. On Windows the job
+  first runs
+  `processTree.windows.test.ts`, which kills real process trees under the
+  job-object launcher ([processes.md](processes.md#stopping)). Its waits
+  allow for the ~20-30 s launcher start on `windows-11-arm` (ompanel#145).
+  Locally, run
+  the build, then the script; set `OMPANEL_DESKTOP_SMOKE_ARTIFACTS` to keep the
+  screenshot somewhere other than `apps/desktop/.smoke-omp`.
 
 A new job joins the gate by being added to `Check`'s `needs`; the branch
 protection setting does not change. Workflows other than `ci.yml` (PR size,

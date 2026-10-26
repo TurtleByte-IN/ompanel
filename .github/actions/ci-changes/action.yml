@@ -7,6 +7,8 @@ outputs:
     value: ${{ steps.detect.outputs.build }}
   boot_smoke:
     value: ${{ steps.detect.outputs.boot_smoke }}
+  desktop_smoke:
+    value: ${{ steps.detect.outputs.desktop_smoke }}
   test:
     value: ${{ steps.detect.outputs.test }}
   test_packages:
