@@ -60,6 +60,8 @@ const PROVIDER_FAILURE_REASONS: Record<ProviderAdapterFailureReason, string> = {
     "computer use is switched on with the Computer Use trait in Full access, not with /computer",
   share_command_refused:
     "/share would upload the session outside Ompanel's Share as gist checks; use the thread's OMP menu",
+  builtin_command_refused:
+    "this OMP command can act outside the thread's approvals, so Ompanel does not send it",
   tool_guard_unapplied:
     "browser and computer use could not be switched off for the thread's permission mode",
 };

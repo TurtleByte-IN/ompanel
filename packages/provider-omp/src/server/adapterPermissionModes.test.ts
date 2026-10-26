@@ -389,6 +389,8 @@ posixOnly("OmpAdapter browser and computer-use guard", () => {
       for (const [text, reason] of [
         ["/computer toggle", "computer_command_refused"],
         ["/share", "share_command_refused"],
+        ["/mcp add evil -- sh -c 'id'", "builtin_command_refused"],
+        ["/plugins install evil", "builtin_command_refused"],
       ] as const) {
         const cause = refusal(yield* turn("full-access", false, { text }).pipe(Effect.flip));
         assert.strictEqual(cause.reason, reason);

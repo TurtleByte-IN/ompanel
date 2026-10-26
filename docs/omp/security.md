@@ -22,17 +22,30 @@ on the server (`packages/provider-omp/src/server/toolGuards.ts`):
   (`computer_command_refused`); `/computer status` goes through. `/computer` is
   not offered in the composer's `/` menu.
 
+Every write to a thread overlay holds that overlay's lock, and only the adapter
+changes the two guard keys: a settings-engine write based on an older read keeps the
+values on disk. The adapter re-reads the overlay and re-asserts the guard before every
+turn, with no cache.
+
 OMP's overlay watcher applies a change within its debounce. Until then, a
 switch out of Full access is still covered: both preludes run only through
 `eval`, an exec-tier tool that the new approval mode, applied just before,
 already asks for.
 
-## `/share`
+## OMP builtins from the composer
 
-A composer `/share` would run OMP's own share command in the thread's session
-and upload to `share.serverUrl` without the Share as gist checks
-([thread-menu.md](thread-menu.md)). It is refused (`share_command_refused`) and
-not offered in the `/` menu.
+OMP runs any prompt that starts with one of its RPC builtins as that command, outside
+the thread's approvals (`/mcp add … ` then `/mcp test` starts a command; `/plugins
+install`, `/move`, `/add-dir`, `/ssh`, `/export <path>` act on the machine). The adapter
+sends only an allowlist that changes nothing but this session's model knobs, context or
+view: `advisor`, `changelog`, `compact`, `context`, `effort`, `fast`, `force`,
+`forget-approvals`, `fresh`, `jobs`, `prewalk`, `rename`, `retry`, `slow`, `stats`,
+`todo`, `usage`, `wt` (handled by Ompanel's host), plus `/computer status`. Every other
+builtin of the pinned OMP is refused (`builtin_command_refused`; `/share` with
+`share_command_refused`, since it would upload past the Share as gist checks) and is
+not offered in the `/` menu. Skills (`/skill:…`) and prompt templates are prompts and
+go through. The builtin list is taken from the pinned source and must be re-derived on
+every re-pin (`toolGuards.ts`).
 
 ## Share live
 
@@ -44,7 +57,8 @@ mobile app has no Share live entry; OMP's `/collab` is TUI-only.
 
 The OMP end-to-end suite (`apps/web/e2e/omp/ompSuite.ts`) stops the stack and
 scans the server's output (except its pairing announcement), `<state>/logs`
-(logs and traces) and `<state>/omp` (journals, overlays) for the pairing token,
+(logs and traces), `<state>/omp` (journals, overlays), `statev2.sqlite` and its WAL,
+and OMP's own sessions and logs, in raw, URL-encoded and JSON-escaped form, for the pairing token,
 the live suite's API keys and the fake vendor's OAuth codes; any hit fails the
 run and is listed in `leaked-secrets.json` by label, never by value. Collab
 links are covered by `threadMenuController.test.ts`, API keys in Ompanel's state

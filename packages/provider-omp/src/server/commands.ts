@@ -24,6 +24,7 @@ import type {
   OmpSkillList,
 } from "./control.ts";
 import type { OmpSidecarError } from "./sidecar.ts";
+import { ompBuiltinAllowed } from "./toolGuards.ts";
 
 /** How long a discovered command list or skill list is reused for one directory. */
 export const OMP_COMMAND_CATALOG_TTL_MS = 60_000;
@@ -51,12 +52,6 @@ const GOAL_COMMAND: ServerProviderSlashCommand = {
 };
 
 /**
- * Builtins the adapter refuses as prompts (`ompRefusedSlashCommand`, toolGuards.ts): Ompanel's
- * Computer Use trait and Share as gist replace them, so the menu does not offer them.
- */
-const REFUSED_COMMANDS: Readonly<Record<string, true>> = { computer: true, share: true };
-
-/**
  * OMP's command list as menu entries: skill commands and refused builtins dropped, first of each
  * name kept, `/goal` added.
  */
@@ -69,7 +64,8 @@ export const ompSlashCommands = (
     const name = nonEmpty(command.name);
     if (name === undefined || command.source === "skill" || seen.has(name)) continue;
     seen.add(name);
-    if (Object.hasOwn(REFUSED_COMMANDS, name)) continue;
+    // Builtins the adapter refuses as prompts (toolGuards.ts) are not offered.
+    if (!ompBuiltinAllowed(name)) continue;
     const description = nonEmpty(command.description);
     const hint = nonEmpty(command.input?.hint);
     result.push({

@@ -110,6 +110,8 @@ const scanForSecrets = (input: {
   readonly secrets: ReadonlyArray<{ readonly label: string; readonly value: string }>;
   readonly serverLog: string;
   readonly recorded: ReadonlyArray<string>;
+  /** Single files, e.g. the database and its write-ahead log. */
+  readonly files: ReadonlyArray<string>;
 }): ReadonlyArray<string> => {
   const sources: Array<{ readonly file: string; readonly text: string }> = [
     {
@@ -128,11 +130,18 @@ const scanForSecrets = (input: {
       sources.push({ file, text: NodeFS.readFileSync(file, "latin1") });
     }
   }
+  for (const file of input.files) {
+    if (NodeFS.existsSync(file)) sources.push({ file, text: NodeFS.readFileSync(file, "latin1") });
+  }
+  // Raw, URL-encoded and JSON-escaped forms.
+  const forms = (value: string) => [
+    ...new Set([value, encodeURIComponent(value), JSON.stringify(value).slice(1, -1)]),
+  ];
   return input.secrets
     .filter((secret) => secret.value.length >= 8)
     .flatMap((secret) =>
       sources
-        .filter((source) => source.text.includes(secret.value))
+        .filter((source) => forms(secret.value).some((form) => source.text.includes(form)))
         .map((source) => `${secret.label} in ${source.file}`),
     );
 };
@@ -318,7 +327,16 @@ export const startOmpStack = async (options: OmpStackOptions = {}): Promise<OmpS
           ...(vendor?.exchanged() ?? []).map((value) => ({ label: "OAuth code", value })),
         ],
         serverLog: logPath,
-        recorded: [NodePath.join(userdata, "logs"), NodePath.join(userdata, "omp")],
+        // Logs and traces, OMP's thread state, OMP's own sessions and logs.
+        recorded: [
+          NodePath.join(userdata, "logs"),
+          NodePath.join(userdata, "omp"),
+          NodePath.join(agentDir, "sessions"),
+          NodePath.join(agentDir, "logs"),
+        ],
+        files: ["statev2.sqlite", "statev2.sqlite-wal"].map((name) =>
+          NodePath.join(userdata, name),
+        ),
       });
       await model.close();
       await metrics.close();

@@ -364,7 +364,9 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       }
     }
     if (next !== current) {
-      yield* withAdapterFiles(writeOmpThreadOverlay(options.dirs.threads, threadId, next));
+      yield* withAdapterFiles(
+        writeOmpThreadOverlay(options.dirs.threads, threadId, next, { ownsGuardKeys: true }),
+      );
     }
     return wanted;
   });
@@ -1024,14 +1026,10 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       appliedApprovalMode = wanted;
     });
 
-    /** The guard state (toolGuards.ts) this session last wrote: restricted, or Full access with the trait. */
-    const openComputer = readOmpTraitSelection(input.modelSelection).computer;
-    let appliedToolGuard =
-      input.runtimePolicy.runtimeMode === "full-access" ? `full:${openComputer}` : "restricted";
     /**
-     * Holds the browser and computer-use preludes to the turn's mode and trait before anything
-     * runs; switching them off fails closed. Until OMP's watcher reloads the overlay, both run only
-     * through `eval`, which the approval mode applied just before already asks for.
+     * Holds the browser and computer-use preludes to the turn's mode and trait before every turn,
+     * from the overlay on disk (no cache: a settings write may have replaced it); switching them
+     * off fails closed. Until OMP's watcher reloads, both run only through `eval`, which asks.
      */
     const applyToolGuard = Effect.fnUntraced(function* (
       threadId: string,
@@ -1040,11 +1038,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
     ) {
       const computer = readOmpTraitSelection(modelSelection).computer;
       const restricted = runtimePolicy.runtimeMode !== "full-access";
-      const wanted = restricted ? "restricted" : `full:${computer}`;
-      if (wanted === appliedToolGuard) return;
-
       yield* syncToolGuard(threadId, runtimePolicy.runtimeMode, computer).pipe(
-        Effect.tap(() => Effect.sync(() => (appliedToolGuard = wanted))),
         Effect.catch((error) =>
           restricted
             ? Effect.fail(
