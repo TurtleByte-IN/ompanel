@@ -39,6 +39,11 @@ export const OMP_CONTROL_TIMEOUTS_MS = {
   ready: 10_000,
   /** `omp usage --json`. */
   usage: 10_000,
+  /**
+   * `omp stats --json`. It first ingests every new session entry into OMP's stats database, so a
+   * first run over a long history takes longer than a plain read.
+   */
+  stats: 60_000,
   /** An RPC `login` session, from spawn until the provider stores the credential. */
   login: 60_000,
   /** `omp config list|set|reset --json`. */
@@ -104,6 +109,7 @@ export interface OmpControlTarget {
 export type OmpControlOperation =
   | "version"
   | "usage"
+  | "stats"
   | "rpc"
   | "login_providers"
   | "login"
@@ -121,6 +127,7 @@ export class OmpControlError extends Schema.TaggedError<OmpControlError>()("OmpC
   operation: Schema.Literals([
     "version",
     "usage",
+    "stats",
     "rpc",
     "login_providers",
     "login",
@@ -247,6 +254,32 @@ export const OmpUsageReport = Schema.Struct({
 });
 export type OmpUsageReport = typeof OmpUsageReport.Type;
 const decodeUsageReport = Schema.decodeEffect(Schema.fromJsonString(OmpUsageReport));
+
+/** `AggregatedStats` of `@oh-my-pi/omp-stats`: the totals Ompanel shows. */
+const OmpStatsTotals = Schema.Struct({
+  totalRequests: Schema.Number,
+  failedRequests: Schema.Number,
+  totalInputTokens: Schema.Number,
+  totalOutputTokens: Schema.Number,
+  totalCacheReadTokens: Schema.Number,
+  totalCacheWriteTokens: Schema.Number,
+  totalCost: Schema.Number,
+  firstTimestamp: Schema.Number,
+  lastTimestamp: Schema.Number,
+});
+
+/**
+ * `omp stats --json` (`cli/stats-cli.ts`): `DashboardStats` of `@oh-my-pi/omp-stats`, an
+ * unversioned shape, so only the fields Ompanel shows are read; the time series are dropped.
+ */
+export const OmpStatsReport = Schema.Struct({
+  overall: OmpStatsTotals,
+  byModel: Schema.Array(
+    Schema.Struct({ ...OmpStatsTotals.fields, model: Schema.String, provider: Schema.String }),
+  ),
+});
+export type OmpStatsReport = typeof OmpStatsReport.Type;
+const decodeStatsReport = Schema.decodeEffect(Schema.fromJsonString(OmpStatsReport));
 const decodeConfigList = Schema.decodeEffect(Schema.fromJsonString(OmpConfigList));
 const decodeConfigSetResult = Schema.decodeEffect(Schema.fromJsonString(OmpConfigSetResult));
 const decodeConfigResetResult = Schema.decodeEffect(Schema.fromJsonString(OmpConfigResetResult));
@@ -329,6 +362,8 @@ export interface OmpControlService {
     target: OmpControlTarget,
     options?: { readonly provider?: string },
   ) => Effect.Effect<OmpUsageReport, OmpControlError>;
+  /** `omp stats --json` (60 s), cached 30 s: totals over every session file of the profile. */
+  readonly stats: (target: OmpControlTarget) => Effect.Effect<OmpStatsReport, OmpControlError>;
   /** RPC `get_login_providers` in a fresh server (10 s), uncached. */
   readonly loginProviders: (
     target: OmpControlTarget,
@@ -520,6 +555,27 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
     return yield* decodeUsageReport(output.stdout.trim()).pipe(
       Effect.mapError(
         (cause) => new OmpControlError({ operation: "usage", reason: "invalid", cause }),
+      ),
+    );
+  });
+
+  const statsUncached = Effect.fn("OmpControl.stats")(function* (target: OmpControlTarget) {
+    // stderr carries sync progress; stdout is the JSON report alone.
+    const output = yield* collect("stats", "stats", target, [
+      ...profileArgs(target.profile),
+      "stats",
+      "--json",
+    ]);
+    if (output.code !== 0) {
+      return yield* new OmpControlError({
+        operation: "stats",
+        reason: "exit",
+        exitCode: output.code,
+      });
+    }
+    return yield* decodeStatsReport(output.stdout.trim()).pipe(
+      Effect.mapError(
+        (cause) => new OmpControlError({ operation: "stats", reason: "invalid", cause }),
       ),
     );
   });
@@ -990,6 +1046,7 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
         ["usage", targetKey(target), usageOptions?.provider ?? ""].join("\0"),
         usageUncached(target, usageOptions?.provider),
       ),
+    stats: (target) => cached(["stats", targetKey(target)].join("\0"), statsUncached(target)),
     loginProviders,
     login,
     logoutAccounts,

@@ -1563,6 +1563,18 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:omp-agent-files:delete",
       tag: WS_METHODS.serverDeleteOmpAgentFile,
     }),
+    getOmpAccountUsage: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:omp-usage:account",
+      tag: WS_METHODS.serverGetOmpAccountUsage,
+    }),
+    getOmpStats: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:omp-usage:stats",
+      tag: WS_METHODS.serverGetOmpStats,
+    }),
+    getOmpSessionStats: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:omp-usage:sessions",
+      tag: WS_METHODS.serverGetOmpSessionStats,
+    }),
     signalProcess: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:signal-process",
       tag: WS_METHODS.serverSignalProcess,

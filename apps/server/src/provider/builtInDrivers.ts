@@ -51,7 +51,8 @@ export type BuiltInUsageReadersEnv =
   | ProviderUsageReaderEnv<typeof AntigravityDriver>
   | ProviderUsageReaderEnv<typeof CursorDriver>
   | ProviderUsageReaderEnv<typeof PiDriver>
-  | ProviderUsageReaderEnv<typeof MuseDriver>;
+  | ProviderUsageReaderEnv<typeof MuseDriver>
+  | ProviderUsageReaderEnv<typeof OmpDriver>;
 
 /** Order matters: aggregation keeps the first duplicate record. */
 export const BUILT_IN_USAGE_DRIVERS: ReadonlyArray<
@@ -61,6 +62,7 @@ export const BUILT_IN_USAGE_DRIVERS: ReadonlyArray<
   CodexDriver,
   GrokDriver,
   PiDriver,
+  OmpDriver,
   OpenCodeDriver,
   MuseDriver,
   AntigravityDriver,

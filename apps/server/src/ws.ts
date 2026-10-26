@@ -25,6 +25,7 @@ import {
   AcpRegistryOperationError,
   OmpAccountsOperationError,
   OmpAgentFilesOperationError,
+  OmpUsageOperationError,
   OmpSettingsOperationError,
   OmpSessionsOperationError,
   type OmpImportSessionInput,
@@ -1522,6 +1523,25 @@ export const layerWsRpc = (
         return instance.ompAccounts;
       });
 
+      const ompUsageController = Effect.fn("ws.ompUsage.controller")(function* (
+        instanceId: ProviderInstanceId,
+      ) {
+        const instance = yield* providerInstances.getInstance(instanceId);
+        if (instance === undefined) {
+          return yield* new OmpUsageOperationError({
+            reason: "instance_not_found",
+            message: `Provider instance ${instanceId} was not found.`,
+          });
+        }
+        if (instance.ompUsage === undefined) {
+          return yield* new OmpUsageOperationError({
+            reason: "unsupported",
+            message: `Provider instance ${instanceId} has no OMP usage.`,
+          });
+        }
+        return instance.ompUsage;
+      });
+
       const ompAgentFilesController = Effect.fn("ws.ompAgentFiles.controller")(function* (
         instanceId: ProviderInstanceId,
       ) {
@@ -2788,6 +2808,21 @@ export const layerWsRpc = (
             Effect.flatMap((files) =>
               files.remove({ file: input.file, baseVersion: input.baseVersion }),
             ),
+          ),
+        [WS_METHODS.serverGetOmpAccountUsage]: (input) =>
+          Effect.annotateCurrentSpan({ "provider.instance_id": input.instanceId }).pipe(
+            Effect.andThen(ompUsageController(input.instanceId)),
+            Effect.flatMap((usage) => usage.account),
+          ),
+        [WS_METHODS.serverGetOmpStats]: (input) =>
+          Effect.annotateCurrentSpan({ "provider.instance_id": input.instanceId }).pipe(
+            Effect.andThen(ompUsageController(input.instanceId)),
+            Effect.flatMap((usage) => usage.stats),
+          ),
+        [WS_METHODS.serverGetOmpSessionStats]: (input) =>
+          Effect.annotateCurrentSpan({ "provider.instance_id": input.instanceId }).pipe(
+            Effect.andThen(ompUsageController(input.instanceId)),
+            Effect.flatMap((usage) => usage.sessions),
           ),
         [WS_METHODS.serverRefreshProviders]:
           /* Request instrumentation already owns the span; keep this helper in that context. */

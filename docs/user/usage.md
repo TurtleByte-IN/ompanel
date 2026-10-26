@@ -8,7 +8,7 @@ On mobile, choose **Usage** in the workspace navigation.
 
 ## Understand your usage
 
-**Usage** combines Codex, Claude Code, Grok Build, OpenCode, Antigravity, Pi, Muse Code, and Cursor history
+**Usage** combines Codex, Claude Code, Grok Build, OpenCode, Antigravity, Pi, OMP, Muse Code, and Cursor history
 from your connected environments. It shows token use, cache savings, model breakdowns, and estimated API-equivalent
 cost, split by token type and by speed. These estimates are not your subscription bill.
 **Premium** is what Fast and Ultrafast requests cost above standard rates. Cost that cannot be
@@ -36,6 +36,9 @@ variable. Pi reads `~/.pi/agent/sessions`, or the `sessions` directory under
 `PI_CODING_AGENT_DIR`. Set `PI_CODING_AGENT_SESSION_DIR` to read a different session directory.
 To include sessions saved through `--session-dir` or Pi's `sessionDir` setting, set this environment
 variable to the same directory. Pi includes recorded tool and summary costs under `Tools/summaries`.
+OMP reads the session directory of each instance's profile, the one its threads write:
+`~/.omp/agent/sessions`, `~/.omp/profiles/<profile>/agent/sessions`, or `PI_CODING_AGENT_SESSION_DIR`.
+Side calls such as titles and compaction count under their own model.
 Muse Code reads native session history, including child sessions, from the home reported by the
 configured Muse CLI. Its environment settings, including `XDG_DATA_HOME`, apply. Models without
 known prices still contribute tokens and appear as unpriced; set custom prices to estimate their cost.
@@ -53,6 +56,20 @@ saved totals first, then updates them when Cursor's API responds.
 
 If recent work is missing or a new model shows no cost, refresh to rescan session history and
 update model pricing.
+
+## OMP account limits and stats
+
+When a selected environment runs OMP, **Usage → OMP** shows one OMP instance, with a picker when
+there are several:
+
+- **Account limits**: each signed-in account's quota windows, from `omp usage --json`.
+- **All sessions**: requests, tokens and cost over every session of the instance's profile, from
+  `omp stats --json`. OMP first reads any new session history into its stats database, so the first
+  load after a lot of work can take up to a minute.
+- **Running threads**: each running OMP thread's own messages, tokens, cost and context use.
+
+Each part loads and fails on its own; an error names what went wrong without OMP's output. Refresh
+reloads all three. Account limits need permission to manage providers.
 
 ## Set custom model prices
 

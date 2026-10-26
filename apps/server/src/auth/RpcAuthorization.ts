@@ -111,6 +111,10 @@ export const RPC_REQUIRED_SCOPES = {
   // Agent prompts and advisor instructions are provider configuration, read only by its managers.
   [WS_METHODS.serverListOmpAgentFiles]: AuthProvidersManageScope,
   [WS_METHODS.serverReadOmpAgentFile]: AuthProvidersManageScope,
+  // Quota windows name the signed-in accounts; totals read like the Usage page's other data.
+  [WS_METHODS.serverGetOmpAccountUsage]: AuthProvidersManageScope,
+  [WS_METHODS.serverGetOmpStats]: AuthDiagnosticsReadScope,
+  [WS_METHODS.serverGetOmpSessionStats]: AuthDiagnosticsReadScope,
   [WS_METHODS.serverDiscoverSourceControl]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetTraceDiagnostics]: AuthDiagnosticsReadScope,
   [WS_METHODS.serverGetProcessDiagnostics]: AuthDiagnosticsReadScope,

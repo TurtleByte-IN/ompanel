@@ -26,6 +26,10 @@ import type {
   OmpAgentFileRef,
   OmpAgentFilesList,
   OmpAgentFilesOperationError,
+  OmpAccountUsage,
+  OmpSessionUsageList,
+  OmpStatsSummary,
+  OmpUsageOperationError,
   ThreadId,
 } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
@@ -102,6 +106,17 @@ export interface ProviderInstance {
   readonly ompSessions?: ProviderOmpSessionsController;
   /** Files in OMP's agent directory: the `WATCHDOG.yml` advisor roster and `agents/*.md`. */
   readonly ompAgentFiles?: ProviderOmpAgentFilesController;
+  /** The Usage page's OMP tab: account quotas, `omp stats` totals, running threads' stats. */
+  readonly ompUsage?: ProviderOmpUsageController;
+}
+
+export interface ProviderOmpUsageController {
+  /** `omp usage --json`. */
+  readonly account: Effect.Effect<OmpAccountUsage, OmpUsageOperationError>;
+  /** `omp stats --json`. */
+  readonly stats: Effect.Effect<OmpStatsSummary, OmpUsageOperationError>;
+  /** RPC `get_session_stats` of every running thread; one thread's failure is its own entry. */
+  readonly sessions: Effect.Effect<OmpSessionUsageList>;
 }
 
 /**

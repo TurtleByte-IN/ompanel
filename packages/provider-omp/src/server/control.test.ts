@@ -39,6 +39,42 @@ const LOGIN_PROVIDERS = [
   { id: "anthropic", name: "Anthropic", available: true, authenticated: true },
   { id: "openai-codex", name: "OpenAI Codex", available: true, authenticated: false },
 ];
+const statsTotals = (requests: number, cost: number) => ({
+  totalRequests: requests,
+  successfulRequests: requests - 1,
+  failedRequests: 1,
+  errorRate: 1 / requests,
+  totalInputTokens: 1_000 * requests,
+  totalOutputTokens: 100 * requests,
+  totalCacheReadTokens: 5_000 * requests,
+  totalCacheWriteTokens: 0,
+  cacheRate: 0.8,
+  cacheSavings: 0.5,
+  totalCost: cost,
+  unpricedRequests: 0,
+  totalPremiumRequests: 0,
+  avgDuration: 1_200,
+  avgTtft: 300,
+  avgTokensPerSecond: 80,
+  firstTimestamp: 1_789_000_000_000,
+  lastTimestamp: 1_790_000_000_000,
+});
+/** `omp stats --json` as the pinned omp prints it: `DashboardStats`, pretty-printed. */
+const STATS_JSON = JSON.stringify(
+  {
+    overall: statsTotals(12, 1.5),
+    byModel: [{ ...statsTotals(12, 1.5), model: "claude-sonnet-4-5", provider: "anthropic" }],
+    byFolder: [],
+    byAgentType: [],
+    timeSeries: [],
+    modelSeries: [],
+    modelPerformanceSeries: [],
+    costSeries: [],
+  },
+  null,
+  2,
+);
+
 const USAGE_JSON = JSON.stringify(
   {
     generatedAt: 1_790_000_000_000,
@@ -172,6 +208,7 @@ function fakeOmp(
   input: {
     readonly version?: Behaviour;
     readonly usage?: Behaviour;
+    readonly stats?: Behaviour;
     readonly rpc?: Behaviour;
     readonly config?: Behaviour;
     readonly skills?: Behaviour;
@@ -184,13 +221,15 @@ function fakeOmp(
     launches.push(command);
     const behaviour = command.args.includes("--version")
       ? (input.version ?? { stdout: "omp/18.12.6\n", exitCode: 0 })
-      : command.args.includes("usage")
-        ? (input.usage ?? { stdout: USAGE_JSON, exitCode: 0 })
-        : command.args.includes("config")
-          ? (input.config ?? { stdout: "{}\n", exitCode: 0 })
-          : command.args.includes("skill")
-            ? (input.skills ?? { stdout: SKILL_LIST_JSON, exitCode: 0 })
-            : (input.rpc ?? { rpc: answerLoginProviders });
+      : command.args.includes("stats")
+        ? (input.stats ?? { stdout: `${STATS_JSON}\n`, exitCode: 0 })
+        : command.args.includes("usage")
+          ? (input.usage ?? { stdout: USAGE_JSON, exitCode: 0 })
+          : command.args.includes("config")
+            ? (input.config ?? { stdout: "{}\n", exitCode: 0 })
+            : command.args.includes("skill")
+              ? (input.skills ?? { stdout: SKILL_LIST_JSON, exitCode: 0 })
+              : (input.rpc ?? { rpc: answerLoginProviders });
     // The real spawner stops the process group when this scope closes.
     return Effect.addFinalizer(() => Effect.sync(() => void stopped++)).pipe(
       Effect.as(handle(command, behaviour)),
@@ -323,6 +362,7 @@ describe("OmpControlService deadlines", () => {
   }> = [
     { budget: "version", behaviour: { version: "hang" }, run: (c) => c.version(TARGET) },
     { budget: "usage", behaviour: { usage: "hang" }, run: (c) => c.usage(TARGET) },
+    { budget: "stats", behaviour: { stats: "hang" }, run: (c) => c.stats(TARGET) },
     { budget: "ready", behaviour: { rpc: "hang" }, run: (c) => c.loginProviders(TARGET) },
     {
       budget: "login",
@@ -467,6 +507,48 @@ describe("OmpControlService cache", () => {
   );
 });
 
+describe("OmpControlService.stats", () => {
+  it.effect("reads `omp stats --json` for the profile and caches it", () =>
+    Effect.gen(function* () {
+      const omp = fakeOmp();
+      const stats = () => omp.launches.filter((launch) => launch.args.includes("stats"));
+      yield* withControl(omp, (control) =>
+        Effect.gen(function* () {
+          const report = yield* control.stats({ ...TARGET, profile: "work" });
+          assert.strictEqual(report.overall.totalRequests, 12);
+          assert.strictEqual(report.overall.totalCost, 1.5);
+          assert.strictEqual(report.byModel[0]?.model, "claude-sonnet-4-5");
+          yield* control.stats({ ...TARGET, profile: "work" });
+          assert.lengthOf(stats(), 1);
+          assert.deepStrictEqual(stats()[0]?.args, ["--profile", "work", "stats", "--json"]);
+        }),
+      );
+    }),
+  );
+
+  it.effect("reports a failing or unreadable stats run without its output, uncached", () =>
+    Effect.gen(function* () {
+      const failing = fakeOmp({ stats: { stdout: "", exitCode: 2 } });
+      yield* withControl(failing, (control) =>
+        Effect.gen(function* () {
+          const error = yield* control.stats(TARGET).pipe(Effect.flip);
+          assert.strictEqual(error.operation, "stats");
+          assert.strictEqual(error.reason, "exit");
+          assert.strictEqual(error.exitCode, 2);
+          yield* control.stats(TARGET).pipe(Effect.flip);
+          assert.lengthOf(failing.launches, 2);
+        }),
+      );
+      const garbled = fakeOmp({ stats: { stdout: "Dashboard secret-token\n", exitCode: 0 } });
+      const error = yield* withControl(garbled, (control) =>
+        control.stats(TARGET).pipe(Effect.flip),
+      );
+      assert.strictEqual(error.reason, "invalid");
+      assert.notInclude(error.message, "secret-token");
+    }),
+  );
+});
+
 describe("OmpControlService.login", () => {
   it.effect("forwards the URL and the pasted code, then drops the cache", () =>
     Effect.gen(function* () {
@@ -602,6 +684,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
     }> = [
       { budget: "version", run: (c, t) => c.version(t) },
       { budget: "usage", run: (c, t) => c.usage(t) },
+      { budget: "stats", run: (c, t) => c.stats(t) },
       { budget: "ready", run: (c, t) => c.loginProviders(t) },
       { budget: "login", run: (c, t) => c.login(t, "anthropic", () => Effect.succeed(undefined)) },
     ];

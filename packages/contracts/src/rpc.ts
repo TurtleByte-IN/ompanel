@@ -107,6 +107,13 @@ import {
   OmpAgentFilesOperationError,
   OmpAgentFileWriteInput,
 } from "./ompAgentFiles.ts";
+import {
+  OmpAccountUsage,
+  OmpSessionUsageList,
+  OmpStatsSummary,
+  OmpUsageInput,
+  OmpUsageOperationError,
+} from "./ompUsage.ts";
 import { ExternalLauncherError, LaunchEditorInput } from "./editor.ts";
 import {
   AuthAccessStreamError,
@@ -560,6 +567,9 @@ export const WS_METHODS = {
   serverReadOmpAgentFile: "server.readOmpAgentFile",
   serverWriteOmpAgentFile: "server.writeOmpAgentFile",
   serverDeleteOmpAgentFile: "server.deleteOmpAgentFile",
+  serverGetOmpAccountUsage: "server.getOmpAccountUsage",
+  serverGetOmpStats: "server.getOmpStats",
+  serverGetOmpSessionStats: "server.getOmpSessionStats",
   serverGetTraceDiagnostics: "server.getTraceDiagnostics",
   serverGetProcessDiagnostics: "server.getProcessDiagnostics",
   serverGetHostResources: "server.getHostResources",
@@ -1048,6 +1058,26 @@ const WsServerDeleteOmpAgentFileRpc = Rpc.make(WS_METHODS.serverDeleteOmpAgentFi
   payload: OmpAgentFileDeleteInput,
   success: OmpAgentFilesList,
   error: OmpAgentFilesRpcError,
+});
+
+const OmpUsageRpcError = Schema.Union([OmpUsageOperationError, EnvironmentAuthorizationError]);
+
+const WsServerGetOmpAccountUsageRpc = Rpc.make(WS_METHODS.serverGetOmpAccountUsage, {
+  payload: OmpUsageInput,
+  success: OmpAccountUsage,
+  error: OmpUsageRpcError,
+});
+
+const WsServerGetOmpStatsRpc = Rpc.make(WS_METHODS.serverGetOmpStats, {
+  payload: OmpUsageInput,
+  success: OmpStatsSummary,
+  error: OmpUsageRpcError,
+});
+
+const WsServerGetOmpSessionStatsRpc = Rpc.make(WS_METHODS.serverGetOmpSessionStats, {
+  payload: OmpUsageInput,
+  success: OmpSessionUsageList,
+  error: OmpUsageRpcError,
 });
 
 const WsServerGetTraceDiagnosticsRpc = Rpc.make(WS_METHODS.serverGetTraceDiagnostics, {
@@ -2179,6 +2209,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerReadOmpAgentFileRpc,
   WsServerWriteOmpAgentFileRpc,
   WsServerDeleteOmpAgentFileRpc,
+  WsServerGetOmpAccountUsageRpc,
+  WsServerGetOmpStatsRpc,
+  WsServerGetOmpSessionStatsRpc,
   WsServerGetTraceDiagnosticsRpc,
   WsServerGetProcessDiagnosticsRpc,
   WsServerGetHostResourcesRpc,
