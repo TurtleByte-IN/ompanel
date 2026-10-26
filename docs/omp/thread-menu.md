@@ -3,13 +3,13 @@
 An OMP thread's menu (the thread's title in the chat header, or right-click
 the thread in the sidebar) has an **OMP** section (PRD FR-21, §6 `/collab`):
 
-| Item              | What it does                                                                                     | Needs                          |
-| ----------------- | ------------------------------------------------------------------------------------------------ | ------------------------------ |
-| Export HTML       | Downloads the thread's OMP session as one self-contained page, `omp-session-<file id>.html`.     | Read access                    |
-| Share as gist…    | After you confirm, uploads the session, encrypted, to a secret GitHub gist with your `gh` login. | Operate access, `gh` signed in |
-| Share live…       | Opens a collab room on the running session and shows its links and a QR code.                    | Operate access, OMP 1.7.0 RPC  |
-| Stop sharing live | Ends the thread's room; guests are told goodbye.                                                 | Operate access                 |
-| Branch tree       | Shows every branch of the session, with the path the thread continues from highlighted.          | Read access, a running session |
+| Item                          | What it does                                                                                     | Needs                          |
+| ----------------------------- | ------------------------------------------------------------------------------------------------ | ------------------------------ |
+| Export HTML                   | Downloads the thread's OMP session as one self-contained page, `omp-session-<file id>.html`.     | Read access                    |
+| Share as gist…                | After you confirm, uploads the session, encrypted, to a secret GitHub gist with your `gh` login. | Operate access, `gh` signed in |
+| Share live (outside pairing)… | Opens a collab room on the running session and shows its links and a QR code.                    | Operate access, OMP 1.7.0 RPC  |
+| Stop sharing live             | Ends the thread's room; guests are told goodbye.                                                 | Operate access                 |
+| Branch tree                   | Shows every branch of the session, with the path the thread continues from highlighted.          | Read access, a running session |
 
 The section appears only on threads that run on an OMP instance. Read-only
 connections keep Export HTML and Branch tree; the sharing items are disabled.
@@ -69,6 +69,11 @@ Checked against the pinned omp, with `gh` absent and a repo setting present
 The upload runs once per click: the dialog asks first, and a second click while
 it runs joins the first.
 
+A `/share` typed in the composer would run OMP's own share command in the
+thread's session, which uploads to `share.serverUrl` without this dialog, the
+`gh` check or the blocked-host overlay. The adapter refuses it before it
+reaches OMP and points to this menu item (`server/toolGuards.ts`).
+
 ## Share live
 
 Share live is OMP's `/collab` for a thread running in Ompanel. It needs the RPC
@@ -90,7 +95,10 @@ link with its QR code and the `omp join` link, and lists who joined.
 
 **The links bypass T3 pairing.** Anyone holding one reaches the session through
 OMP's collab relay (`collab.relayUrl` in OMP's settings), outside T3's pairing,
-scopes and approvals. The dialog says this every time it opens.
+scopes and approvals. The menu item says so (`Share live (outside pairing)…`)
+and the dialog says it every time it opens. Share live exists only in the web
+and desktop thread menu; the mobile app has no Share live entry, and OMP's own
+`/collab` command is TUI-only, so a composer prompt cannot open a room.
 
 The links are capabilities, so Ompanel never records them. They travel from
 OMP's response to the dialog only:

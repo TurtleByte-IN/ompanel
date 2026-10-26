@@ -101,6 +101,18 @@ describe("OMP command mapping", () => {
     assert.deepStrictEqual(commands, [{ name: "goal", description: "Goal" }]);
   });
 
+  it("drops /computer and /share, which the adapter refuses as prompts", () => {
+    const commands = ompSlashCommands([
+      { name: "computer", source: "builtin", description: "Toggle computer use" },
+      { name: "share", source: "builtin", description: "Share session" },
+      { name: "fresh", source: "builtin", description: "Start a fresh session" },
+    ]);
+    assert.deepStrictEqual(
+      commands.map((command) => command.name),
+      ["fresh", "goal"],
+    );
+  });
+
   it("maps skills to composer skills; hidden ones are user-only", () => {
     assert.deepStrictEqual(ompSkills(skillList("/repo")), [
       {

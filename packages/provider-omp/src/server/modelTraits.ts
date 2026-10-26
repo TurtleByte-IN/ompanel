@@ -145,7 +145,7 @@ export function ompBooleanTraitDescriptors(
     {
       id: OMP_TRAIT_IDS.computer,
       label: "Computer Use",
-      description: "The host-desktop eval prelude",
+      description: "The host-desktop eval prelude; applies only in Full access",
       type: "boolean",
     },
     ...(ompVibeModeAvailable(contractVersion)

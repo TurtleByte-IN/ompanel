@@ -56,6 +56,12 @@ const PROVIDER_FAILURE_REASONS: Record<ProviderAdapterFailureReason, string> = {
   previous_turn_active: "the previous turn is still running",
   attachment_unreadable: "an attachment could not be read",
   permission_mode_refused: "the provider refused the thread's permission mode",
+  computer_command_refused:
+    "computer use is switched on with the Computer Use trait in Full access, not with /computer",
+  share_command_refused:
+    "/share would upload the session outside Ompanel's Share as gist checks; use the thread's OMP menu",
+  tool_guard_unapplied:
+    "browser and computer use could not be switched off for the thread's permission mode",
 };
 
 /**

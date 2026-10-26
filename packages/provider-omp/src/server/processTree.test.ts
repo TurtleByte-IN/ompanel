@@ -26,7 +26,9 @@ describe("Windows job-object launcher", () => {
         command: "C:\\Ompanel\\omp.exe",
         args: ["--mode", "rpc-ui", "--cwd", "C:\\work tree"],
       });
-      assert.strictEqual(command.command, "powershell.exe");
+      // By absolute path: a bare name would resolve in the thread's repository first.
+      assert.match(command.command, /\\System32\\WindowsPowerShell\\v1\.0\\powershell\.exe$/);
+      assert.notStrictEqual(command.command, "powershell.exe");
       assert.deepStrictEqual(command.args.slice(-6), [
         launcherPath,
         "C:\\Ompanel\\omp.exe",

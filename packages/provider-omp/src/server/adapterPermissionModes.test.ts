@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -10,6 +11,7 @@ import {
   RunAttemptId,
   RunId,
   ThreadId,
+  type ModelSelection,
   type OrchestrationV2AppThread,
   type RuntimeMode,
 } from "@t3tools/contracts";
@@ -57,6 +59,13 @@ const policy = (runtimeMode: RuntimeMode) =>
     cwd: null,
   });
 
+/** OMP default, with the Computer Use trait when `computer` is set. */
+const selection = (computer: boolean | undefined): ModelSelection => ({
+  instanceId: INSTANCE_ID,
+  model: "default",
+  ...(computer === undefined ? {} : { options: [{ id: "computer", value: computer }] }),
+});
+
 /**
  * Opens a thread on the fake in `launchMode`; `turn` runs one prompt turn in a given mode.
  * `options.state` outlives the thread's scope, for checking what happened after it closed.
@@ -67,6 +76,8 @@ const openThread = Effect.fnUntraced(function* (
   options: {
     readonly state?: FakeOmpState;
     readonly prompt?: ReadonlyArray<FakeOmpStep>;
+    /** The Computer Use trait the thread opens with. */
+    readonly computer?: boolean;
   } = {},
 ) {
   const state = options.state ?? (yield* makeFakeOmpState);
@@ -96,7 +107,7 @@ const openThread = Effect.fnUntraced(function* (
   const session = yield* adapter.openSession({
     threadId: THREAD_ID,
     providerSessionId: ProviderSessionId.make("session-modes"),
-    modelSelection: { instanceId: INSTANCE_ID, model: "default" },
+    modelSelection: selection(options.computer),
     runtimePolicy: policy(launchMode),
   });
   let terminals = 0;
@@ -116,8 +127,15 @@ const openThread = Effect.fnUntraced(function* (
   const now = yield* DateTime.now;
   let ordinal = 0;
 
-  /** Starts a turn in `runtimeMode` and, once OMP accepted it, waits for its terminal unless told not to. */
-  const turn = (runtimeMode: RuntimeMode, awaitTerminal = true) =>
+  /**
+   * Starts a turn in `runtimeMode` and, once OMP accepted it, waits for its terminal unless told
+   * not to. `input` sets the message text and the Computer Use trait.
+   */
+  const turn = (
+    runtimeMode: RuntimeMode,
+    awaitTerminal = true,
+    input: { readonly text?: string; readonly computer?: boolean } = {},
+  ) =>
     Effect.gen(function* () {
       ordinal += 1;
       const appThread: OrchestrationV2AppThread = {
@@ -155,19 +173,29 @@ const openThread = Effect.fnUntraced(function* (
         providerThread,
         message: {
           messageId: `message:modes:${ordinal}` as never,
-          text: `Turn ${ordinal}`,
+          text: input.text ?? `Turn ${ordinal}`,
           attachments: [],
           createdBy: "user",
           creationSource: "web",
         },
-        modelSelection: { instanceId: INSTANCE_ID, model: "default" },
+        modelSelection: selection(input.computer),
         runtimePolicy: policy(runtimeMode),
       });
       if (awaitTerminal) assert.isTrue(yield* waitUntil(() => terminals > settledBefore));
     });
 
   const sent = (type: string) => state.commands().filter((command) => command["type"] === type);
-  return { state, session, turn, sent };
+  const argv = state.argv().argv;
+  const overlayPath = argv[argv.indexOf("--config") + 1]!;
+  /** The thread's overlay document, without Ompanel's comment header. */
+  const overlay = () =>
+    JSON.parse(
+      NodeFS.readFileSync(overlayPath, "utf8")
+        .split("\n")
+        .filter((line) => !line.startsWith("#"))
+        .join("\n") || "{}",
+    ) as Record<string, unknown>;
+  return { state, session, turn, sent, overlay, overlayPath };
 });
 
 describe("OMP permission mapping", () => {
@@ -287,6 +315,107 @@ posixOnly("OmpAdapter permission modes", () => {
       }).pipe(Effect.scoped);
       assert.notInclude(state.events(), "command:abort");
       assert.include(state.events(), "stdin-end");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+});
+
+/** The cause of a turn the adapter refused before its prompt. */
+const refusal = (error: { readonly _tag: string; readonly cause?: unknown }) => {
+  assert.strictEqual(error._tag, "ProviderAdapterTurnStartError");
+  const cause = error.cause;
+  assert.isTrue(Schema.is(ProviderAdapter.ProviderAdapterProtocolError)(cause));
+  return cause as ProviderAdapter.ProviderAdapterProtocolError;
+};
+
+posixOnly("OmpAdapter browser and computer-use guard", () => {
+  it.live("pins both preludes off in the overlay before a restricted thread starts", () =>
+    Effect.gen(function* () {
+      for (const mode of ["approval-required", "auto-accept-edits", "auto"] as const) {
+        yield* Effect.gen(function* () {
+          // The trait asks for computer use; outside Full access it does not apply.
+          const { overlay, turn, sent } = yield* openThread(mode, [], { computer: true });
+          assert.deepStrictEqual(overlay()["browser"], { enabled: false }, mode);
+          assert.deepStrictEqual(overlay()["computer"], { enabled: false }, mode);
+          yield* turn(mode, true, { computer: true });
+          assert.deepStrictEqual(overlay()["browser"], { enabled: false }, mode);
+          assert.deepStrictEqual(overlay()["computer"], { enabled: false }, mode);
+          assert.lengthOf(sent("prompt"), 1);
+        }).pipe(Effect.scoped);
+      }
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("switches both off when a live thread leaves Full access", () =>
+    Effect.gen(function* () {
+      const { overlay, turn, sent } = yield* openThread(
+        "full-access",
+        [{ respond: { mode: "always-ask" } }],
+        { computer: true },
+      );
+      // Full access: the trait applies and the browser follows OMP's own config.
+      assert.deepStrictEqual(overlay()["computer"], { enabled: true });
+      assert.notProperty(overlay(), "browser");
+
+      yield* turn("approval-required", true, { computer: true });
+      assert.deepStrictEqual(overlay()["browser"], { enabled: false });
+      assert.deepStrictEqual(overlay()["computer"], { enabled: false });
+      assert.lengthOf(sent("prompt"), 1);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("hands both back to the trait and OMP's config when a thread enters Full access", () =>
+    Effect.gen(function* () {
+      const { overlay, turn } = yield* openThread(
+        "approval-required",
+        [{ respond: { mode: "yolo" } }],
+        { computer: true },
+      );
+      assert.deepStrictEqual(overlay()["computer"], { enabled: false });
+      yield* turn("full-access", true, { computer: true });
+      assert.deepStrictEqual(overlay()["computer"], { enabled: true });
+      assert.notProperty(overlay(), "browser");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("refuses /computer on|off and /share in every mode; /computer status goes through", () =>
+    Effect.gen(function* () {
+      const { turn, sent } = yield* openThread("approval-required", [
+        { respond: { mode: "yolo" } },
+      ]);
+      for (const text of ["/computer on", "/computer", " /computer:on", "/computer off"]) {
+        const cause = refusal(yield* turn("approval-required", false, { text }).pipe(Effect.flip));
+        assert.strictEqual(cause.reason, "computer_command_refused");
+      }
+      for (const [text, reason] of [
+        ["/computer toggle", "computer_command_refused"],
+        ["/share", "share_command_refused"],
+      ] as const) {
+        const cause = refusal(yield* turn("full-access", false, { text }).pipe(Effect.flip));
+        assert.strictEqual(cause.reason, reason);
+      }
+      assert.lengthOf(sent("prompt"), 0);
+      yield* turn("full-access", true, { text: "/computer status" });
+      assert.deepStrictEqual(
+        sent("prompt").map((command) => command["message"]),
+        ["/computer status"],
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("fails a Supervised turn closed when the overlay cannot pin the preludes off", () =>
+    Effect.gen(function* () {
+      const { turn, sent, overlayPath } = yield* openThread("full-access", [
+        { respond: { mode: "always-ask" } },
+      ]);
+      // An overlay Ompanel did not write is never rewritten.
+      NodeFS.writeFileSync(overlayPath, "browser:\n  enabled: true\n");
+      const error = yield* turn("approval-required", false).pipe(Effect.flip);
+      assert.strictEqual(refusal(error).reason, "tool_guard_unapplied");
+      assert.include(
+        makeProviderFailure({ cause: error }).message,
+        "browser and computer use could not be switched off",
+      );
+      assert.lengthOf(sent("prompt"), 0);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

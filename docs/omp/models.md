@@ -54,6 +54,9 @@ model supports.
 `/computer` toggles an eval prelude, not a tool, so `set_tool_enabled` refuses it, and
 RPC has no command for it. Its setting (`computer.enabled`) is read live, so the
 adapter writes it to the thread's `--config` overlay, which OMP reloads in place.
+The trait applies only in Full access; in Supervised and Auto-accept edits the
+overlay pins computer use and the browser off, and a prompt `/computer on|off` is
+refused (see [security.md](security.md)).
 
 ## Role chip
 

@@ -50,7 +50,16 @@ const GOAL_COMMAND: ServerProviderSlashCommand = {
   input: { hint: "[objective | show | pause | resume | drop]" },
 };
 
-/** OMP's command list as menu entries: skill commands dropped, first of each name kept, `/goal` added. */
+/**
+ * Builtins the adapter refuses as prompts (`ompRefusedSlashCommand`, toolGuards.ts): Ompanel's
+ * Computer Use trait and Share as gist replace them, so the menu does not offer them.
+ */
+const REFUSED_COMMANDS: Readonly<Record<string, true>> = { computer: true, share: true };
+
+/**
+ * OMP's command list as menu entries: skill commands and refused builtins dropped, first of each
+ * name kept, `/goal` added.
+ */
 export const ompSlashCommands = (
   commands: ReadonlyArray<AvailableCommand>,
 ): ReadonlyArray<ServerProviderSlashCommand> => {
@@ -60,6 +69,7 @@ export const ompSlashCommands = (
     const name = nonEmpty(command.name);
     if (name === undefined || command.source === "skill" || seen.has(name)) continue;
     seen.add(name);
+    if (Object.hasOwn(REFUSED_COMMANDS, name)) continue;
     const description = nonEmpty(command.description);
     const hint = nonEmpty(command.input?.hint);
     result.push({

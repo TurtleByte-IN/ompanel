@@ -362,6 +362,9 @@ const ProviderAdapterFailureReason = Schema.Literals([
   "previous_turn_active",
   "attachment_unreadable",
   "permission_mode_refused",
+  "computer_command_refused",
+  "share_command_refused",
+  "tool_guard_unapplied",
 ]);
 export type ProviderAdapterFailureReason = typeof ProviderAdapterFailureReason.Type;
 

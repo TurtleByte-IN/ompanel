@@ -49,7 +49,7 @@ export class OmpSettingsError extends Schema.TaggedError<OmpSettingsError>()("Om
       case "no_value":
         return `${this.key} has no configured value to restore.`;
       case "not_thread_overridable":
-        return `${this.key} follows the thread's launch flags and cannot be overridden per thread.`;
+        return `${this.key} follows the thread's permission mode and cannot be overridden per thread.`;
       case "credential":
         return `${this.key} is a stored credential; change it with OMP sign-in or an environment variable, or reset it.`;
       case "invalid_overlay":

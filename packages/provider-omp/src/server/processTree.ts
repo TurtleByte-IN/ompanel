@@ -124,6 +124,14 @@ const OMP_JOB_LAUNCHER_SCRIPT = [
 
 const OMP_JOB_LAUNCHER_FILE = "omp-job-launcher.ps1";
 
+/**
+ * A Windows system binary by absolute path. Windows resolves a bare name in the child's working
+ * directory before `PATH`, and a session's working directory is the thread's repository, so a
+ * `powershell.exe` committed there would run instead (PRD §9).
+ */
+const windowsSystemBinary = (relativePath: string): string =>
+  `${process.env["SystemRoot"] || process.env["windir"] || "C:\\Windows"}\\System32\\${relativePath}`;
+
 export interface OmpLaunchCommand {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
@@ -134,7 +142,7 @@ export const ompJobLauncherCommand = (
   launcherPath: string,
   launch: OmpLaunchCommand,
 ): OmpLaunchCommand => ({
-  command: "powershell.exe",
+  command: windowsSystemBinary("WindowsPowerShell\\v1.0\\powershell.exe"),
   args: [
     "-NoLogo",
     "-NoProfile",
@@ -235,13 +243,16 @@ export const readProcessStartTime = Effect.fn("readProcessStartTime")(function* 
     return startTime !== undefined && /^\d+$/.test(startTime) ? `linux:${startTime}` : null;
   }
   if (platform === "win32") {
-    const output = yield* runForText("powershell.exe", [
-      "-NoLogo",
-      "-NoProfile",
-      "-NonInteractive",
-      "-Command",
-      `(Get-Process -Id ${pid}).StartTime.ToFileTimeUtc()`,
-    ]);
+    const output = yield* runForText(
+      windowsSystemBinary("WindowsPowerShell\\v1.0\\powershell.exe"),
+      [
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        `(Get-Process -Id ${pid}).StartTime.ToFileTimeUtc()`,
+      ],
+    );
     return Option.isSome(output) && /^\d+$/.test(output.value) ? `win32:${output.value}` : null;
   }
   const output = yield* runForText("ps", ["-o", "lstart=", "-p", String(pid)], { LC_ALL: "C" });
@@ -270,7 +281,7 @@ export const killOmpProcessTree = Effect.fn("killOmpProcessTree")(function* (
   platform: NodeJS.Platform,
 ) {
   if (platform === "win32") {
-    yield* runForText("taskkill", ["/PID", String(pid), "/T", "/F"]);
+    yield* runForText(windowsSystemBinary("taskkill.exe"), ["/PID", String(pid), "/T", "/F"]);
     return yield* waitUntilGone(pid, platform, OMP_TREE_KILL_GRACE);
   }
   try {

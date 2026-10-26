@@ -41,6 +41,7 @@ import type {
   SessionState,
 } from "../../contract/src/wire.generated.ts";
 import { type OmpGoalCommand, parseOmpGoalCommand } from "../composer.ts";
+import { OMP_GUARDED_TOOL_KEYS } from "../configForm.ts";
 import type { OmpCommandHooks } from "./commands.ts";
 import { OMP_GOAL_BUDGET_REPLY, ompGoalReply } from "./goal.ts";
 import { makeOmpHostBridge } from "./hostTools.ts";
@@ -111,6 +112,7 @@ import {
   ompTurnsTotal,
   recordOmpMetric,
 } from "./telemetry.ts";
+import { ompGuardedToolOverlay, ompRefusedSlashCommand } from "./toolGuards.ts";
 import { type OmpSetVibeModeResult, ompVibeModeAvailable } from "./vibe.ts";
 
 /** Streamed text is held this long so a burst of deltas becomes one update. */
@@ -344,6 +346,29 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
     yield* setOverlayKey(threadId, ROLE_OVERLAY_KEY, wanted);
   });
 
+  /**
+   * Pins the browser and computer-use preludes to the thread's permission mode in its overlay
+   * (toolGuards.ts): off outside Full access. Returns the values written.
+   */
+  const syncToolGuard = Effect.fnUntraced(function* (
+    threadId: string,
+    runtimeMode: ProviderAdapter.ProviderAdapterV2RuntimePolicy["runtimeMode"],
+    computer: boolean | undefined,
+  ) {
+    const wanted = ompGuardedToolOverlay(runtimeMode, computer);
+    const current = yield* withAdapterFiles(readOmpThreadOverlay(options.dirs.threads, threadId));
+    let next = current;
+    for (const key of OMP_GUARDED_TOOL_KEYS) {
+      if (ompOverlayValue(next, key) !== wanted[key]) {
+        next = yield* ompOverlayWith(next, key, wanted[key]);
+      }
+    }
+    if (next !== current) {
+      yield* withAdapterFiles(writeOmpThreadOverlay(options.dirs.threads, threadId, next));
+    }
+    return wanted;
+  });
+
   const openSession = Effect.fn("OmpAdapter.openSession")(function* (
     input: ProviderAdapter.ProviderAdapterV2OpenSessionInput,
   ) {
@@ -370,6 +395,12 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
     yield* syncRoleOverlay(input.threadId, readOmpTraitSelection(input.modelSelection).role).pipe(
       Effect.mapError(openError),
     );
+    // The preludes are advertised from the first system prompt, so the guard holds before start.
+    yield* syncToolGuard(
+      input.threadId,
+      input.runtimePolicy.runtimeMode,
+      readOmpTraitSelection(input.modelSelection).computer,
+    ).pipe(Effect.mapError(openError));
     const process = yield* startOmpSessionProcess({
       binaryPath,
       profile: options.profile,
@@ -993,12 +1024,49 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       appliedApprovalMode = wanted;
     });
 
+    /** The guarded overlay values (toolGuards.ts) this session last wrote, as JSON. */
+    let appliedToolGuard = JSON.stringify(
+      ompGuardedToolOverlay(
+        input.runtimePolicy.runtimeMode,
+        readOmpTraitSelection(input.modelSelection).computer,
+      ),
+    );
+    /**
+     * Holds the browser and computer-use preludes to the turn's permission mode and Computer Use
+     * trait before anything runs. Switching them off fails closed: a turn outside Full access
+     * never starts while the overlay may still enable them. OMP's overlay watcher applies the
+     * change within its debounce; until then both preludes run only through `eval`, which the
+     * approval mode applied just before already asks for.
+     */
+    const applyToolGuard = Effect.fnUntraced(function* (
+      threadId: string,
+      runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+      modelSelection: ProviderAdapter.ProviderAdapterV2TurnInput["modelSelection"],
+    ) {
+      const computer = readOmpTraitSelection(modelSelection).computer;
+      const wanted = JSON.stringify(ompGuardedToolOverlay(runtimePolicy.runtimeMode, computer));
+      if (wanted === appliedToolGuard) return;
+      const restricted = runtimePolicy.runtimeMode !== "full-access";
+      yield* syncToolGuard(threadId, runtimePolicy.runtimeMode, computer).pipe(
+        Effect.tap(() => Effect.sync(() => (appliedToolGuard = wanted))),
+        Effect.catch((error) =>
+          restricted
+            ? Effect.fail(
+                protocolError(
+                  `OMP browser and computer use could not be switched off for this permission mode: ${error.message}`,
+                  "tool_guard_unapplied",
+                ),
+              )
+            : traitRefused("computer")(error),
+        ),
+      );
+    });
+
     const applied: {
       thinking?: string;
       fastMode?: boolean;
       advisor?: boolean;
       prewalk?: boolean;
-      computer?: boolean;
       vibe?: boolean;
     } = {};
     const selectionError = (command: string) => (error: OmpRpcRequestError) =>
@@ -1017,7 +1085,6 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
      * is re-applied by value, never by OMP's `cycle_*` commands (docs/omp/models.md).
      */
     const applySelection = Effect.fnUntraced(function* (
-      threadId: string,
       modelSelection: ProviderAdapter.ProviderAdapterV2TurnInput["modelSelection"],
     ) {
       const traits = readOmpTraitSelection(modelSelection);
@@ -1081,15 +1148,6 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
             ),
             Effect.catch(traitRefused("prewalk")),
           );
-      }
-      // `/computer` is an eval prelude, not a tool (`set_tool_enabled` refuses it), and RPC has
-      // no command for it; its setting is read live, so the overlay toggles it in place.
-      if (traits.computer !== undefined && traits.computer !== applied.computer) {
-        const enabled = traits.computer;
-        yield* setOverlayKey(threadId, "computer.enabled", enabled).pipe(
-          Effect.tap(() => Effect.sync(() => (applied.computer = enabled))),
-          Effect.catch(traitRefused("computer")),
-        );
       }
       // `set_vibe_mode` is newer than the vendored contract (OMP_VIBE_CONTRACT); older sidecars
       // run vibe mode only in their TUI, and the composer does not offer the trait for them.
@@ -1276,10 +1334,12 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
         isContinuation || turnInput.message.attachments.length > 0
           ? null
           : parseOmpGoalCommand(turnInput.message.text);
+      // A goal command can resume a run, so the permission mode and its tool guard come first.
+      yield* applyApprovalMode(turnInput.runtimePolicy);
+      yield* applyToolGuard(turnInput.threadId, turnInput.runtimePolicy, turnInput.modelSelection);
       if (goalCommand !== null && goalCommand.op !== "create") {
         return yield* runGoalCommand(turnInput, goalCommand);
       }
-      yield* applyApprovalMode(turnInput.runtimePolicy);
       // A new goal's objective is its first prompt, as OMP's own `/goal <objective>` sends it.
       const messageText = goalCommand === null ? turnInput.message.text : goalCommand.objective;
       // OMP expands a skill only as `/skill:<name>`; the composer writes `$<name>`.
@@ -1287,7 +1347,9 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
         options.commands === undefined
           ? messageText
           : yield* options.commands.resolvePrompt(cwd, messageText);
-      yield* applySelection(turnInput.threadId, turnInput.modelSelection);
+      const refused = isContinuation ? undefined : ompRefusedSlashCommand(promptText);
+      if (refused !== undefined) return yield* protocolError(refused.detail, refused.reason);
+      yield* applySelection(turnInput.modelSelection);
       // T3 names the thread; OMP keeps it as a user-set title, which its own titling respects.
       const title = turnInput.appThread.title;
       if (title !== appliedSessionName) {
