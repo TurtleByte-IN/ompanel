@@ -13,7 +13,7 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import * as Redacted from "effect/Redacted";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import { useEnvironmentScope } from "~/state/session";
 import { ensureLocalApi } from "../../localApi";
@@ -49,6 +49,8 @@ export interface OmpAccountsPanelProps {
   readonly onOpenUrl: (url: string) => void;
   readonly onListSignOut: (providerId: string) => void;
   readonly onSignOut: (providerId: string, credentialId: number) => void;
+  /** Reloads the provider list (auth state lives in OMP's store, so it is read on demand). */
+  readonly onRefresh: () => void;
 }
 
 function sourceText(provider: OmpAccountProvider) {
@@ -149,9 +151,17 @@ export function OmpAccountsPanel(props: OmpAccountsPanelProps) {
         </p>
       ) : null}
 
-      {list === null ? (
-        <p className="text-xs text-muted-foreground">Loading OMP providers…</p>
-      ) : (
+      <div className="flex items-center gap-2">
+        {signIn?.phase === "succeeded" ? (
+          <span role="status" className="text-xs">
+            Signed in to {signIn.providerId}.
+          </span>
+        ) : null}
+        <Button size="xs" variant="outline" className="ms-auto" onClick={props.onRefresh}>
+          {list === null ? "Show providers" : "Refresh"}
+        </Button>
+      </div>
+      {list === null ? null : (
         <ul className="flex flex-col divide-y" aria-label="OMP providers">
           {list.providers.map((provider) => {
             const source = sourceText(provider);
@@ -292,7 +302,6 @@ export function OmpAccountsSection(props: {
   const [signOut, setSignOut] = useState<OmpAccountsPanelProps["signOut"]>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
-  const phase = signInQuery.data?.phase;
 
   async function run<A>(command: () => Promise<AtomCommandResult<A, unknown>>) {
     setPending(true);
@@ -315,15 +324,10 @@ export function OmpAccountsSection(props: {
       if (next !== undefined) setList(next);
     });
 
-  // Reload auth state on mount and whenever a sign-in settles.
-  useEffect(() => {
-    if (phase !== "running") void refresh();
-    // oxlint-disable-next-line react-hooks/exhaustive-deps -- refresh closes over stable ids
-  }, [phase, environmentId, instanceId]);
-
   return (
     <SettingsSection title="Accounts">
       <OmpAccountsPanel
+        onRefresh={() => void refresh()}
         list={list}
         signIn={signInQuery.data ?? null}
         signOut={signOut}

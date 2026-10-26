@@ -1,11 +1,7 @@
 /**
- * OMP provider accounts for the server (PRD §7 Auth, FR-13): the login providers with their auth
- * state, one RPC `login` at a time per instance with its `open_url`, `notify` and `input` requests
- * relayed to the client, and sign-out through `get_logout_accounts`/`logout`.
- *
- * Secrets rule: an API key or a secret answer arrives `Redacted` and is unwrapped only where it is
- * written into the login process's stdin (`control.login`). Nothing here stores, logs or traces it,
- * and no omp is ever started with it in argv.
+ * OMP provider accounts (PRD §7 Auth, FR-13): auth state, one RPC `login` per instance with its UI
+ * requests relayed to the client, and sign-out. Keys stay `Redacted` until `control.login` writes
+ * them to the login process's stdin; they are never stored, logged, traced or put in argv.
  */
 import {
   OmpAccountsOperationError,
@@ -32,7 +28,7 @@ import {
 } from "./control.ts";
 import type { OmpSidecarError } from "./sidecar.ts";
 
-export const IDLE_SIGN_IN: OmpSignInState = {
+const IDLE_SIGN_IN: OmpSignInState = {
   phase: "idle",
   flowId: null,
   providerId: null,
@@ -147,80 +143,80 @@ export const makeOmpAccountsController = Effect.fn("makeOmpAccountsController")(
       }
     };
 
-  const list: ProviderOmpAccountsController["list"] = ({ cwd }) =>
-    Effect.gen(function* () {
-      const listed = yield* globalTarget.pipe(Effect.flatMap(control.loginProviders));
-      const projectSecrets =
-        cwd === undefined
-          ? []
-          : ompProjectSecrets(
-              yield* input.target(cwd).pipe(Effect.flatMap(input.readSettings)),
-              cwd,
-            );
-      return {
-        providers: listed.providers.map((provider) => ({
-          id: provider.id,
-          name: provider.name,
-          available: provider.available,
-          authenticated: provider.authenticated,
-          apiKey: provider.apiKey === true,
-          ...(provider.source === undefined ? {} : { source: provider.source }),
-          ...(provider.envVar === undefined ? {} : { envVar: provider.envVar }),
-        })),
-        apiKeySignIn: ompContractAtLeast(listed.contractVersion, OMP_LOGIN_INPUT_CONTRACT),
-        projectSecrets,
-      } satisfies OmpAccountsList;
-    }).pipe(Effect.mapError(ompFailed));
+  const list: ProviderOmpAccountsController["list"] = Effect.fn("OmpAccounts.list")(function* ({
+    cwd,
+  }) {
+    const listed = yield* globalTarget.pipe(Effect.flatMap(control.loginProviders));
+    const projectSecrets =
+      cwd === undefined
+        ? []
+        : ompProjectSecrets(yield* input.target(cwd).pipe(Effect.flatMap(input.readSettings)), cwd);
+    return {
+      providers: listed.providers.map((provider) => ({
+        id: provider.id,
+        name: provider.name,
+        available: provider.available,
+        authenticated: provider.authenticated,
+        apiKey: provider.apiKey === true,
+        ...(provider.source === undefined ? {} : { source: provider.source }),
+        ...(provider.envVar === undefined ? {} : { envVar: provider.envVar }),
+      })),
+      apiKeySignIn: ompContractAtLeast(listed.contractVersion, OMP_LOGIN_INPUT_CONTRACT),
+      projectSecrets,
+    } satisfies OmpAccountsList;
+  }, Effect.mapError(ompFailed));
 
-  const start: ProviderOmpAccountsController["start"] = ({ providerId, apiKey }) =>
-    Effect.gen(function* () {
-      const current = yield* SubscriptionRef.get(state);
-      if (current.phase === "running") {
-        return yield* new OmpAccountsOperationError({
-          reason: "busy",
-          message: `Signing in to ${current.providerId ?? "a provider"} is still running.`,
-        });
-      }
-      const flowId = `omp-sign-in-${++nextFlow}`;
-      const started: OmpSignInState = {
-        phase: "running",
-        flowId,
-        providerId,
-        openUrl: null,
-        prompt: null,
-        message: null,
-      };
-      yield* SubscriptionRef.set(state, started);
-      const login = globalTarget.pipe(
-        Effect.flatMap((target) =>
-          control.login(target, providerId, answerRequest(flowId), {
-            ...(apiKey === undefined ? {} : { input: apiKey }),
-            secretInput: true,
-          }),
-        ),
-        Effect.matchEffect({
-          onSuccess: () =>
-            updateFlow(flowId, (latest) => ({
-              ...latest,
-              phase: "succeeded",
-              prompt: null,
-              message: null,
-            })),
-          onFailure: (error) =>
-            updateFlow(flowId, (latest) => ({
-              ...latest,
-              phase: "failed",
-              prompt: null,
-              message: error.message,
-            })),
+  const start: ProviderOmpAccountsController["start"] = Effect.fn("OmpAccounts.start")(function* ({
+    providerId,
+    apiKey,
+  }) {
+    const current = yield* SubscriptionRef.get(state);
+    if (current.phase === "running") {
+      return yield* new OmpAccountsOperationError({
+        reason: "busy",
+        message: `Signing in to ${current.providerId ?? "a provider"} is still running.`,
+      });
+    }
+    const flowId = `omp-sign-in-${++nextFlow}`;
+    const started: OmpSignInState = {
+      phase: "running",
+      flowId,
+      providerId,
+      openUrl: null,
+      prompt: null,
+      message: null,
+    };
+    yield* SubscriptionRef.set(state, started);
+    const login = globalTarget.pipe(
+      Effect.flatMap((target) =>
+        control.login(target, providerId, answerRequest(flowId), {
+          ...(apiKey === undefined ? {} : { input: apiKey }),
+          secretInput: true,
         }),
-      );
-      running = yield* Effect.forkIn(login, scope);
-      return started;
-    });
+      ),
+      Effect.matchEffect({
+        onSuccess: () =>
+          updateFlow(flowId, (latest) => ({
+            ...latest,
+            phase: "succeeded",
+            prompt: null,
+            message: null,
+          })),
+        onFailure: (error) =>
+          updateFlow(flowId, (latest) => ({
+            ...latest,
+            phase: "failed",
+            prompt: null,
+            message: error.message,
+          })),
+      }),
+    );
+    running = yield* Effect.forkIn(login, scope);
+    return started;
+  });
 
-  const answer: ProviderOmpAccountsController["answer"] = ({ flowId, promptId, value }) =>
-    Effect.gen(function* () {
+  const answer: ProviderOmpAccountsController["answer"] = Effect.fn("OmpAccounts.answer")(
+    function* ({ flowId, promptId, value }) {
       const current = yield* SubscriptionRef.get(state);
       const pending = prompts.get(promptId);
       if (current.flowId !== flowId || current.phase !== "running" || pending === undefined) {
@@ -231,7 +227,8 @@ export const makeOmpAccountsController = Effect.fn("makeOmpAccountsController")(
       }
       yield* Deferred.succeed(pending, value);
       return yield* SubscriptionRef.get(state);
-    });
+    },
+  );
 
   const cancel: ProviderOmpAccountsController["cancel"] = Effect.gen(function* () {
     const current = yield* SubscriptionRef.get(state);

@@ -53,6 +53,7 @@ const props = (overrides: Partial<OmpAccountsPanelProps> = {}): OmpAccountsPanel
   onOpenUrl: vi.fn(),
   onListSignOut: vi.fn(),
   onSignOut: vi.fn(),
+  onRefresh: vi.fn(),
   ...overrides,
 });
 
