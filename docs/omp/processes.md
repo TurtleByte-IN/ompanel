@@ -75,9 +75,14 @@ left by an earlier server are swept:
 | Written by this server, or by another server still alive | Left alone.                               |
 | Process alive with the recorded start time               | Tree killed, pidfile removed.             |
 | Process alive with another start time (pid reused)       | Left alone, pidfile removed.              |
-| `omp` gone but its process group alive (POSIX)           | Group killed, pidfile removed.            |
-| Nothing left                                             | Pidfile removed.                          |
+| `omp` gone (its pid may since belong to anything)        | Nothing signalled, pidfile removed.       |
 | Start time unknown on this platform                      | Left alone, pidfile kept for a later try. |
+
+The sweep only signals a process it can identify as the `omp` it recorded.
+Processes an `omp` left behind after it already exited are not reaped by the
+sweep, because a dead process's pid (and process-group id) can be reused by an
+unrelated program; on Linux the systemd agent scope, when configured, still
+reaps them.
 
 Start times come from `/proc/<pid>/stat` on Linux, `ps -o lstart=` on macOS
 and other Unixes, and `Get-Process` on Windows.

@@ -12,12 +12,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
-import {
-  isOmpTreeAlive,
-  isProcessAlive,
-  killOmpProcessTree,
-  readProcessStartTime,
-} from "./processTree.ts";
+import { isProcessAlive, killOmpProcessTree, readProcessStartTime } from "./processTree.ts";
 
 /** Distinguishes this server process from an earlier one that had the same pid. */
 const OMP_SERVER_BOOT_ID = `${process.pid}@${performance.timeOrigin}`;
@@ -136,14 +131,12 @@ export const makeOmpPidfiles = Effect.fn("makeOmpPidfiles")(function* (
   const classify = Effect.fn("OmpPidfiles.classify")(function* (record: OmpPidRecord) {
     if (record.ownerBootId === bootId) return "owned" as const;
     if (record.ownerPid !== ownerPid && isProcessAlive(record.ownerPid)) return "owned" as const;
-    if (!isOmpTreeAlive(record.pid, platform)) return "gone" as const;
-    if (isProcessAlive(record.pid)) {
-      const startTime = yield* startTimeOf(record.pid);
-      if (record.startTime === null || startTime === null) return "kept" as const;
-      if (startTime !== record.startTime) return "recycled" as const;
-    }
-    // Else POSIX only: `omp` itself exited (its stdin closed with the old server), but processes
-    // it started still hold its process group, and a live group keeps its id from being reused.
+    // Only a live `omp` with the recorded start time is ours. Once it is gone its pid, and with
+    // it the process-group id, may belong to an unrelated program, so leftovers are not signalled.
+    if (!isProcessAlive(record.pid)) return "gone" as const;
+    const startTime = yield* startTimeOf(record.pid);
+    if (record.startTime === null || startTime === null) return "kept" as const;
+    if (startTime !== record.startTime) return "recycled" as const;
     return (yield* killTree(record.pid)) ? ("killed" as const) : ("kept" as const);
   });
 

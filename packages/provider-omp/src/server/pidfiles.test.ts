@@ -67,7 +67,7 @@ posixOnly("OMP pidfile sweep", () => {
     ),
   );
 
-  it.live("kills descendants whose omp already exited", () =>
+  it.live("never signals a group whose recorded omp is gone, since its pid may be reused", () =>
     live(
       Effect.gen(function* () {
         const state = yield* makeFakeOmpState;
@@ -75,25 +75,39 @@ posixOnly("OMP pidfile sweep", () => {
         const orphan = startOrphan(state.env());
         assert.isTrue(yield* waitUntil(() => state.tree() !== undefined));
         const tree = state.tree()!;
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            for (const pid of [tree.child, tree.grandchild]) {
+              try {
+                process.kill(pid, "SIGKILL");
+              } catch {
+                // Already gone.
+              }
+            }
+          }),
+        );
         const previousBoot = yield* makeOmpPidfiles({
           dir,
-          platform: platform,
+          platform,
           bootId: "previous-boot",
           ownerPid: deadPid(),
         });
         yield* previousBoot.register({ pid: orphan.pid!, threadId: "thread-1" });
-        // omp itself goes; the processes it started keep its process group alive.
+        // The recorded process exits; a live process group still answers to its id. That is
+        // indistinguishable from the id having been reused by an unrelated program's group.
         orphan.kill("SIGKILL");
         assert.isTrue(yield* waitUntil(() => allDead([tree.omp])));
         assert.isFalse(allDead([tree.child, tree.grandchild]));
 
-        const thisBoot = yield* makeOmpPidfiles({ dir, platform: platform });
+        const thisBoot = yield* makeOmpPidfiles({ dir, platform });
         const entries = yield* thisBoot.sweep;
         assert.deepStrictEqual(
           entries.map((entry) => entry.outcome),
-          ["killed"],
+          ["gone"],
         );
-        assert.isTrue(yield* waitUntil(() => allDead([tree.child, tree.grandchild])));
+        assert.isFalse(allDead([tree.child]));
+        assert.isFalse(allDead([tree.grandchild]));
+        assert.deepStrictEqual(NodeFS.readdirSync(dir), []);
       }),
     ),
   );
