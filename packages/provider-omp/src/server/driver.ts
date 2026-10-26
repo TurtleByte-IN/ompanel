@@ -27,7 +27,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { OmpSettings } from "../settings.ts";
 import { makeOmpAdapter } from "./adapter.ts";
-import { makeOmpProbeCache, probeOmp } from "./probe.ts";
+import { makeOmpControlService } from "./control.ts";
 import { OMP_BUNDLED_SIDECAR_ENV } from "./sidecar.ts";
 import { makeOmpSidecarProvisioner } from "./sidecarInstall.ts";
 import { buildInitialOmpProviderSnapshot, ompProviderSnapshot } from "./status.ts";
@@ -64,7 +64,6 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
     enabled,
     config,
   }) {
-    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const host = yield* ProviderHost.ProviderHost;
     const path = yield* Path.Path;
     const processEnv = yield* mergeProviderInstanceEnvironment(environment);
@@ -85,7 +84,7 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
     const effectiveConfig = { ...config, enabled } satisfies OmpSettings;
     // Downloads the pinned sidecar into the cache on first use when none is bundled or cached.
     const resolver = yield* makeOmpSidecarProvisioner();
-    const probeCache = yield* makeOmpProbeCache();
+    const control = yield* makeOmpControlService();
     const checkProvider = Effect.gen(function* () {
       if (!effectiveConfig.enabled) return yield* buildInitialOmpProviderSnapshot(effectiveConfig);
       // Resolve (and re-hash) right before every probe; a resolved path is never reused.
@@ -99,23 +98,19 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
           resolution: { kind: "unresolved", error: resolved.failure },
         });
       }
-      const probeInput = {
+      const probe = yield* control.probe({
         binaryPath: resolved.success.path,
         binaryIdentity: resolved.success.identity,
         profile: effectiveConfig.profile,
         environment: processEnv,
         cwd: host.paths.cwd,
-      };
-      const probe = yield* probeCache.get(probeInput, probeOmp(probeInput));
+      });
       return ompProviderSnapshot({
         settings: effectiveConfig,
         checkedAt: DateTime.formatIso(yield* DateTime.now),
         resolution: { kind: "probed", probe, sidecar: resolved.success },
       });
-    }).pipe(
-      Effect.map(stampIdentity),
-      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-    );
+    }).pipe(Effect.map(stampIdentity));
 
     const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
     const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<OmpSettings>>({

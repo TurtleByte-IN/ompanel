@@ -17,13 +17,22 @@ const isOmpProfileName = Schema.makeFilter(
   },
 );
 
+// Same rule the sidecar resolver enforces (absolute after `~` expansion), so a relative path is
+// rejected in the form rather than only on the status card. No node:path: this runs in browsers.
+const ABSOLUTE_BINARY_PATH = /^(?:\/|~(?:$|[\\/])|[A-Za-z]:[\\/]|\\\\)/;
+
+const isAbsoluteBinaryPath = Schema.makeFilter(
+  (value: string) => value === "" || ABSOLUTE_BINARY_PATH.test(value),
+  { expected: "an absolute path to an omp executable (or ~/...)" },
+);
+
 export const OmpSettings = makeProviderSettingsSchema(
   {
     enabled: Schema.Boolean.pipe(
       Schema.withDecodingDefault(Effect.succeed(false)),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
-    binaryPath: TrimmedString.pipe(
+    binaryPath: TrimmedString.check(isAbsoluteBinaryPath).pipe(
       Schema.withDecodingDefault(Effect.succeed("")),
       Schema.annotateKey({
         title: "Binary path",
