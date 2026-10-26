@@ -1,10 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off - path validation needs `lstat` and an `O_NOFOLLOW` open, which Effect's FileSystem does not expose.
 /**
- * Files in the agent directory `omp config path` prints for the instance: `WATCHDOG.yml`,
- * `agents/*.md`, `models.yml`, `mcp.json` and the skills, rules, prompt templates, hooks and custom
- * tools OMP discovers there. Nothing outside it is reached: names follow fixed patterns, links must
- * resolve inside, and a write replaces the file by rename only while it is still at the version
- * the editor read.
+ * Files in the agent directory `omp config path` prints for the instance. Nothing outside it is
+ * reached: names follow fixed patterns, links must resolve inside, and a write replaces the file
+ * by rename only while it is still at the version the editor read.
  */
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";

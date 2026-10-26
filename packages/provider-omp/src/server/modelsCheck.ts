@@ -61,21 +61,22 @@ export const checkOmpModelsConfig = Effect.fn("checkOmpModelsConfig")(function* 
       Effect.flatMap((dir) => input.control.modelsInAgentDir(input.target, dir)),
     ),
   ).pipe(
-    Effect.catchTag("OmpControlError", (error) =>
-      error.reason === "exit"
-        ? // With the marker's model OMP always has one to start with, unless it dropped the file.
-          Effect.fail(
-            invalid(
-              "OMP did not load this models.yml and stopped before it was ready, so the file was not saved. Run `omp models` in a terminal to see OMP's reason.",
+    Effect.catchTags({
+      OmpControlError: (error) =>
+        error.reason === "exit"
+          ? // With the marker's model OMP always has one to start with, unless it dropped the file.
+            Effect.fail(
+              invalid(
+                "OMP did not load this models.yml and stopped before it was ready, so the file was not saved. Run `omp models` in a terminal to see OMP's reason.",
+              ),
+            )
+          : Effect.fail(
+              new OmpAgentFilesOperationError({
+                reason: "omp_failed",
+                message: `Could not check models.yml with OMP: ${error.message}`,
+              }),
             ),
-          )
-        : Effect.fail(
-            new OmpAgentFilesOperationError({
-              reason: "omp_failed",
-              message: `Could not check models.yml with OMP: ${error.message}`,
-            }),
-          ),
-    ),
+    }),
   );
   if (!listed.some((model) => model.provider === marker)) {
     return yield* invalid(
