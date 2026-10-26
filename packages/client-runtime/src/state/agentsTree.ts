@@ -1,4 +1,10 @@
-import type { OrchestrationV2Subagent } from "@t3tools/contracts";
+// The agents panel's view model, shared by the web and mobile clients: a thread's
+// provider-native subagents as a tree, their controls, and incremental transcript paging.
+import type {
+  OrchestrationV2Subagent,
+  OrchestrationV2SubagentTranscriptEntry,
+  OrchestrationV2SubagentTranscriptPage,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
 type SubagentStatus = OrchestrationV2Subagent["status"];
@@ -116,4 +122,29 @@ export function canKill(subagent: ControlledSubagent): boolean {
 
 export function canRevive(subagent: ControlledSubagent): boolean {
   return subagent.controls?.revive === true && REVIVABLE_STATUS[subagent.status];
+}
+
+/** How often a client re-reads a running subagent's transcript. */
+export const SUBAGENT_TRANSCRIPT_POLL_MS = 1500;
+
+export interface SubagentTranscriptState {
+  readonly entries: ReadonlyArray<OrchestrationV2SubagentTranscriptEntry>;
+  /** Where the next read starts: the last applied page's `nextByte`. */
+  readonly nextByte: number;
+}
+
+export const EMPTY_SUBAGENT_TRANSCRIPT: SubagentTranscriptState = { entries: [], nextByte: 0 };
+
+/**
+ * Folds one page into the transcript. `reset` replaces everything (the provider rewrote the
+ * transcript); otherwise a page that does not start where the last one ended is stale and dropped.
+ */
+export function applyTranscriptPage(
+  state: SubagentTranscriptState,
+  page: OrchestrationV2SubagentTranscriptPage,
+): SubagentTranscriptState {
+  if (page.reset) return { entries: page.entries, nextByte: page.nextByte };
+  if (page.fromByte !== state.nextByte) return state;
+  if (page.entries.length === 0 && page.nextByte === state.nextByte) return state;
+  return { entries: [...state.entries, ...page.entries], nextByte: page.nextByte };
 }

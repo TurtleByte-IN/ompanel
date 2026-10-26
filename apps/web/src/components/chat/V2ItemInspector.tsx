@@ -1,8 +1,9 @@
-import type {
-  EnvironmentId,
-  OrchestrationV2ProjectedTurnItem,
-  RunId,
-  ThreadId,
+import {
+  readOmpToolCard,
+  type EnvironmentId,
+  type OrchestrationV2ProjectedTurnItem,
+  type RunId,
+  type ThreadId,
 } from "@t3tools/contracts";
 import {
   toolCallLines,
@@ -13,7 +14,6 @@ import {
 } from "@t3tools/client-runtime/work-log/item-detail";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import { isJavaScriptReplTool } from "@t3tools/shared/toolActivity";
-import { readOmpToolCard } from "@t3tools/shared/ompToolCard";
 import { ExternalLinkIcon, GitBranchIcon, RotateCcwIcon } from "lucide-react";
 import { memo, type ReactNode, Suspense, use } from "react";
 

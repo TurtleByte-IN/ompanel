@@ -1,4 +1,12 @@
 import { useAtomValue } from "@effect/atom-react";
+import {
+  type AgentsTreeNode,
+  buildAgentsTree,
+  canKill,
+  canRevive,
+  canSteer,
+  isSubagentActive,
+} from "@t3tools/client-runtime/state/agents-tree";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
 import type {
@@ -23,14 +31,6 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { Textarea } from "../ui/textarea";
-import {
-  type AgentsTreeNode,
-  buildAgentsTree,
-  canKill,
-  canRevive,
-  canSteer,
-  isSubagentActive,
-} from "./agentsTree";
 import { useSubagentTranscript } from "./subagentTranscript";
 
 type SubagentStatus = OrchestrationV2Subagent["status"];

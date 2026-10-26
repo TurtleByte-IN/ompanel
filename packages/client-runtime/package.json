@@ -279,6 +279,10 @@
       "types": "./src/state/threads.ts",
       "default": "./src/state/threads.ts"
     },
+    "./state/agents-tree": {
+      "types": "./src/state/agentsTree.ts",
+      "default": "./src/state/agentsTree.ts"
+    },
     "./state/subagent-display": {
       "types": "./src/state/subagentDisplay.ts",
       "default": "./src/state/subagentDisplay.ts"

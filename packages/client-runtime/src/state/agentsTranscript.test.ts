@@ -1,7 +1,7 @@
 import type { OrchestrationV2SubagentTranscriptPage } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { applyTranscriptPage, EMPTY_SUBAGENT_TRANSCRIPT } from "./subagentTranscript";
+import { applyTranscriptPage, EMPTY_SUBAGENT_TRANSCRIPT } from "./agentsTree.ts";
 
 const page = (
   fromByte: number,
