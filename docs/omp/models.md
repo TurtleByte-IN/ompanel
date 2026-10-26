@@ -21,15 +21,16 @@ A refused or unreadable catalog leaves the picker with OMP default and custom mo
 T3 owns the selection. Before each prompt the adapter sends only what changed since
 the last turn:
 
-| Trait        | OMP side                                                                                                            |
-| ------------ | ------------------------------------------------------------------------------------------------------------------- |
-| Model        | `set_model {provider, modelId}`; back on OMP default, the model the session started on                              |
-| Thinking     | `set_thinking_level`, including `inherit`; re-sent after a model change, since OMP re-applies the new model's level |
-| Fast Mode    | `set_fast_mode`                                                                                                     |
-| Advisor      | `set_advisor`                                                                                                       |
-| Prewalk      | `set_prewalk`; an armed prewalk is spent by the turn it runs on, so it is re-armed every turn while on              |
-| Computer Use | the thread overlay's `computer.enabled` (see below)                                                                 |
-| Role         | the thread overlay's `modelRoles.default`, then a session restart                                                   |
+| Trait        | OMP side                                                                                                                      |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| Model        | `set_model {provider, modelId}`; back on OMP default, the model the session started on                                        |
+| Thinking     | `set_thinking_level`, including `inherit`; re-sent after a model change, since OMP re-applies the new model's level           |
+| Fast Mode    | `set_fast_mode`                                                                                                               |
+| Advisor      | `set_advisor`                                                                                                                 |
+| Prewalk      | `set_prewalk`; an armed prewalk is spent by the turn it runs on, so it is re-armed every turn while on                        |
+| Computer Use | the thread overlay's `computer.enabled` (see below)                                                                           |
+| Vibe Mode    | `set_vibe_mode {enabled}`, from RPC contract 1.7.0 only; not offered on an older pin ([composer.md](./composer.md#vibe-mode)) |
+| Role         | the thread overlay's `modelRoles.default`, then a session restart                                                             |
 
 A refused model or thinking level fails the turn before its prompt. A refused boolean
 trait (fast mode on a model without it, prewalk without a target) is logged and the

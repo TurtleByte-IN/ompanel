@@ -40,7 +40,17 @@ const nonEmpty = (text: string | undefined): string | undefined => {
   return trimmed === undefined || trimmed === "" ? undefined : trimmed;
 };
 
-/** OMP's command list as menu entries: skill commands dropped, first of each name kept. */
+/**
+ * `/goal`, which OMP lists only in its TUI; Ompanel runs it over RPC (adapter `runGoalCommand`,
+ * docs/omp/composer.md).
+ */
+const GOAL_COMMAND: ServerProviderSlashCommand = {
+  name: "goal",
+  description: "Set, show, pause, resume or drop this thread's goal",
+  input: { hint: "[objective | show | pause | resume | drop]" },
+};
+
+/** OMP's command list as menu entries: skill commands dropped, first of each name kept, `/goal` added. */
 export const ompSlashCommands = (
   commands: ReadonlyArray<AvailableCommand>,
 ): ReadonlyArray<ServerProviderSlashCommand> => {
@@ -58,6 +68,7 @@ export const ompSlashCommands = (
       ...(hint === undefined ? {} : { input: { hint } }),
     });
   }
+  if (!seen.has(GOAL_COMMAND.name)) result.push(GOAL_COMMAND);
   return result;
 };
 

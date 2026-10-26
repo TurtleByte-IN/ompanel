@@ -21,20 +21,31 @@ model in `@t3tools/client-runtime/state/agents-tree`.
   those frames into `subagent.updated` events. They are stored in the thread
   projection like every provider's subagents.
 
-| OMP                                                        | Subagent record                                                                                     |
-| ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `id`                                                       | `nativeTaskRef.nativeId`; the record id is a node derived from the provider thread and this id      |
-| `parentId` (another subagent)                              | `parentNodeId` = that subagent's record id                                                          |
-| `parentId: null`, or no `parentId` (contract before 1.2.0) | `parentNodeId` = the `task` tool call (`parentToolCallId`), else the turn's root node               |
-| `depth`                                                    | `depth` (0 for a subagent the thread's own agent spawned)                                           |
-| lifecycle `started` / `completed` / `failed` / `aborted`   | `running` / `completed` / `failed` / `cancelled`; a later `started` (a revived subagent) runs again |
-| progress `stage`, else `lastIntent`, else the current tool | `progress` (one line)                                                                               |
-| progress `resolvedModel`                                   | `model`                                                                                             |
-| progress `cost`, `tokens`, `toolCount`, `durationMs`       | `usage.costUsd`, `usage.totalTokens`, `usage.toolCalls`, `usage.durationMs`                         |
-| `description`                                              | `title` is `<id>: <description>`, or `<id> (<agent>)` without one                                   |
+| OMP                                                        | Subagent record                                                                                             |
+| ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `id`                                                       | `nativeTaskRef.nativeId`; the record id is a node derived from the provider thread and this id              |
+| `parentId` (another subagent)                              | `parentNodeId` = that subagent's record id                                                                  |
+| `parentId: null`, or no `parentId` (contract before 1.2.0) | `parentNodeId` = the `task` tool call (`parentToolCallId`), else the turn's root node                       |
+| `depth`                                                    | `depth` (0 for a subagent the thread's own agent spawned)                                                   |
+| lifecycle `started` / `completed` / `failed` / `aborted`   | `running` / `completed` / `failed` / `cancelled`; a later `started` (a revived subagent) runs again         |
+| progress `stage`, else `lastIntent`, else the current tool | `progress` (one line)                                                                                       |
+| progress `resolvedModel`                                   | `model`                                                                                                     |
+| progress `cost`, `tokens`, `toolCount`, `durationMs`       | `usage.costUsd`, `usage.totalTokens`, `usage.toolCalls`, `usage.durationMs`                                 |
+| `description`                                              | `title` is `<id>: <description>`, `<id> (<agent>)` without one, `<id>: Vibe <cli> worker` for a vibe worker |
 
 Progress frames that change nothing are not written again. A progress frame
 never overrides a finished status; only a new `started` does.
+
+## Vibe workers
+
+In vibe mode ([composer.md](./composer.md#vibe-mode)) each worker session the
+agent starts with `vibe_spawn` is an OMP subagent (agent `sonic` for `fast`,
+`task` for `good`; description `vibe <cli> session`). From RPC contract 1.7.0
+its frames carry the `vibe_spawn` call as `parentToolCallId`, on its first
+turn and on every later `vibe_send` turn, so the worker hangs under that call
+in the Agents panel tree, titled `<id>: Vibe <cli> worker`, with its transcript
+and controls like any subagent. Its task is the brief the agent sent. Leaving
+vibe mode ends every worker (`cancelled`).
 
 ## Panel actions
 

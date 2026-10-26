@@ -143,6 +143,19 @@ function lineageOf(payload: Record<string, unknown>): {
   };
 }
 
+/** A vibe worker's lifecycle description (`vibe <cli> session` in OMP's vibe runtime). */
+const VIBE_WORKER_DESCRIPTION = /^vibe (fast|good) session$/;
+
+/**
+ * The record title: `<id>: <description>`, `<id> (<agent>)` without one, and `<id>: Vibe <cli>
+ * worker` for a vibe mode worker session (docs/omp/subagents.md#vibe-workers).
+ */
+function subagentTitle(id: string, agent: string, description: string | undefined): string {
+  if (description === undefined) return `${id} (${agent})`;
+  const vibe = VIBE_WORKER_DESCRIPTION.exec(description);
+  return vibe === null ? `${id}: ${description}` : `${id}: Vibe ${vibe[1]} worker`;
+}
+
 /** A tracked subagent, with what later frames need that the V2 record does not hold. */
 interface Tracked {
   readonly record: OrchestrationV2Subagent;
@@ -248,7 +261,7 @@ export class OmpSubagentTracker {
       childThreadId: null,
       nativeTaskRef: { driver: OMP_PROVIDER, nativeId: id, strength: "strong" },
       prompt: task ?? previous?.prompt ?? description ?? "",
-      title: description === undefined ? `${id} (${agent})` : `${id}: ${description}`,
+      title: subagentTitle(id, agent, description),
       model:
         stringOf(progress?.resolvedModel) ??
         stringOf(progress?.resolvedModelIdentity) ??

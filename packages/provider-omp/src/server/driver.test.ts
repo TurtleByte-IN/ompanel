@@ -171,9 +171,14 @@ it.layer(layerTest)("OmpDriver", (it) => {
         Effect.forkChild({ startImmediately: true }),
       );
       const workspace = yield* instance.snapshotForCwd!("/repo");
-      assert.deepStrictEqual(workspace.slashCommands, [
-        { name: "compact", description: "Compact the context" },
-      ]);
+      assert.deepStrictEqual(
+        workspace.slashCommands.map((command) => command.name),
+        ["compact", "goal"],
+      );
+      assert.deepStrictEqual(workspace.slashCommands[0], {
+        name: "compact",
+        description: "Compact the context",
+      });
       assert.deepStrictEqual(workspace.skills, [
         {
           name: "tdd",

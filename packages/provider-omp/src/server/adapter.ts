@@ -34,11 +34,14 @@ import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import type {
+  GoalResult,
   ImageContent,
   RpcServerFrame,
   SessionState,
 } from "../../contract/src/wire.generated.ts";
+import { type OmpGoalCommand, parseOmpGoalCommand } from "../composer.ts";
 import type { OmpCommandHooks } from "./commands.ts";
+import { OMP_GOAL_BUDGET_REPLY, ompGoalReply } from "./goal.ts";
 import { makeOmpHostBridge } from "./hostTools.ts";
 import {
   isOmpRunYield,
@@ -107,6 +110,7 @@ import {
   ompTurnsTotal,
   recordOmpMetric,
 } from "./telemetry.ts";
+import { type OmpSetVibeModeResult, ompVibeModeAvailable } from "./vibe.ts";
 
 /** Streamed text is held this long so a burst of deltas becomes one update. */
 const STREAM_FLUSH = Duration.millis(50);
@@ -736,6 +740,11 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
         }
         return;
       }
+      // Goal mode is session state, not turn output: it changes inside and between turns.
+      if (frame.type === "goal_updated") {
+        yield* emit(mapper.applyGoal(frame.goal ?? null, yield* DateTime.now));
+        return;
+      }
       if (yield* hostBridge.handleFrame(frame)) return;
       if (frame.type === "prompt_result") awaitingWake = frame.sessionSettled === false;
       if (frame.type === "session_settled") awaitingWake = false;
@@ -986,6 +995,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       advisor?: boolean;
       prewalk?: boolean;
       computer?: boolean;
+      vibe?: boolean;
     } = {};
     const selectionError = (command: string) => (error: OmpRpcRequestError) =>
       protocolError(
@@ -1077,6 +1087,28 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
           Effect.catch(traitRefused("computer")),
         );
       }
+      // `set_vibe_mode` is newer than the vendored contract (OMP_VIBE_CONTRACT); older sidecars
+      // run vibe mode only in their TUI, and the composer does not offer the trait for them.
+      if (
+        traits.vibe !== undefined &&
+        traits.vibe !== applied.vibe &&
+        ompVibeModeAvailable(process.contractVersion)
+      ) {
+        const enabled = traits.vibe;
+        const request = process.request as unknown as (
+          command: "set_vibe_mode",
+          params: { readonly enabled: boolean },
+          options: { readonly timeoutMs: number },
+        ) => Effect.Effect<OmpSetVibeModeResult, OmpRpcRequestError>;
+        yield* request(
+          "set_vibe_mode",
+          { enabled },
+          { timeoutMs: SELECTION_REQUEST_TIMEOUT_MS },
+        ).pipe(
+          Effect.tap((result) => Effect.sync(() => (applied.vibe = result.enabled))),
+          Effect.catch(traitRefused("vibe")),
+        );
+      }
     });
 
     /**
@@ -1123,6 +1155,67 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
     /** The run and attempt of the last turn, to tell a restarted attempt from a new run. */
     let lastTurn: { readonly runId: string; readonly attemptId: string } | null = null;
     let appliedSessionName: string | null = null;
+
+    /**
+     * A `/goal` command other than setting a goal, run over RPC: OMP's own `/goal` is TUI-only.
+     * The turn shows OMP's answer and ends without a prompt.
+     */
+    const runGoalCommand = Effect.fnUntraced(function* (
+      turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
+      command: Exclude<OmpGoalCommand, { readonly op: "create" }>,
+    ) {
+      const providerTurnId = yield* exclusive(
+        Effect.gen(function* () {
+          if (mapper.hasActiveTurn) {
+            return yield* protocolError("OMP turn ownership changed before it could start");
+          }
+          if (sessionChanging) {
+            return yield* protocolError(
+              "OMP is rewinding or forking this session; start the turn once it is done",
+              "previous_turn_active",
+            );
+          }
+          turnStartedAt = DateTime.toEpochMillis(yield* DateTime.now);
+          yield* emit(mapper.startTurn(turnInput, yield* DateTime.now));
+          return mapper.activeProviderTurnId;
+        }),
+      );
+      lastTurn = { runId: turnInput.runId, attemptId: turnInput.attemptId };
+      const answer: { readonly text: string } | { readonly error: string } =
+        command.op === "budget"
+          ? { text: OMP_GOAL_BUDGET_REPLY }
+          : command.op === "invalid"
+            ? { error: command.reason }
+            : yield* process
+                .request("goal", { op: command.op }, { timeoutMs: SELECTION_REQUEST_TIMEOUT_MS })
+                .pipe(
+                  Effect.map((result: GoalResult) => ({ text: ompGoalReply(command.op, result) })),
+                  Effect.catch((error: OmpRpcRequestError) =>
+                    Effect.succeed({
+                      error: error._tag === "OmpRpcCommandError" ? error.detail : error.message,
+                    }),
+                  ),
+                );
+      yield* exclusive(
+        Effect.gen(function* () {
+          if (mapper.activeProviderTurnId !== providerTurnId) return;
+          if ("error" in answer) {
+            return yield* finalize(
+              {
+                status: "failed",
+                failure: makeProviderFailure({ message: answer.error, class: "provider_error" }),
+              },
+              true,
+            );
+          }
+          // Shown as OMP shows a builtin command's output (`command_output`).
+          const output = { type: "command_output", text: answer.text };
+          yield* emit(mapper.handleFrame(output, yield* DateTime.now).events);
+          yield* finalize({ status: "completed" }, true);
+        }),
+      );
+    });
+
     const startTurn = Effect.fnUntraced(function* (
       turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
     ) {
@@ -1145,13 +1238,38 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       // T3 dispatches a continuation for a run OMP started on its own (`offerWake`).
       const isContinuation =
         turnInput.message.createdBy === "agent" && turnInput.message.creationSource === "provider";
+      // OMP's `/goal` runs only in its TUI, so Ompanel runs it over RPC (docs/omp/composer.md).
+      const goalCommand =
+        isContinuation || turnInput.message.attachments.length > 0
+          ? null
+          : parseOmpGoalCommand(turnInput.message.text);
+      if (goalCommand !== null && goalCommand.op !== "create") {
+        return yield* runGoalCommand(turnInput, goalCommand);
+      }
       yield* applyApprovalMode(turnInput.runtimePolicy);
+      // A new goal's objective is its first prompt, as OMP's own `/goal <objective>` sends it.
+      const messageText = goalCommand === null ? turnInput.message.text : goalCommand.objective;
       // OMP expands a skill only as `/skill:<name>`; the composer writes `$<name>`.
       const promptText =
         options.commands === undefined
-          ? turnInput.message.text
-          : yield* options.commands.resolvePrompt(cwd, turnInput.message.text);
+          ? messageText
+          : yield* options.commands.resolvePrompt(cwd, messageText);
       yield* applySelection(turnInput.threadId, turnInput.modelSelection);
+      if (goalCommand !== null) {
+        yield* process
+          .request(
+            "goal",
+            {
+              op: "create",
+              objective: goalCommand.objective,
+              ...(goalCommand.tokenBudget === undefined
+                ? {}
+                : { token_budget: goalCommand.tokenBudget }),
+            },
+            { timeoutMs: SELECTION_REQUEST_TIMEOUT_MS },
+          )
+          .pipe(Effect.mapError(selectionError("goal")));
+      }
       // T3 names the thread; OMP keeps it as a user-set title, which its own titling respects.
       const title = turnInput.appThread.title;
       if (title !== appliedSessionName) {

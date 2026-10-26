@@ -1,7 +1,7 @@
 /**
  * OMP's composer traits: the model catalog from `get_available_models`, the thinking selector
- * (including OMP's `inherit`), the boolean traits (fast mode, advisor, prewalk, computer use)
- * and the role chip. docs/omp/models.md has the mapping.
+ * (including OMP's `inherit`), the boolean traits (fast mode, advisor, prewalk, computer use,
+ * vibe mode) and the role chip. docs/omp/models.md has the mapping.
  */
 import type {
   ModelCapabilities,
@@ -18,6 +18,8 @@ import {
 import * as Schema from "effect/Schema";
 
 import type { ThinkingLevel } from "../../contract/src/wire.generated.ts";
+import { OMP_LOCK } from "../ompLock.ts";
+import { ompVibeModeAvailable } from "./vibe.ts";
 
 /** The model slug that leaves the model to OMP's config (`modelRoles.default`). */
 export const OMP_DEFAULT_MODEL_SLUG = "default";
@@ -29,6 +31,7 @@ const OMP_TRAIT_IDS = {
   advisor: "advisor",
   prewalk: "prewalk",
   computer: "computer",
+  vibe: "vibe",
 } as const;
 
 /** The client-relevant subset of the wire `ModelInfo` the catalog needs. */
@@ -121,27 +124,45 @@ const roleDescriptor: ProviderOptionDescriptor = {
   })),
 };
 
-const booleanDescriptors: ReadonlyArray<ProviderOptionDescriptor> = [
-  { id: OMP_TRAIT_IDS.fastMode, label: "Fast Mode", type: "boolean" },
-  {
-    id: OMP_TRAIT_IDS.advisor,
-    label: "Advisor",
-    description: "Runs the model assigned to the advisor role alongside the session",
-    type: "boolean",
-  },
-  {
-    id: OMP_TRAIT_IDS.prewalk,
-    label: "Prewalk",
-    description: "Hands the next turn off to the prewalk target model",
-    type: "boolean",
-  },
-  {
-    id: OMP_TRAIT_IDS.computer,
-    label: "Computer Use",
-    description: "The host-desktop eval prelude",
-    type: "boolean",
-  },
-];
+/** The boolean traits a sidecar speaking `contractVersion` takes. */
+export function ompBooleanTraitDescriptors(
+  contractVersion: string,
+): ReadonlyArray<ProviderOptionDescriptor> {
+  return [
+    { id: OMP_TRAIT_IDS.fastMode, label: "Fast Mode", type: "boolean" },
+    {
+      id: OMP_TRAIT_IDS.advisor,
+      label: "Advisor",
+      description: "Runs the model assigned to the advisor role alongside the session",
+      type: "boolean",
+    },
+    {
+      id: OMP_TRAIT_IDS.prewalk,
+      label: "Prewalk",
+      description: "Hands the next turn off to the prewalk target model",
+      type: "boolean",
+    },
+    {
+      id: OMP_TRAIT_IDS.computer,
+      label: "Computer Use",
+      description: "The host-desktop eval prelude",
+      type: "boolean",
+    },
+    ...(ompVibeModeAvailable(contractVersion)
+      ? [
+          {
+            id: OMP_TRAIT_IDS.vibe,
+            label: "Vibe Mode",
+            description:
+              "The agent directs fast and good worker sessions and only reads files itself; turning it off ends the workers",
+            type: "boolean" as const,
+          },
+        ]
+      : []),
+  ];
+}
+
+const booleanDescriptors = ompBooleanTraitDescriptors(OMP_LOCK.contract.version);
 
 const capabilities = (
   thinking: ProviderOptionDescriptor | undefined,
@@ -206,6 +227,7 @@ export interface OmpTraitSelection {
   readonly advisor?: boolean;
   readonly prewalk?: boolean;
   readonly computer?: boolean;
+  readonly vibe?: boolean;
 }
 
 const isRole = (value: unknown): value is OmpThreadRole =>
@@ -219,6 +241,7 @@ export const readOmpTraitSelection = (selection: ModelSelection): OmpTraitSelect
   const advisor = flag(OMP_TRAIT_IDS.advisor);
   const prewalk = flag(OMP_TRAIT_IDS.prewalk);
   const computer = flag(OMP_TRAIT_IDS.computer);
+  const vibe = flag(OMP_TRAIT_IDS.vibe);
   return {
     model: selection.model,
     // The role picks the model only while the thread leaves the model to OMP.
@@ -228,6 +251,7 @@ export const readOmpTraitSelection = (selection: ModelSelection): OmpTraitSelect
     ...(advisor === undefined ? {} : { advisor }),
     ...(prewalk === undefined ? {} : { prewalk }),
     ...(computer === undefined ? {} : { computer }),
+    ...(vibe === undefined ? {} : { vibe }),
   };
 };
 

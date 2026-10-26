@@ -26,6 +26,9 @@ without a rescan.
 Each entry keeps OMP's `name`, `description` and `input.hint`. Aliases and
 subcommands are not shown; OMP still accepts them when typed. Commands with
 source `skill` (`/skill:<name>`) are left out: skills have their own `$` picker.
+Every list ends with `/goal` unless OMP lists one itself: OMP runs `/goal` only
+in its TUI, and the adapter runs it over RPC (see
+[composer.md](./composer.md#goal-mode)).
 
 A picked command is sent as the prompt text. OMP runs builtins itself and
 answers on the frame stream; commands that ask (the `/review` mode and PR
