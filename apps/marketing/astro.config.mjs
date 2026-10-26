@@ -7,7 +7,8 @@ import { defineConfig } from "astro/config";
 delete process.env.VP_RUN_NODE_CLIENT_PATH;
 
 export default defineConfig({
-  site: "https://t3.codes",
+  // No `site` until Ompanel has a hosted domain (blocker B-003); Layout.astro omits canonical and
+  // social-card tags without it.
   server: {
     port: Number(process.env.PORT ?? 4173),
   },

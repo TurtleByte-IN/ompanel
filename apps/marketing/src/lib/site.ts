@@ -1,12 +1,5 @@
-export const GITHUB_REPOSITORY_URL = "https://github.com/pingdotgg/t3code";
+import { REPOSITORY_URL } from "@t3tools/shared/brand";
 
-export const IOS_APP_STORE_URL =
-  "https://apps.apple.com/us/app/t3-code-remote-claude-more/id6787819824";
-
-export const ANDROID_PLAY_STORE_URL =
-  "https://play.google.com/store/apps/details?id=in.turtlebyte.ompanel";
-
-export const MARKETING_STATS = {
-  githubStars: "24k+",
-  users: "500,000",
-} as const;
+export const GITHUB_REPOSITORY_URL = REPOSITORY_URL;
+export const LICENSE_URL = `${REPOSITORY_URL}/blob/main/LICENSE`;
+export const SECURITY_REPORT_URL = `${REPOSITORY_URL}/security/advisories/new`;

@@ -24,11 +24,4 @@ export const config: VercelConfig = {
       ],
     },
   ],
-  redirects: [
-    {
-      source: "/app",
-      destination: "https://app.t3.codes",
-      permanent: true,
-    },
-  ],
 };
