@@ -118,6 +118,23 @@ export const OMP_CONTROL_RPC_ARGS = [
   "--no-title",
 ] as const;
 
+/**
+ * The lines `omp --mode rpc` writes to stderr before exiting 1 when no model resolves: no default
+ * model, no credentials, no `models.yml` (a fresh install). From `main.ts` (`!isInteractive &&
+ * !session.model`) and `sdk.ts` (`modelFallbackMessage`) at the `omp.lock` tag. Only this test
+ * reads stderr; the text itself is never kept.
+ */
+const OMP_UNCONFIGURED_STDERR =
+  /No default model selected\.|No model available matching enabledModels|No models available\./;
+
+/**
+ * The model a control server is started with once OMP refused to start for want of one. It only
+ * has to resolve in OMP's built-in catalog (credentials are not needed for that), so sign-in and
+ * the provider list work before `omp setup` has picked a model. `--model` overrides the default
+ * role for that process only (`Settings.overrideModelRoles`); nothing is written to `config.yml`.
+ */
+export const OMP_SETUP_PLACEHOLDER_MODEL = "anthropic/claude-sonnet-4-5";
+
 /** One instance's omp: the resolved binary and how to run it. */
 export interface OmpControlTarget {
   readonly binaryPath: string;
@@ -184,6 +201,8 @@ export class OmpControlError extends Schema.TaggedError<OmpControlError>()("OmpC
     "invalid",
     "rejected",
     "unsupported",
+    /** `omp --mode rpc` exited before `ready` because no model resolves: OMP needs `omp setup`. */
+    "unconfigured",
   ]),
   timeoutMs: Schema.optional(Schema.Number),
   exitCode: Schema.optional(Schema.Number),
@@ -207,6 +226,8 @@ export class OmpControlError extends Schema.TaggedError<OmpControlError>()("OmpC
         return `OMP ${this.operation} failed${this.detail === undefined ? "" : `: ${this.detail}`}.`;
       case "unsupported":
         return `OMP ${this.operation} needs a newer OMP${this.detail === undefined ? "" : `: ${this.detail}`}.`;
+      case "unconfigured":
+        return `OMP ${this.operation} could not start: OMP has no model or sign-in yet.`;
     }
   }
 }
@@ -455,7 +476,10 @@ export const parseOmpUpdateCheck = (stdout: string): OmpUpdateCheck => {
 
 export type OmpProbeFailure =
   | { readonly stage: "version"; readonly reason: "missing" | "spawn" | "timeout" | "exit" }
-  | { readonly stage: "ready"; readonly reason: "spawn" | "timeout" | "exit" | "invalid" };
+  | {
+      readonly stage: "ready";
+      readonly reason: "spawn" | "timeout" | "exit" | "invalid" | "unconfigured";
+    };
 
 export type OmpProbeResult =
   | {
@@ -530,7 +554,11 @@ export interface OmpControlService {
     providerId: string,
     credentialId: number,
   ) => Effect.Effect<{ readonly remainingSource?: string }, OmpControlError>;
-  /** Status probe: `--version`, then `ready`, `get_login_providers` and `get_available_models`. Cached 30 s. */
+  /**
+   * Status probe: `--version`, then `ready`, `get_login_providers` and `get_available_models`.
+   * Cached 30 s, except an `unconfigured` result: `omp setup` in a terminal ends that state outside
+   * Ompanel, and the next check has to see it.
+   */
   readonly probe: (target: OmpControlTarget) => Effect.Effect<OmpProbeResult>;
   /** Drops every cached result of this instance. */
   readonly invalidate: Effect.Effect<void>;
@@ -875,6 +903,20 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
         ),
       );
 
+    // stderr is drained so a chatty omp cannot block on a full pipe. Its text is never kept: it
+    // is only checked for OMP's "no model" refusal, settled once stderr closes.
+    const unconfigured = yield* Deferred.make<boolean>();
+    yield* child.stderr.pipe(
+      Stream.decodeText(),
+      Stream.splitLines,
+      Stream.runFold(
+        () => false,
+        (seen: boolean, line: string) => seen || OMP_UNCONFIGURED_STDERR.test(line),
+      ),
+      Effect.orElseSucceed(() => false),
+      Effect.flatMap((seen) => Deferred.succeed(unconfigured, seen)),
+      Effect.forkIn(sessionScope),
+    );
     const frames = yield* Queue.unbounded<unknown, OmpControlError>();
     yield* child.stdout.pipe(
       Stream.decodeText(),
@@ -892,15 +934,16 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
         onFailure: (cause) =>
           Queue.fail(frames, new OmpControlError({ operation, reason: "exit", cause })),
         onSuccess: () =>
-          child.exitCode.pipe(
-            Effect.map(Number),
-            Effect.option,
-            Effect.flatMap((code) =>
+          Effect.all([
+            child.exitCode.pipe(Effect.map(Number), Effect.option),
+            Deferred.await(unconfigured),
+          ]).pipe(
+            Effect.flatMap(([code, noModel]) =>
               Queue.fail(
                 frames,
                 new OmpControlError({
                   operation,
-                  reason: "exit",
+                  reason: noModel ? "unconfigured" : "exit",
                   ...(Option.isSome(code) ? { exitCode: code.value } : {}),
                 }),
               ),
@@ -909,8 +952,6 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
       }),
       Effect.forkIn(sessionScope),
     );
-    // Drain stderr so a chatty omp cannot block on a full pipe; its text is never kept.
-    yield* child.stderr.pipe(Stream.runDrain, Effect.ignore, Effect.forkIn(sessionScope));
 
     const first = yield* Queue.take(frames);
     const ready = yield* decodeReadyFrame(first).pipe(
@@ -942,6 +983,19 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
     return { ready, request, send };
   });
 
+  /**
+   * {@link openRpcSession} for control servers that need no model of their own (sign-in, sign-out,
+   * provider and command lists): when OMP refuses to start for want of one, it is started again on
+   * {@link OMP_SETUP_PLACEHOLDER_MODEL}, so a fresh install can still sign in.
+   */
+  const openControlRpcSession = (operation: OmpControlOperation, target: OmpControlTarget) =>
+    openRpcSession(operation, target).pipe(
+      Effect.catchIf(
+        (error) => error.reason === "unconfigured",
+        () => openRpcSession(operation, target, ["--model", OMP_SETUP_PLACEHOLDER_MODEL]),
+      ),
+    );
+
   const readLoginProviders = (operation: OmpControlOperation, session: RpcSession) =>
     session.request({ type: "get_login_providers" }).pipe(
       Effect.flatMap(decodeLoginProviders),
@@ -958,7 +1012,7 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
     return yield* withDeadline(
       "login_providers",
       "ready",
-      openRpcSession("login_providers", target).pipe(
+      openControlRpcSession("login_providers", target).pipe(
         Effect.flatMap((session) =>
           readLoginProviders("login_providers", session).pipe(
             Effect.map((providers): OmpLoginProviderList => ({
@@ -1021,7 +1075,12 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
         version: parsedVersion,
         stage: "ready",
         reason:
-          reason === "timeout" || reason === "exit" || reason === "invalid" ? reason : "spawn",
+          reason === "timeout" ||
+          reason === "exit" ||
+          reason === "invalid" ||
+          reason === "unconfigured"
+            ? reason
+            : "spawn",
       };
     }
     const { protocolVersion, contractVersion } = rpcResult.success.ready;
@@ -1048,7 +1107,7 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
       "login",
       "login",
       Effect.gen(function* () {
-        const session = yield* openRpcSession("login", target);
+        const session = yield* openControlRpcSession("login", target);
         const supported = ompContractAtLeast(
           session.ready.contractVersion,
           OMP_LOGIN_INPUT_CONTRACT,
@@ -1107,7 +1166,7 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
     withDeadline(
       operation,
       "ready",
-      openRpcSession(operation, target).pipe(
+      openControlRpcSession(operation, target).pipe(
         Effect.flatMap((session) => session.request(command)),
         Effect.flatMap((data) =>
           decode(data).pipe(
@@ -1175,7 +1234,7 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
     const data = yield* withDeadline(
       "available_commands",
       "catalog",
-      openRpcSession("available_commands", target).pipe(
+      openControlRpcSession("available_commands", target).pipe(
         Effect.flatMap((session) => session.request({ type: "get_available_commands" })),
         Effect.flatMap((response) =>
           decodeAvailableCommands(response).pipe(
@@ -1347,7 +1406,17 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
     login,
     logoutAccounts,
     logout,
-    probe: (target) => cached(["probe", targetKey(target)].join("\0"), probeUncached(target)),
+    probe: (target) =>
+      cached(
+        ["probe", targetKey(target)].join("\0"),
+        // A failed run is not kept, so the unconfigured result travels as the failure.
+        probeUncached(target).pipe(
+          Effect.filterOrFail(
+            (result) => result.status !== "failed" || result.reason !== "unconfigured",
+            (result) => result,
+          ),
+        ),
+      ).pipe(Effect.catch(Effect.succeed)),
     invalidate,
     configList,
     configSet,

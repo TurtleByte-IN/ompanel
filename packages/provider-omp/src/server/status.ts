@@ -85,6 +85,16 @@ export const buildInitialOmpProviderSnapshot = Effect.fn("buildInitialOmpProvide
   },
 );
 
+/** The status line when OMP has no model: the onboarding flow's entry point. */
+export const OMP_NEEDS_SETUP_MESSAGE =
+  "OMP has no model or sign-in yet. Run `omp setup`, then sign in under Accounts.";
+
+const OMP_EXECUTABLE_SOURCE = {
+  bundled: "bundled",
+  cache: "downloaded",
+  override: "custom",
+} as const satisfies Record<OmpSidecar["source"], string>;
+
 function probeFailureMessage(failure: Extract<OmpProbeResult, { status: "failed" }>): string {
   if (failure.stage === "version") {
     switch (failure.reason) {
@@ -105,6 +115,8 @@ function probeFailureMessage(failure: Extract<OmpProbeResult, { status: "failed"
       return `OMP's RPC server did not answer within ${OMP_CONTROL_TIMEOUTS_MS.ready / 1000} s.`;
     case "invalid":
       return "OMP's RPC server did not start with a ready frame.";
+    case "unconfigured":
+      return OMP_NEEDS_SETUP_MESSAGE;
   }
 }
 
@@ -134,8 +146,11 @@ export function ompProviderSnapshot(input: {
     | {
         readonly kind: "probed";
         readonly probe: OmpProbeResult;
-        /** The binary that was probed; an unverified override is named in the status. */
-        readonly sidecar?: Pick<OmpSidecar, "path" | "verified">;
+        /**
+         * The binary that was probed: named in the snapshot with its source, and an unverified
+         * override in the status.
+         */
+        readonly sidecar?: Pick<OmpSidecar, "path" | "verified" | "source">;
       };
   /** Pins the RPC contract the sidecar must speak. */
   readonly lock?: OmpLock;
@@ -151,44 +166,69 @@ export function ompProviderSnapshot(input: {
       message: resolution.error.message,
     });
   }
-  const { probe } = resolution;
+  const { probe, sidecar } = resolution;
+  const withExecutable = (draft: ServerProviderDraft): ServerProviderDraft =>
+    sidecar === undefined
+      ? draft
+      : {
+          ...draft,
+          executable: { source: OMP_EXECUTABLE_SOURCE[sidecar.source], path: sidecar.path },
+        };
+  if (probe.status === "failed" && probe.reason === "unconfigured") {
+    // OMP runs but refuses RPC until it has a model (a fresh install): not a failure, the start
+    // of onboarding. Signing in or `omp setup` gives it one.
+    return withExecutable(
+      ompSnapshot(settings, checkedAt, {
+        installed: true,
+        version: probe.version,
+        status: "warning",
+        auth: { status: "unauthenticated" },
+        message: OMP_NEEDS_SETUP_MESSAGE,
+      }),
+    );
+  }
   if (probe.status === "failed") {
-    return ompSnapshot(settings, checkedAt, {
-      installed: !(probe.stage === "version" && probe.reason === "missing"),
-      version: probe.version,
-      status: "error",
-      auth: UNKNOWN_AUTH,
-      message: probeFailureMessage(probe),
-    });
+    return withExecutable(
+      ompSnapshot(settings, checkedAt, {
+        installed: !(probe.stage === "version" && probe.reason === "missing"),
+        version: probe.version,
+        status: "error",
+        auth: UNKNOWN_AUTH,
+        message: probeFailureMessage(probe),
+      }),
+    );
   }
   const reported = probe.ready.contractVersion;
   if (reported !== lock.contract.version) {
-    return ompSnapshot(settings, checkedAt, {
-      installed: true,
-      version: probe.version,
-      status: "error",
-      auth: UNKNOWN_AUTH,
-      message:
-        reported === undefined
-          ? `This OMP does not report an RPC contract version. Ompanel needs contract ${lock.contract.version} (OMP ${lock.tag}).`
-          : `This OMP speaks RPC contract ${reported}. Ompanel needs contract ${lock.contract.version} (OMP ${lock.tag}).`,
-    });
+    return withExecutable(
+      ompSnapshot(settings, checkedAt, {
+        installed: true,
+        version: probe.version,
+        status: "error",
+        auth: UNKNOWN_AUTH,
+        message:
+          reported === undefined
+            ? `This OMP does not report an RPC contract version. Ompanel needs contract ${lock.contract.version} (OMP ${lock.tag}).`
+            : `This OMP speaks RPC contract ${reported}. Ompanel needs contract ${lock.contract.version} (OMP ${lock.tag}).`,
+      }),
+    );
   }
-  const sidecar = resolution.sidecar;
-  return ompSnapshot(
-    settings,
-    checkedAt,
-    {
-      installed: true,
-      version: probe.version,
-      status: "ready",
-      auth: ompAuthFromLoginProviders(probe.loginProviders),
-      ...(sidecar && !sidecar.verified
-        ? {
-            message: `Running the OMP binary at ${sidecar.path}, which Ompanel does not check against OMP ${lock.tag}.`,
-          }
-        : {}),
-    },
-    probe.models ?? [],
+  return withExecutable(
+    ompSnapshot(
+      settings,
+      checkedAt,
+      {
+        installed: true,
+        version: probe.version,
+        status: "ready",
+        auth: ompAuthFromLoginProviders(probe.loginProviders),
+        ...(sidecar && !sidecar.verified
+          ? {
+              message: `Running the OMP binary at ${sidecar.path}, which Ompanel does not check against OMP ${lock.tag}.`,
+            }
+          : {}),
+      },
+      probe.models ?? [],
+    ),
   );
 }

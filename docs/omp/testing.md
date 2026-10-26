@@ -8,7 +8,7 @@ Six layers, from fastest to most faithful.
 | Adapter         | `packages/provider-omp/src/server/adapter.test.ts` (and the process-layer tests next to it)                            | The adapter and thread process against the scripted fake `omp`   |
 | Control plane   | `packages/provider-omp/src/server/controlBinary.test.ts`                                                               | `OmpControlService` against the scripted control fake `omp`      |
 | Replay fixtures | `apps/server/src/orchestration-v2/testkit/OmpReplayFixtures.integration.test.ts`, fixtures in `testkit/fixtures/omp_*` | The process layer against stdout recorded from the pinned fork   |
-| End-to-end      | `apps/web/e2e/omp/omp-thread.spec.ts`, `omp-settings.spec.ts` (Playwright)                                             | The web app and server against a real `omp` and a scripted model |
+| End-to-end      | `apps/web/e2e/omp/omp-thread.spec.ts`, `omp-settings.spec.ts`, `omp-onboarding.spec.ts` (Playwright)                   | The web app and server against a real `omp` and a scripted model |
 | Live            | `apps/web/e2e/omp/omp-live.spec.ts` (Playwright, `OMPANEL_LIVE=1`)                                                     | The web app and server against a real `omp` and a real model     |
 
 The first four run in CI with the rest of the suite; none needs a model, an
@@ -210,6 +210,20 @@ with a full page load:
    enabled again, each after the confirmation that shows the command; `omp
    plugin list --json` agrees; Skills lists the plugin's skill, as `omp skill
    list` does. Nothing needs the network.
+
+`apps/web/e2e/omp/omp-onboarding.spec.ts` is P-07's [onboarding](onboarding.md)
+on a fresh OMP home (`freshOmpHome`: no `config.yml`, no `models.yml`), so the
+real `omp --mode rpc` refuses to start for want of a model (ompanel#144):
+
+1. the OMP card reads Needs setup, never Unavailable, and the Setup section
+   shows the sidecar found and `omp setup` as the current step;
+2. Accounts lists the login providers before setup (the placeholder-model
+   control server);
+3. Run omp setup opens the embedded terminal with the command typed; the test
+   then leaves the OMP home as the wizard would (`completeOmpSetup`: the
+   scripted model's `models.yml` and `modelRoles.default`), the section's
+   re-check sees OMP ready and hands over to Accounts, and a sign-in starts
+   there. OMP's own setup TUI is not driven.
 
 The fake login provider (`e2e/omp/fakeSignIn.ts`): OMP lists only built-in
 login providers in the control servers Ompanel starts (`--no-extensions`), so

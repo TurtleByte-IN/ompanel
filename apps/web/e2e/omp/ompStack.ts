@@ -30,6 +30,11 @@ export interface OmpStackOptions {
   readonly secretEnvironment?: Readonly<Record<string, string>>;
   /** Give OMP's control servers a fake login provider (`fakeSignIn.ts`); the G2 suite's sign-in. */
   readonly fakeSignIn?: boolean;
+  /**
+   * Start OMP as a fresh install: no default model and no `models.yml`, so `omp --mode rpc`
+   * refuses to start until {@link OmpStack.completeOmpSetup}.
+   */
+  readonly freshOmpHome?: boolean;
 }
 
 export interface OmpProcess {
@@ -54,6 +59,11 @@ export interface OmpStack {
   readonly omp: (...args: ReadonlyArray<string>) => string;
   /** The fake vendor and where the wrapper keeps its account, with `fakeSignIn`. */
   readonly signIn: { readonly vendor: FakeSignInVendor; readonly accountFile: string } | null;
+  /**
+   * Leaves the OMP home as `omp setup` would: the scripted model's provider and a default model.
+   * A no-op unless the stack started with `freshOmpHome`.
+   */
+  readonly completeOmpSetup: () => void;
   /** The server's output, pairing token redacted. */
   readonly serverLog: () => string;
   readonly stop: () => Promise<void>;
@@ -107,11 +117,21 @@ export const startOmpStack = async (options: OmpStackOptions = {}): Promise<OmpS
   for (const dir of [agentDir, userdata, workspace]) NodeFS.mkdirSync(dir, { recursive: true });
 
   // OMP's default model is the scripted one unless the live suite names a real one; nothing
-  // reads the developer's ~/.omp.
-  NodeFS.writeFileSync(
-    NodePath.join(agentDir, "config.yml"),
-    `modelRoles:\n  default: ${options.defaultModel ?? "fake/fake-model"}\n`,
-  );
+  // reads the developer's ~/.omp. A fresh OMP home gets both only from `completeOmpSetup`.
+  const ompConfig = `modelRoles:\n  default: ${options.defaultModel ?? "fake/fake-model"}\n`;
+  const modelDir = options.freshOmpHome === true ? NodePath.join(root, "omp-setup") : agentDir;
+  NodeFS.mkdirSync(modelDir, { recursive: true });
+  if (options.freshOmpHome !== true) {
+    NodeFS.writeFileSync(NodePath.join(agentDir, "config.yml"), ompConfig);
+  }
+  const completeOmpSetup = () => {
+    if (modelDir === agentDir) return;
+    NodeFS.copyFileSync(
+      NodePath.join(modelDir, "models.yml"),
+      NodePath.join(agentDir, "models.yml"),
+    );
+    NodeFS.writeFileSync(NodePath.join(agentDir, "config.yml"), ompConfig);
+  };
   const vendor = options.fakeSignIn === true ? await startFakeSignInVendor() : null;
   const signIn =
     vendor === null
@@ -164,7 +184,7 @@ export const startOmpStack = async (options: OmpStackOptions = {}): Promise<OmpS
   git("add", "README.md");
   git("commit", "-q", "-m", "Initial commit");
 
-  const model = await startScriptedModel(agentDir);
+  const model = await startScriptedModel(modelDir);
   const metrics = await startOtlpMetricsReceiver();
   const port = await freePort();
   const logPath = NodePath.join(root, "server.log");
@@ -230,6 +250,7 @@ export const startOmpStack = async (options: OmpStackOptions = {}): Promise<OmpS
     git,
     omp,
     signIn,
+    completeOmpSetup,
     serverLog: () =>
       secrets.reduce(
         (text, secret) => text.replaceAll(secret, "<redacted>"),

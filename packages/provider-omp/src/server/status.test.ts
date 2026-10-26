@@ -4,7 +4,7 @@ import * as Schema from "effect/Schema";
 import { OMP_LOCK } from "../ompLock.ts";
 import { OmpSettings } from "../settings.ts";
 import { OmpSidecarError } from "./sidecar.ts";
-import { ompProviderSnapshot } from "./status.ts";
+import { OMP_NEEDS_SETUP_MESSAGE, ompProviderSnapshot } from "./status.ts";
 
 const settings = { ...Schema.decodeSync(OmpSettings)({}), enabled: true };
 const checkedAt = "2026-10-26T00:00:00.000Z";
@@ -72,7 +72,11 @@ describe("ompProviderSnapshot", () => {
     const override = ompProviderSnapshot({
       settings,
       checkedAt,
-      resolution: { kind: "probed", probe, sidecar: { path: "/opt/omp", verified: false } },
+      resolution: {
+        kind: "probed",
+        probe,
+        sidecar: { path: "/opt/omp", verified: false, source: "override" },
+      },
     });
     assert.strictEqual(override.status, "ready");
     assert.include(override.message, "/opt/omp");
@@ -80,9 +84,36 @@ describe("ompProviderSnapshot", () => {
     const verified = ompProviderSnapshot({
       settings,
       checkedAt,
-      resolution: { kind: "probed", probe, sidecar: { path: "/cache/omp", verified: true } },
+      resolution: {
+        kind: "probed",
+        probe,
+        sidecar: { path: "/cache/omp", verified: true, source: "cache" },
+      },
     });
     assert.isUndefined(verified.message);
+    assert.deepStrictEqual(override.executable, { source: "custom", path: "/opt/omp" });
+    assert.deepStrictEqual(verified.executable, { source: "downloaded", path: "/cache/omp" });
+  });
+
+  it("reports an OMP without a model as needing setup, not as unavailable (ompanel#144)", () => {
+    const snapshot = ompProviderSnapshot({
+      settings,
+      checkedAt,
+      resolution: {
+        kind: "probed",
+        probe: { status: "failed", version: "18.12.6", stage: "ready", reason: "unconfigured" },
+        sidecar: { path: "/Applications/Ompanel.app/omp", verified: true, source: "bundled" },
+      },
+    });
+    assert.strictEqual(snapshot.status, "warning");
+    assert.isTrue(snapshot.installed);
+    assert.strictEqual(snapshot.version, "18.12.6");
+    assert.deepStrictEqual(snapshot.auth, { status: "unauthenticated" });
+    assert.strictEqual(snapshot.message, OMP_NEEDS_SETUP_MESSAGE);
+    assert.deepStrictEqual(snapshot.executable, {
+      source: "bundled",
+      path: "/Applications/Ompanel.app/omp",
+    });
   });
 
   it("reports signed-in OAuth providers and leaves API-key-only auth unknown", () => {
