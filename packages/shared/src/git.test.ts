@@ -137,6 +137,13 @@ describe("isTemporaryWorktreeBranch", () => {
     );
   });
 
+  it("names new refs ompanel/ and still recognizes upstream t3 refs", () => {
+    expect(buildTemporaryWorktreeBranchName(() => "deadbeef")).toBe("ompanel/deadbeef");
+    expect(isTemporaryWorktreeBranch("t3/deadbeef")).toBe(true);
+    expect(isTemporaryWorktreeBranch("t3-deadbeef")).toBe(true);
+    expect(flattenTemporaryWorktreeBranchName("t3/deadbeef")).toBe("ompanel-deadbeef");
+  });
+
   it("matches legacy t3code temporary worktree refs", () => {
     expect(isTemporaryWorktreeBranch("t3code/deadbeef")).toBe(true);
     expect(isTemporaryWorktreeBranch("t3code-deadbeef")).toBe(true);

@@ -9,10 +9,10 @@ const repoEnv = loadRepoEnv();
 // Install only bundle externals; the server bundle already carries its dependency tree.
 const isMainProcessExternal = (id: string) =>
   id === "electron" || id.startsWith("electron/") || isDesktopRuntimeExternalDependency(id);
-const shouldLaunchElectronAfterPack = process.env.T3CODE_DESKTOP_DEV === "1";
+const shouldLaunchElectronAfterPack = process.env.OMPANEL_DESKTOP_DEV === "1";
 const publicConfigDefine = {
-  __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__: JSON.stringify(
-    repoEnv.T3CODE_CLERK_PUBLISHABLE_KEY?.trim() ?? "",
+  __OMPANEL_BUILD_CLERK_PUBLISHABLE_KEY__: JSON.stringify(
+    repoEnv.OMPANEL_CLERK_PUBLISHABLE_KEY?.trim() ?? "",
   ),
 };
 
@@ -27,7 +27,7 @@ export default defineConfig({
       },
       dev: {
         command:
-          "node scripts/build-browser-secret.mjs && node scripts/build-preview-annotation-css.mjs && cross-env T3CODE_DESKTOP_DEV=1 vp pack --watch",
+          "node scripts/build-browser-secret.mjs && node scripts/build-preview-annotation-css.mjs && cross-env OMPANEL_DESKTOP_DEV=1 vp pack --watch",
         dependsOn: ["t3#build"],
         cache: false,
       },

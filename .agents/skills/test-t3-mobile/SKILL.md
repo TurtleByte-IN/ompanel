@@ -19,8 +19,8 @@ and stop verification. Do not install or switch to another automation system.
 
 Reuse this task's healthy backend. Otherwise run `vp run dev` from the
 repository root, retain its terminal session, and read the actual backend port
-from the dev-runner output. Use the worktree's ignored `.t3` state. Never run
-against `~/.t3/userdata`. The Browser panel is not required for this workflow.
+from the dev-runner output. Use the worktree's ignored `.ompanel` state. Never run
+against `~/.ompanel/userdata`. The Browser panel is not required for this workflow.
 
 Test with meaningful project and thread data. Read the shared
 [SQLite fixture reference](../test-t3-app/references/sqlite-fixtures.md) only
@@ -43,7 +43,7 @@ verification includes that step unless the user prohibits it.
 
 Start `vp run dev:client` from `apps/mobile`, or reuse a healthy Metro belonging
 to this checkout. Open its printed development-client URL with AgentDevice
-`open com.t3tools.t3code.dev <url>` and all returned target arguments.
+`open in.turtlebyte.ompanel.dev <url>` and all returned target arguments.
 The device must be able to reach both Metro and the isolated backend.
 Append `&disableAutoLaunch=1&disableFab=1` to the development-client URL query
 when developer chrome would obscure screenshots or taps; the SDK 58 dev client

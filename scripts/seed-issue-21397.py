@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """python3 scripts/seed-issue-21397.py --home NEW_DIR [matching|absent|unrelated] [--now [ISO]] [--source DB].
 
-Copies a migrated statev2.sqlite (default: this worktree's .t3, with dev stopped;
+Copies a migrated statev2.sqlite (default: this worktree's .ompanel, with dev stopped;
 run dev once first to migrate it) into NEW_DIR/userdata, then replaces every
 thread/project projection in that copy with a synthetic stopped usage-limit run.
 The source is only read as bytes, never opened by SQLite, so it stays unchanged.
@@ -45,7 +45,7 @@ root = pathlib.Path(__file__).resolve().parent.parent
 parser = argparse.ArgumentParser()
 parser.add_argument('mode', nargs='?', default='matching', choices=('matching', 'absent', 'unrelated'))
 parser.add_argument('--home', required=True, type=pathlib.Path, help='new T3 home to create; must not exist')
-parser.add_argument('--source', type=pathlib.Path, default=root / '.t3/userdata/statev2.sqlite')
+parser.add_argument('--source', type=pathlib.Path, default=root / '.ompanel/userdata/statev2.sqlite')
 parser.add_argument('--now', nargs='?', const='now', help='shift fixture times so the limit is hit at this ISO time')
 args = parser.parse_args()
 mode = args.mode
@@ -57,7 +57,7 @@ if source.is_symlink() or not source.is_file():
     raise SystemExit(f'Expected a migrated statev2.sqlite regular file at {source}')
 # Resolve the parent, not the home itself, so a symlink at the home path is refused below.
 home = args.home.absolute().parent.resolve() / args.home.name
-live = (pathlib.Path.home() / '.t3').resolve()
+live = (pathlib.Path.home() / '.ompanel').resolve()
 if not args.home.name or home == live or live in home.parents:
     raise SystemExit(f'Refusing fixture home {home}: pick a new directory outside {live}')
 home.parent.mkdir(parents=True, exist_ok=True)

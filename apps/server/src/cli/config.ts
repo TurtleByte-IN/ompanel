@@ -25,6 +25,7 @@ import { readBootstrapEnvelope } from "../bootstrap.ts";
 import { resolveServiceLauncherMode } from "../cloud/serviceLauncherClient.ts";
 import * as ServerConfig from "../config.ts";
 import { expandHomePath, resolveBaseDir } from "../os-jank.ts";
+import { migrateLegacyHomeOnStartup } from "../legacyHomeMigration.ts";
 import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 
 const modeFlag = Flag.Literals("mode", ServerConfig.RuntimeMode.literals).pipe(
@@ -42,7 +43,7 @@ const hostFlag = Flag.String("host").pipe(
 );
 export const baseDirFlag = Flag.String("base-dir").pipe(
   Flag.withDescription(
-    "Explicit T3 Code data directory; runtime state is stored under userdata (equivalent to T3CODE_HOME).",
+    "Explicit T3 Code data directory; runtime state is stored under userdata (equivalent to OMPANEL_HOME).",
   ),
   Flag.optional,
 );
@@ -68,7 +69,7 @@ const autoBootstrapProjectFromCwdFlag = Flag.Boolean("auto-bootstrap-project-fro
 );
 const logWebSocketEventsFlag = Flag.Boolean("log-websocket-events").pipe(
   Flag.withDescription(
-    "Emit server-side logs for outbound WebSocket push traffic (equivalent to T3CODE_LOG_WS_EVENTS).",
+    "Emit server-side logs for outbound WebSocket push traffic (equivalent to OMPANEL_LOG_WS_EVENTS).",
   ),
   Flag.withAlias("log-ws-events"),
   Flag.optional,
@@ -85,53 +86,53 @@ const tailscaleServePortFlag = Flag.Int("tailscale-serve-port").pipe(
   Flag.optional,
 );
 
-export const traceFileConfig = Config.String("T3CODE_TRACE_FILE").pipe(
+export const traceFileConfig = Config.String("OMPANEL_TRACE_FILE").pipe(
   Config.option,
   Config.map(Option.getOrUndefined),
 );
-export const traceMaxFilesConfig = Config.Int("T3CODE_TRACE_MAX_FILES").pipe(
+export const traceMaxFilesConfig = Config.Int("OMPANEL_TRACE_MAX_FILES").pipe(
   Config.withDefault(10),
 );
 
 const EnvServerConfig = Config.all({
-  logLevel: Config.LogLevel("T3CODE_LOG_LEVEL").pipe(Config.withDefault("Info")),
-  traceMinLevel: Config.LogLevel("T3CODE_TRACE_MIN_LEVEL").pipe(Config.withDefault("Info")),
-  traceTimingEnabled: Config.Boolean("T3CODE_TRACE_TIMING_ENABLED").pipe(Config.withDefault(true)),
+  logLevel: Config.LogLevel("OMPANEL_LOG_LEVEL").pipe(Config.withDefault("Info")),
+  traceMinLevel: Config.LogLevel("OMPANEL_TRACE_MIN_LEVEL").pipe(Config.withDefault("Info")),
+  traceTimingEnabled: Config.Boolean("OMPANEL_TRACE_TIMING_ENABLED").pipe(Config.withDefault(true)),
   traceFile: traceFileConfig,
-  traceMaxBytes: Config.Int("T3CODE_TRACE_MAX_BYTES").pipe(Config.withDefault(10 * 1024 * 1024)),
+  traceMaxBytes: Config.Int("OMPANEL_TRACE_MAX_BYTES").pipe(Config.withDefault(10 * 1024 * 1024)),
   traceMaxFiles: traceMaxFilesConfig,
-  traceBatchWindowMs: Config.Int("T3CODE_TRACE_BATCH_WINDOW_MS").pipe(Config.withDefault(1_000)),
-  otlpTracesUrl: Config.String("T3CODE_OTLP_TRACES_URL").pipe(
+  traceBatchWindowMs: Config.Int("OMPANEL_TRACE_BATCH_WINDOW_MS").pipe(Config.withDefault(1_000)),
+  otlpTracesUrl: Config.String("OMPANEL_OTLP_TRACES_URL").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
-  otlpMetricsUrl: Config.String("T3CODE_OTLP_METRICS_URL").pipe(
+  otlpMetricsUrl: Config.String("OMPANEL_OTLP_METRICS_URL").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
-  otlpLogsUrl: Config.String("T3CODE_OTLP_LOGS_URL").pipe(
+  otlpLogsUrl: Config.String("OMPANEL_OTLP_LOGS_URL").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
-  otlpExportIntervalMs: Config.Int("T3CODE_OTLP_EXPORT_INTERVAL_MS").pipe(
+  otlpExportIntervalMs: Config.Int("OMPANEL_OTLP_EXPORT_INTERVAL_MS").pipe(
     Config.withDefault(10_000),
   ),
-  otlpHeaders: Config.schema(OtlpHeadersFromString, "T3CODE_OTLP_HEADERS").pipe(
+  otlpHeaders: Config.schema(OtlpHeadersFromString, "OMPANEL_OTLP_HEADERS").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
-  otlpProtocol: Config.schema(OtlpProtocol, "T3CODE_OTLP_PROTOCOL").pipe(
+  otlpProtocol: Config.schema(OtlpProtocol, "OMPANEL_OTLP_PROTOCOL").pipe(
     Config.withDefault("http/json"),
   ),
-  mode: Config.schema(ServerConfig.RuntimeMode, "T3CODE_MODE").pipe(
+  mode: Config.schema(ServerConfig.RuntimeMode, "OMPANEL_MODE").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
-  port: Config.Port("T3CODE_PORT").pipe(Config.option, Config.map(Option.getOrUndefined)),
-  host: Config.String("T3CODE_HOST").pipe(Config.option, Config.map(Option.getOrUndefined)),
-  t3Home: Config.String("T3CODE_HOME").pipe(Config.option, Config.map(Option.getOrUndefined)),
+  port: Config.Port("OMPANEL_PORT").pipe(Config.option, Config.map(Option.getOrUndefined)),
+  host: Config.String("OMPANEL_HOST").pipe(Config.option, Config.map(Option.getOrUndefined)),
+  t3Home: Config.String("OMPANEL_HOME").pipe(Config.option, Config.map(Option.getOrUndefined)),
   devUrl: Config.URL("VITE_DEV_SERVER_URL").pipe(Config.option, Config.map(Option.getOrUndefined)),
-  devAllowedOrigins: Config.String("T3CODE_DEV_ALLOWED_ORIGINS").pipe(
+  devAllowedOrigins: Config.String("OMPANEL_DEV_ALLOWED_ORIGINS").pipe(
     Config.withDefault(""),
     Config.map((value) =>
       value
@@ -140,33 +141,33 @@ const EnvServerConfig = Config.all({
         .filter((entry) => entry.length > 0),
     ),
   ),
-  noBrowser: Config.Boolean("T3CODE_NO_BROWSER").pipe(
+  noBrowser: Config.Boolean("OMPANEL_NO_BROWSER").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
-  bootstrapFd: Config.Int("T3CODE_BOOTSTRAP_FD").pipe(
+  bootstrapFd: Config.Int("OMPANEL_BOOTSTRAP_FD").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
-  autoBootstrapProjectFromCwd: Config.Boolean("T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD").pipe(
+  autoBootstrapProjectFromCwd: Config.Boolean("OMPANEL_AUTO_BOOTSTRAP_PROJECT_FROM_CWD").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
-  logWebSocketEvents: Config.Boolean("T3CODE_LOG_WS_EVENTS").pipe(
+  logWebSocketEvents: Config.Boolean("OMPANEL_LOG_WS_EVENTS").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
-  tailscaleServeEnabled: Config.Boolean("T3CODE_TAILSCALE_SERVE").pipe(
+  tailscaleServeEnabled: Config.Boolean("OMPANEL_TAILSCALE_SERVE").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
-  tailscaleServePort: Config.Port("T3CODE_TAILSCALE_SERVE_PORT").pipe(
+  tailscaleServePort: Config.Port("OMPANEL_TAILSCALE_SERVE_PORT").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
 });
 
-const DevAuthTokenConfig = Config.Redacted("T3CODE_DEV_AUTH_TOKEN").pipe(
+const DevAuthTokenConfig = Config.Redacted("OMPANEL_DEV_AUTH_TOKEN").pipe(
   Config.map((token) => Redacted.make(Redacted.value(token).trim())),
   Config.mapEffect((token) =>
     Redacted.value(token).length === 0 || Redacted.value(token).length >= 32
@@ -175,7 +176,7 @@ const DevAuthTokenConfig = Config.Redacted("T3CODE_DEV_AUTH_TOKEN").pipe(
           new Config.ConfigError(
             new Schema.SchemaError(
               new SchemaIssue.InvalidValue({
-                message: "T3CODE_DEV_AUTH_TOKEN must contain at least 32 characters.",
+                message: "OMPANEL_DEV_AUTH_TOKEN must contain at least 32 characters.",
               }),
             ),
           ),
@@ -346,6 +347,7 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     }
   }
   yield* fs.makeDirectory(cwd, { recursive: true });
+  yield* migrateLegacyHomeOnStartup(derivedPaths.stateDir);
   yield* ServerConfig.ensureServerDirectories(derivedPaths);
   const persistedObservabilitySettings = yield* loadPersistedObservabilitySettings(
     derivedPaths.settingsPath,
@@ -410,7 +412,7 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     Option.fromUndefinedOr(bootstrap?.host),
   );
   // A background service exists to be reached from other devices, so it
-  // listens on private networks unless `service.env` sets `T3CODE_HOST`.
+  // listens on private networks unless `service.env` sets `OMPANEL_HOST`.
   // Clients then learn its LAN address and prefer it over T3 Connect.
   const privateNetworkOnly =
     Option.isNone(explicitHost) &&

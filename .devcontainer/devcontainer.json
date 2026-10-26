@@ -21,9 +21,9 @@
     "storage": "32gb"
   },
   "containerEnv": {
-    // Keep all runtime state inside the (gitignored) workspace .t3, matching
+    // Keep all runtime state inside the (gitignored) workspace .ompanel, matching
     // the worktree default. An explicit --home-dir still wins.
-    "T3CODE_HOME": "${containerWorkspaceFolder}/.t3"
+    "OMPANEL_HOME": "${containerWorkspaceFolder}/.ompanel"
   },
   "mounts": [
     // vp keeps the pnpm content-addressable store and metadata cache under
@@ -46,7 +46,7 @@
       "onAutoForward": "notify"
     },
     "13773": {
-      "label": "t3 server",
+      "label": "ompanel server",
       "onAutoForward": "silent"
     }
   },
@@ -61,7 +61,7 @@
         // burns CPU and file handles.
         "files.watcherExclude": {
           "**/.repos/**": true,
-          "**/.t3/**": true
+          "**/.ompanel/**": true
         },
         "search.exclude": {
           "**/.repos": true

@@ -15,7 +15,7 @@ const provideEnv = (env: Readonly<Record<string, string>>) =>
 
 it.effect("rejects an insecure runtime relay URL override", () =>
   makeRelayUrlConfig("https://embedded.example.test").pipe(
-    provideEnv({ T3CODE_RELAY_URL: "http://runtime.example.test" }),
+    provideEnv({ OMPANEL_RELAY_URL: "http://runtime.example.test" }),
     Effect.flip,
   ),
 );
@@ -29,7 +29,7 @@ it.effect("rejects malformed or insecure hosted app URLs", () =>
       "https://app.t3.codes?alias=true",
     ]) {
       const result = yield* hostedAppUrlConfig.pipe(
-        provideEnv({ T3CODE_HOSTED_APP_URL: value }),
+        provideEnv({ OMPANEL_HOSTED_APP_URL: value }),
         Effect.result,
       );
       assert.isTrue(Result.isFailure(result), value);
@@ -62,8 +62,8 @@ it("product opt-out disables relay tracing with either built-in or runtime crede
     tracesToken: "embedded-token",
   };
   const env = {
-    T3CODE_TELEMETRY_ENABLED: "false",
-    T3CODE_OTEL_SDK_DISABLED: "false",
+    OMPANEL_TELEMETRY_ENABLED: "false",
+    OMPANEL_OTEL_SDK_DISABLED: "false",
   };
 
   assert.equal(resolveRelayClientTracingConfig(env, fallback), null);
@@ -71,9 +71,9 @@ it("product opt-out disables relay tracing with either built-in or runtime crede
     resolveRelayClientTracingConfig(
       {
         ...env,
-        T3CODE_RELAY_CLIENT_OTLP_TRACES_URL: "https://runtime.example.test/v1/traces",
-        T3CODE_RELAY_CLIENT_OTLP_TRACES_DATASET: "runtime-dataset",
-        T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN: "runtime-token",
+        OMPANEL_RELAY_CLIENT_OTLP_TRACES_URL: "https://runtime.example.test/v1/traces",
+        OMPANEL_RELAY_CLIENT_OTLP_TRACES_DATASET: "runtime-dataset",
+        OMPANEL_RELAY_CLIENT_OTLP_TRACES_TOKEN: "runtime-token",
       },
       fallback,
     ),

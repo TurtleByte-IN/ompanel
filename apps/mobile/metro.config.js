@@ -28,7 +28,7 @@ config.resolver = {
       : config.resolver?.blockList
         ? [config.resolver.blockList]
         : []),
-    new RegExp(`${escapedWorkspaceRoot}[/\\\\]\\.t3[/\\\\].*`),
+    new RegExp(`${escapedWorkspaceRoot}[/\\\\]\\.ompanel[/\\\\].*`),
   ],
   extraNodeModules: {
     ...config.resolver?.extraNodeModules,
@@ -59,7 +59,7 @@ async function generateMobileThirdPartyLicenses() {
     allowMissingGeneratedNotices:
       process.env.NODE_ENV !== "production" &&
       process.env.EAS_BUILD !== "true" &&
-      process.env.T3CODE_LICENSES_STRICT !== "1",
+      process.env.OMPANEL_LICENSES_STRICT !== "1",
   });
 
   await Promise.all([

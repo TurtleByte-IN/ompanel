@@ -16,7 +16,7 @@ const AGENT_DEVICE = NodePath.join(
   REPO_ROOT,
   "scripts/node_modules/agent-device/bin/agent-device.mjs",
 );
-const BUNDLE_ID = "com.t3tools.t3code.dev";
+const BUNDLE_ID = "in.turtlebyte.ompanel.dev";
 const METRO_PORT = 8081;
 // Persistent so the XCTest runner agent-device builds per simulator survives between runs.
 const AGENT_DEVICE_STATE = NodePath.join(NodeOS.homedir(), ".cache/t3code/mobile-e2e/agent-device");
@@ -507,7 +507,7 @@ async function runDevice(
     });
     const metroUrl = encodeURIComponent(`http://${metroHost}:${METRO_PORT}`);
     await device.openUrl(
-      `t3code-dev://expo-development-client/?url=${metroUrl}&disableOnboarding=1&disableFab=1&disableAutoLaunch=1`,
+      `ompanel-dev://expo-development-client/?url=${metroUrl}&disableOnboarding=1&disableFab=1&disableAutoLaunch=1`,
     );
     // Snapshots read through an agent-device app session; open attaches one to the running app.
     await device.agent(["open", BUNDLE_ID]);
@@ -526,7 +526,7 @@ async function runDevice(
         pairingUrl: await issuePairUrl(environment),
         autoConnect: "1",
       });
-      await device.openUrl(`t3code-dev://connections/new?${pairing}`);
+      await device.openUrl(`ompanel-dev://connections/new?${pairing}`);
       home = await device.waitFor(paired, "the paired thread list", 45_000).catch(() => null);
     }
     if (!home) throw new Error("The app did not show the fixture threads after pairing.");
@@ -712,7 +712,7 @@ async function main() {
         "start",
         "--dev-client",
         "--scheme",
-        "t3code-dev",
+        "ompanel-dev",
         "--lan",
         "--port",
         String(METRO_PORT),

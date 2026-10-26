@@ -71,7 +71,7 @@ function makeFakeBrowserWindow() {
     copyImageAt: vi.fn(),
     focus: vi.fn(),
     isDestroyed: vi.fn(() => false),
-    getURL: vi.fn(() => "t3code-dev://app/"),
+    getURL: vi.fn(() => "ompanel-dev://app/"),
     getZoomLevel: vi.fn(() => zoomLevel),
     getZoomFactor: vi.fn(() => 1.2 ** zoomLevel),
     setZoomLevel: vi.fn((level: number) => {
@@ -198,7 +198,7 @@ const layerDesktopEnvironment = DesktopEnvironment.layer(environmentInput).pipe(
     Layer.mergeAll(
       NodeServices.layer,
       DesktopConfig.layerTest({
-        T3CODE_PORT: "3773",
+        OMPANEL_PORT: "3773",
         VITE_DEV_SERVER_URL: "http://127.0.0.1:5733",
       }),
     ),

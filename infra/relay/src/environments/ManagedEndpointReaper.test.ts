@@ -227,7 +227,7 @@ function harness(input?: {
       teamId: "team-id",
       keyId: "key-id",
       privateKey: Redacted.make("private-key"),
-      bundleId: "com.t3tools.t3code.dev",
+      bundleId: "in.turtlebyte.ompanel.dev",
     },
     apnsDeliveryJobSigningSecret: Redacted.make("job-secret"),
     clerkSecretKey: Redacted.make("clerk-secret"),

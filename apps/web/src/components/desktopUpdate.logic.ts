@@ -1,8 +1,9 @@
 import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/contracts";
+import { REPOSITORY } from "@t3tools/shared/brand";
 
 export type DesktopUpdateButtonAction = "download" | "install" | "none";
 
-const DEFAULT_DESKTOP_RELEASE_REPOSITORY = "pingdotgg/t3code";
+const DEFAULT_DESKTOP_RELEASE_REPOSITORY = REPOSITORY;
 const GITHUB_REPOSITORY_SEGMENT = /^[A-Za-z0-9._-]+$/u;
 
 function isValidRepositorySegment(value: string | undefined): value is string {
@@ -28,7 +29,7 @@ export function getDesktopUpdateDownloadedVersion(state: DesktopUpdateState): st
 
 export function getDesktopUpdateReleaseUrl(
   version: string | null,
-  repository: string | undefined = import.meta.env.T3CODE_DESKTOP_UPDATE_REPOSITORY,
+  repository: string | undefined = import.meta.env.OMPANEL_DESKTOP_UPDATE_REPOSITORY,
 ): string | null {
   const normalizedVersion = version?.trim();
   if (!normalizedVersion) return null;
@@ -36,7 +37,7 @@ export function getDesktopUpdateReleaseUrl(
 }
 
 export function getDesktopUpdateReleaseHistoryUrl(
-  repository: string | undefined = import.meta.env.T3CODE_DESKTOP_UPDATE_REPOSITORY,
+  repository: string | undefined = import.meta.env.OMPANEL_DESKTOP_UPDATE_REPOSITORY,
 ): string {
   return desktopReleaseRepositoryUrl(repository);
 }

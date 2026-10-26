@@ -208,7 +208,7 @@ describe("queued PR checkout", () => {
     });
   const preparedCheckout = {
     branch: "pr-123",
-    worktreePath: "/repo/.t3/worktrees/pr-123",
+    worktreePath: "/repo/.ompanel/worktrees/pr-123",
     isOnPullRequestHead: true,
   };
 

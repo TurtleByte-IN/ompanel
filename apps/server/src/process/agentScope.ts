@@ -18,11 +18,11 @@ import * as Path from "effect/Path";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 
-const AGENT_SLICE = "app-t3code-agents.slice";
+const AGENT_SLICE = "app-ompanel-agents.slice";
 
 export function ownedAgentSlice(stateDir: string): string {
   const hash = NodeCrypto.createHash("sha256").update(stateDir).digest("hex").slice(0, 12);
-  return `app-t3code-agents-${hash}.slice`;
+  return `app-ompanel-agents-${hash}.slice`;
 }
 
 const GiB = 1024 ** 3;
@@ -300,7 +300,7 @@ export const make = Effect.gen(function* () {
   );
 
   const stop = Effect.fn("AgentScope.stop")(function* (unit: string) {
-    if (!unit.startsWith("t3code-") || !unit.endsWith(".scope")) return;
+    if (!unit.startsWith("ompanel-") || !unit.endsWith(".scope")) return;
     const scope = yield* systemd;
     if (scope === undefined) return;
     const state = yield* readScope(scope.systemctl, unit);
@@ -345,7 +345,7 @@ export const make = Effect.gen(function* () {
       if (resolved === null) return { command, args };
       const scope = yield* systemd;
       if (scope === undefined) return agentScopeCommand({ command: resolved, args });
-      const unit = `t3code-${name}-${NodeCrypto.randomUUID().slice(0, 8)}.scope`;
+      const unit = `ompanel-${name}-${NodeCrypto.randomUUID().slice(0, 8)}.scope`;
       // A continuing shared scope cannot attribute a tool's OOM to one thread.
       // Clear the launch thread's previous scope instead.
       const continuing = shared === true && scope.supportsOomPolicy;

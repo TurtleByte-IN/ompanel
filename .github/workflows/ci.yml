@@ -418,8 +418,8 @@ jobs:
       - name: Test
         if: steps.changes.outputs.test_server != 'false'
         env:
-          T3CODE_TRANSFER_BUDGET_REPORT_PATH: ${{ runner.temp }}/t3code-transfer-budget.md
-          T3CODE_TRANSFER_BUDGET_RESULT_PATH: ${{ runner.temp }}/thread-transfer-result.json
+          OMPANEL_TRANSFER_BUDGET_REPORT_PATH: ${{ runner.temp }}/t3code-transfer-budget.md
+          OMPANEL_TRANSFER_BUDGET_RESULT_PATH: ${{ runner.temp }}/thread-transfer-result.json
         run: >-
           vp run test:cached -- --shard ${{ matrix.shard }}/${{ strategy.job-total }}
           --uncached apps/server/integration/transferBudgetV2.integration.test.ts

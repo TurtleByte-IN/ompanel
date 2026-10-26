@@ -18,9 +18,9 @@ import * as ExternalLauncher from "../process/externalLauncher.ts";
 import * as CliTokenManager from "./CliTokenManager.ts";
 
 const TEST_ENV = {
-  T3CODE_CLERK_PUBLISHABLE_KEY: "pk_test_Y2xlcmsuZXhhbXBsZS50ZXN0JA==",
-  T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: "oauth_client_test",
-  T3CODE_HOSTED_APP_URL: "https://hosted.example.test",
+  OMPANEL_CLERK_PUBLISHABLE_KEY: "pk_test_Y2xlcmsuZXhhbXBsZS50ZXN0JA==",
+  OMPANEL_CLERK_CLI_OAUTH_CLIENT_ID: "oauth_client_test",
+  OMPANEL_HOSTED_APP_URL: "https://hosted.example.test",
 };
 
 interface RecordedTokenRequest {
@@ -222,7 +222,7 @@ it.effect.each([
       const error = yield* manager.getExisting.pipe(Effect.flip);
       assert.instanceOf(error, CliTokenManager.CloudCliCredentialRefreshError);
       assert.equal(error.requiresLogin, requiresLogin);
-      assert.equal(error.message.includes("t3 connect login"), requiresLogin);
+      assert.equal(error.message.includes("ompanel connect login"), requiresLogin);
       assert.equal(error.message.includes("OAuth error: invalid_grant"), diagnostic);
       assert.notInclude(error.message, "private");
       assert.equal(error.message.includes("OAuth error:"), diagnostic);

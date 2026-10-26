@@ -23,7 +23,7 @@ import * as HtmlRender from "./HtmlRender.ts";
 import { HtmlRenderBrowserError } from "./headlessChrome.ts";
 import * as PreviewBrowser from "../preview/PreviewBrowser.ts";
 
-const TEST_BROWSER_ENV = "T3CODE_TEST_HEADLESS_SHELL";
+const TEST_BROWSER_ENV = "OMPANEL_TEST_HEADLESS_SHELL";
 
 const layerHtmlRender = (
   executable?: string,

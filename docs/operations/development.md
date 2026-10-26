@@ -59,15 +59,15 @@ Add `--browser` to open a browser automatically.
 
 ### State and ports
 
-Linked worktrees default to their own `.t3/userdata`, even when `T3CODE_HOME` is set.
-The main checkout defaults to `~/.t3/dev`. An explicit `--home-dir` wins in both cases.
+Linked worktrees default to their own `.ompanel/userdata`, even when `OMPANEL_HOME` is set.
+The main checkout defaults to `~/.ompanel/dev`. An explicit `--home-dir` wins in both cases.
 The first start in a worktree seeds its empty database from a read-only copy of
-`~/.t3/userdata`; `--no-seed` or `T3CODE_DEV_SEED=0` skips that.
-Never run a development server against the live `~/.t3/userdata`.
+`~/.ompanel/userdata`; `--no-seed` or `OMPANEL_DEV_SEED=0` skips that.
+Never run a development server against the live `~/.ompanel/userdata`.
 See [test data](../../AGENTS.md#test-data) for copying a consistent database snapshot.
 
 Read ports from the `[dev-runner]` output. Worktrees derive stable preferences from their paths,
-but occupied ports can shift them. `T3CODE_PORT_OFFSET` or `T3CODE_DEV_INSTANCE` can select a
+but occupied ports can shift them. `OMPANEL_PORT_OFFSET` or `OMPANEL_DEV_INSTANCE` can select a
 different preference when needed.
 
 ### Sharing and remote debugging
@@ -80,7 +80,7 @@ Leave `VITE_HTTP_URL` and `VITE_WS_URL` unset. Vite proxies the backend through 
 origin so the same build works over localhost and remote connections.
 
 Shared runs enable bundled dev to avoid a network round trip for each import level.
-`T3CODE_BUNDLED_DEV=0` opts out when debugging bundler differences. Two reload traps matter
+`OMPANEL_BUNDLED_DEV=0` opts out when debugging bundler differences. Two reload traps matter
 when changing this setup:
 
 - The web entry must dynamically import the app so React refresh initializes before application
@@ -120,7 +120,7 @@ openssl rand -hex 32
 Put that value in the main checkout's gitignored `.env`:
 
 ```dotenv
-T3CODE_DEV_AUTH_TOKEN=<the value generated above>
+OMPANEL_DEV_AUTH_TOKEN=<the value generated above>
 ```
 
 The `t3.json` Setup Worktree action links that file to each worktree's `.env`. The dev runner reads repository env files at startup. `.env.local` and inherited process
@@ -129,7 +129,7 @@ environment values override `.env`, so no per-worktree export is needed after se
 For a manual worktree or launcher without that link, export the same fixed value instead:
 
 ```sh
-export T3CODE_DEV_AUTH_TOKEN="<the value generated above>"
+export OMPANEL_DEV_AUTH_TOKEN="<the value generated above>"
 ```
 
 Do not generate a new value at startup. Start or restart `vp run dev --share` after configuration,

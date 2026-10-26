@@ -71,7 +71,7 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
       .map((server) => ({
         environmentId: server.environmentId,
         label: server.serverLabel,
-        reason: `t3@${targetVersion} is not on npm yet`,
+        reason: `ompanel@${targetVersion} is not on npm yet`,
       })),
   ];
   const restarts = collectRestartingMachines(machines, servers, localUpdateVersion !== null);

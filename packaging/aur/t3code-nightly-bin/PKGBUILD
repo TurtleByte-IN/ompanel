@@ -97,7 +97,7 @@ Type=Application
 Icon=t3code-nightly
 StartupWMClass=t3code
 Categories=Development;
-MimeType=x-scheme-handler/t3code;
+MimeType=x-scheme-handler/ompanel;
 EOF
 
   install -Dm644 "$srcdir/${pkgname}-${pkgver}-LICENSE" \

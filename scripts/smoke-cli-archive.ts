@@ -96,7 +96,7 @@ const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
     });
   }
   const contentDir = path.join(scratch, root);
-  const executable = path.join(contentDir, platform === "win32" ? "t3.exe" : "t3");
+  const executable = path.join(contentDir, platform === "win32" ? "ompanel.exe" : "ompanel");
   for (const required of [executable, path.join(contentDir, "client/index.html")]) {
     if (!(yield* fs.exists(required))) {
       return yield* new CliArchiveSmokeError({
@@ -129,10 +129,10 @@ const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
           USERPROFILE: home,
           TMPDIR: scratch,
           TEMP: scratch,
-          T3CODE_HOME: home,
+          OMPANEL_HOME: home,
           // The archive has a release channel built in, so its events would
           // look like a real new install.
-          T3CODE_TELEMETRY_ENABLED: "false",
+          OMPANEL_TELEMETRY_ENABLED: "false",
         },
         extendEnv: false,
       },

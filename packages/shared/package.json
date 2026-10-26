@@ -407,6 +407,10 @@
       "types": "./src/hostClassification.ts",
       "import": "./src/hostClassification.ts"
     },
+    "./brand": {
+      "types": "./src/brand.ts",
+      "import": "./src/brand.ts"
+    },
     "./cliRelease": {
       "types": "./src/cliRelease.ts",
       "import": "./src/cliRelease.ts"

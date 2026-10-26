@@ -17,9 +17,11 @@ it("stays byte-identical to .github/triage/PLAYBOOK.md", () => {
 
 it("launch prompt stays a single argv-safe line naming the prompt file", () => {
   // Windows .cmd shims cannot carry multiline argv.
-  const launch = buildTriageLaunchPrompt(String.raw`C:\Users\a b\.t3\userdata\triage\x\prompt.md`);
+  const launch = buildTriageLaunchPrompt(
+    String.raw`C:\Users\a b\.ompanel\userdata\triage\x\prompt.md`,
+  );
   assert.notInclude(launch, "\n");
-  assert.include(launch, String.raw`C:\Users\a b\.t3\userdata\triage\x\prompt.md`);
+  assert.include(launch, String.raw`C:\Users\a b\.ompanel\userdata\triage\x\prompt.md`);
   assert.isBelow(launch.length, 1_000);
 });
 
@@ -29,21 +31,21 @@ it("context file labels the CLI version as the CLI's, not the user's build", () 
     cliVersion: "0.0.42",
     os: "linux x64 (7.2.0)",
     nodeVersion: "v26.8.2",
-    launchedAs: "npx t3 triage",
+    launchedAs: "npx ompanel triage",
     server: "running (pid 42, http://127.0.0.1:3773, version 0.0.43-nightly.20260923.2173)",
     paths: {
-      stateDir: "/home/u/.t3/userdata",
-      dbPath: "/home/u/.t3/userdata/state.sqlite",
-      settingsPath: "/home/u/.t3/userdata/settings.json",
-      logsDir: "/home/u/.t3/userdata/logs",
-      serviceLogPath: "/home/u/.t3/userdata/logs/boot-service.log",
-      desktopBackendLogGlob: "/home/u/.t3/userdata/logs/server-child*.log*",
-      serverTracePath: "/home/u/.t3/userdata/logs/server.trace.ndjson",
-      providerEventLogPath: "/home/u/.t3/userdata/logs/provider/events.log",
-      terminalLogsDir: "/home/u/.t3/userdata/logs/terminals",
-      providerStatusCacheDir: "/home/u/.t3/caches",
-      secretsDir: "/home/u/.t3/userdata/secrets",
-      sourceCacheDir: "/home/u/.t3/source",
+      stateDir: "/home/u/.ompanel/userdata",
+      dbPath: "/home/u/.ompanel/userdata/state.sqlite",
+      settingsPath: "/home/u/.ompanel/userdata/settings.json",
+      logsDir: "/home/u/.ompanel/userdata/logs",
+      serviceLogPath: "/home/u/.ompanel/userdata/logs/boot-service.log",
+      desktopBackendLogGlob: "/home/u/.ompanel/userdata/logs/server-child*.log*",
+      serverTracePath: "/home/u/.ompanel/userdata/logs/server.trace.ndjson",
+      providerEventLogPath: "/home/u/.ompanel/userdata/logs/provider/events.log",
+      terminalLogsDir: "/home/u/.ompanel/userdata/logs/terminals",
+      providerStatusCacheDir: "/home/u/.ompanel/caches",
+      secretsDir: "/home/u/.ompanel/userdata/secrets",
+      sourceCacheDir: "/home/u/.ompanel/source",
     },
   });
   assert.notInclude(context, "Installed version");

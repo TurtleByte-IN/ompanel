@@ -1,3 +1,4 @@
+import { CLI_COMMAND } from "@t3tools/shared/brand";
 import { doctorCommand } from "./cli/doctor.ts";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -50,7 +51,7 @@ const connectUnavailableCommand = Command.make("connect", {
   Command.withHandler(() =>
     Effect.fail(
       new CliError.ShowHelp({
-        commandPath: ["t3", "connect"],
+        commandPath: [CLI_COMMAND, "connect"],
         errors: [new ConnectPublicConfigMissingError({ cause: connectPublicConfigMissingMessage })],
       }),
     ),
@@ -58,14 +59,14 @@ const connectUnavailableCommand = Command.make("connect", {
 );
 
 export const makeCli = ({ cloudEnabled = hasCloudPublicConfig } = {}) =>
-  Command.make("t3", { ...sharedServerCommandFlags }).pipe(
+  Command.make(CLI_COMMAND, { ...sharedServerCommandFlags }).pipe(
     Command.withDescription("Run the T3 Code server."),
     Command.withHandler(runDefaultServerCommand),
     Command.withSubcommands([
       Command.make("help").pipe(
         Command.withDescription("Show command help."),
         Command.withHandler(() =>
-          Effect.fail(new CliError.ShowHelp({ commandPath: ["t3"], errors: [] })),
+          Effect.fail(new CliError.ShowHelp({ commandPath: [CLI_COMMAND], errors: [] })),
         ),
       ),
       acpMcpBridgeCommand,
