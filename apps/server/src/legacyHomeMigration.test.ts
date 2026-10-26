@@ -28,6 +28,7 @@ function writeDatabase(file: string, input: { readonly events: ReadonlyArray<str
       CREATE TABLE auth_sessions (session_id TEXT PRIMARY KEY);
       CREATE TABLE auth_pairing_links (id TEXT PRIMARY KEY, credential TEXT);
       CREATE TABLE scheduled_tasks (task_id TEXT PRIMARY KEY, webhook_token TEXT, webhook_secret TEXT);
+      CREATE TABLE scheduled_task_webhook_pending (delivery_id TEXT PRIMARY KEY, task_id TEXT, task_json TEXT, request_json TEXT);
     `);
     for (const id of input.events) {
       db.prepare("INSERT INTO orchestration_v2_events (id) VALUES (?)").run(id);
@@ -45,6 +46,9 @@ function seedDatabase(file: string, events: ReadonlyArray<string>) {
     INSERT INTO auth_sessions (session_id) VALUES ('upstream-device');
     INSERT INTO auth_pairing_links (id, credential) VALUES ('upstream-link', '${UPSTREAM_PAIRING_CREDENTIAL}');
     INSERT INTO scheduled_tasks VALUES ('nightly', 'upstream-webhook-token', 'upstream-webhook-secret');
+    INSERT INTO scheduled_task_webhook_pending VALUES ('delivery', 'nightly',
+      '{"webhook":{"path":"/api/hooks/nightly/upstream-webhook-token","url":"https://relay/nightly/upstream-webhook-token"}}',
+      '{"path":"/api/hooks/nightly/upstream-webhook-token","headers":{"x-echo":"upstream-webhook-secret"}}');
   `);
   db.close();
 }
@@ -172,7 +176,12 @@ describe("migrateLegacyHome", () => {
       const bytes = yield* (yield* FileSystem.FileSystem).readFile(
         path.join(target, "statev2.sqlite"),
       );
-      assert.notInclude(Buffer.from(bytes).toString("latin1"), UPSTREAM_PAIRING_CREDENTIAL);
+      const text = Buffer.from(bytes).toString("latin1");
+      assert.notInclude(text, UPSTREAM_PAIRING_CREDENTIAL);
+      // Queued deliveries snapshot the webhook path, so the token must not survive there either.
+      assert.notInclude(text, "upstream-webhook-token");
+      assert.notInclude(text, "upstream-webhook-secret");
+      assert.isFalse(yield* exists(path.join(target, "statev2.sqlite-wal")));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
