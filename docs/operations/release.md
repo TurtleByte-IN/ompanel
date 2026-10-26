@@ -1,6 +1,7 @@
 # Release Checklist
 
-> For maintainers. Using Ompanel? See [docs/user](../user/).
+> For maintainers. Using Ompanel? See [docs/user](../user/). How the Ompanel fork runs this
+> workflow, cuts release candidates and unblocks signing: [docs/omp/release.md](../omp/release.md).
 
 This document covers the unified release workflow for stable and nightly desktop releases.
 
@@ -42,11 +43,11 @@ the version.
   - Nightly runs are always GitHub prereleases and never marked latest.
   - Automatically generated release notes are pinned to the previous tag in the same channel, so stable compares to the previous stable tag and nightly compares to the previous nightly tag.
 - Includes Electron auto-update metadata (for example `latest*.yml`, `nightly*.yml`, and `*.blockmap`) in release assets.
-- Builds a self-contained CLI archive per platform (`t3-<version>-<platform>-<arch>.tar.gz`, `.zip` on Windows) in the same job as that target's desktop artifact and attaches them to the GitHub Release with a `SHA256SUMS` file, on every channel, for five targets: macOS arm64, Linux x64 and arm64, Windows x64 and arm64. Every archive is smoke-tested on hardware of its own architecture, and every one but the Windows archives is also built and signed there. There is no macOS x64 archive: Node single-executables are unsupported on x64 macOS (the SEA docs list macOS as arm64 only) and the binary segfaults on start; the x64 desktop app is Electron and unaffected.
+- Builds a self-contained CLI archive per platform (`ompanel-<version>-<platform>-<arch>.tar.gz`, `.zip` on Windows) in the same job as that target's desktop artifact and attaches them to the GitHub Release, on every channel, for five targets: macOS arm64, Linux x64 and arm64, Windows x64 and arm64. `SHA256SUMS` lists every asset on the release. Every archive is smoke-tested on hardware of its own architecture, and every one but the Windows archives is also built and signed there. There is no macOS x64 archive: Node single-executables are unsupported on x64 macOS (the SEA docs list macOS as arm64 only) and the binary segfaults on start; the x64 desktop app is Electron and unaffected.
   - The archive holds the server as a Node single-executable (`scripts/build-cli-archive.ts`), so unpacking it needs neither Node, npm, nor a compiler. It is the only form in which Ompanel manages a runtime: the desktop's SSH environments, the boot service, `ompanel update`, and the install scripts all download and verify this archive against `SHA256SUMS`. The `ompanel` npm package exists for people who run `npx ompanel` or `npm install -g t3` themselves, and it downloads this same archive too; nothing in the product installs from npm. The `curl | sh` installers are `scripts/install.sh` and `scripts/install.ps1`; the marketing site copies them into its `public/` at build time (`apps/marketing/scripts/stage-install-scripts.mjs`) and serves them at `t3.codes/install.sh` and `/install.ps1`.
   - The root `package.json` pins `engines.node` to the exact Node version used by development, CI and standalone executables. Keep it exact: cross-target builds download that version, and native executable builds reject a different host Node version. Runtime changes need a new Ompanel release version because installed runtimes are cached by that version.
   - macOS archives are signed with the Developer ID certificate and notarized when the Apple secrets are present (ad hoc otherwise, which still runs from `curl`/`tar` installs). Windows executables use the same Azure Trusted Signing setup as the installer. Every native addon in the macOS archive is signed too, since the hardened runtime refuses unsigned libraries.
-  - Each archive is extracted and executed (`scripts/smoke-cli-archive.ts`) on its build runner, or on the `verify_runner` for Windows.
+  - Each archive is extracted and executed (`scripts/smoke-cli-archive.ts --omp-sidecar`) on its build runner, or on the `verify_runner` for Windows: it must serve the web app and download the pinned OMP sidecar.
 - After the GitHub Release is published, publishes the `ompanel` npm package with OIDC trusted publishing from the same workflow file. It is only a launcher (`scripts/npm-launcher/t3.mjs`): on first run it downloads its exact version's CLI archive from the GitHub Release, verifies it against `SHA256SUMS`, and unpacks it into `<Ompanel home>/runtime/versions/<version>`, the layout the install scripts and `ompanel update` share. The executables are not on npm. They used to be, as `@t3code/t3-<platform>-<arch>` optional dependencies, but npm's publish-time scanning held those 80-250 MB packages back for up to an hour after the launcher was live, and every install in that window got a launcher with no executable. Those packages stay on npm at their old versions and get no new ones. Because the launcher reads from the release, `publish_cli` runs after `release`, never before.
   - stable releases publish npm dist-tag `latest`
   - nightly releases publish npm dist-tag `nightly`
@@ -543,17 +544,17 @@ Checklist:
 
 ## 1) Release validation and unsigned builds
 
-There is no dry-run tag path. Pushing any accepted non-nightly tag, including
-`v0.0.0-test.1`, classifies the run as the stable channel. It publishes `ompanel` with npm dist-tag
-`latest`, creates a real GitHub Release, aliases the hosted app to the configured latest and
-router domains, and can commit a version bump to `main` in the finalize job. Do not push a test tag
-to validate the workflow.
+On the Ompanel fork, a tag with a suffix after `X.Y.Z` (for example `v0.0.0-ompanel-rc.1`) is a
+release candidate: a GitHub prerelease that may come from any commit, publishes npm under `next`
+only when npm publishing is enabled, and never runs the finalize job
+([docs/omp/release.md](../omp/release.md#cutting-a-release)). Pushing a plain `vX.Y.Z` tag is a
+real stable release: it publishes `ompanel` with npm dist-tag `latest` when npm publishing is
+enabled, creates a real GitHub Release marked latest, aliases the hosted app when Vercel is
+configured, and can commit a version bump to `main` in the finalize job.
 
 The workflow has no non-publishing `workflow_dispatch` mode. Use normal CI or local quality gates to
-validate checks and builds without shipping. To exercise the complete release graph at lower stable
-risk, manually dispatch `channel=nightly`; this still publishes a real nightly npm package, GitHub
-prerelease, desktop updater release, hosted nightly alias, and marketing site, but it does not update stable app aliases or
-commit a version bump to `main`. Only run it when a real nightly release is acceptable.
+validate checks and builds without shipping, or a `channel=preview` dispatch or a release candidate
+tag for a full release run that no user is offered.
 
 Manual `channel=stable` is also a real stable-channel release. Omitting signing secrets only makes
 platform artifacts unsigned; it does not prevent publication.
