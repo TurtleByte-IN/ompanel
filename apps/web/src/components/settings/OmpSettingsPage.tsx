@@ -77,7 +77,7 @@ function ModelRolesEditor({
   );
 }
 
-const CONTROLS: OmpSettingsFormProps["controls"] = {
+const CONTROLS: NonNullable<OmpSettingsFormProps["controls"]> = {
   modelRoles: (field, onWrite) => <ModelRolesEditor field={field} onWrite={onWrite} />,
 };
 
