@@ -96,8 +96,19 @@ kept.
 A pull request opened with `GITHUB_TOKEN` starts no `pull_request` workflows.
 So the merge workflow runs `gh workflow run ci.yml --ref <branch>`, and
 `ci.yml` accepts `workflow_dispatch` for this. Change detection has no base
-commit in a dispatched run, so every job runs. The dispatched run reports
-`Check` on the PR's head commit, which is the check branch protection requires.
+commit in a dispatched run, so every job runs.
+
+Branch protection does not count the check runs of a dispatched run: the PR
+lists none of them, and its required `Check` stays "Expected" even after the
+dispatched `Check` job passes. So the merge workflow posts a commit status
+named `Check` on the merge commit. It is `pending` from the dispatch, and
+`success` or `failure` once the dispatched run ends, linking to that run. The
+status comes from `GITHUB_TOKEN`, i.e. the GitHub Actions app, which is the
+source the required check accepts. The merge job therefore waits for CI, about
+20 minutes, and has a 120-minute limit. If it times out, the status stays
+`pending`. Push to the branch (an empty commit is enough) to run CI the usual
+way.
+
 The PR therefore cannot merge until the full suite passes. A push to the branch
 by a person, for example a fix, runs CI the usual way.
 

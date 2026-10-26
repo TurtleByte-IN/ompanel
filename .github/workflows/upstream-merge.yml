@@ -4,7 +4,7 @@ name: Upstream merge
 # request for it, or an issue listing the conflicting files when the merge
 # cannot be done automatically. Pull requests opened with GITHUB_TOKEN start no
 # `pull_request` workflows, so this workflow dispatches `ci.yml` on the merge
-# branch; that run reports the required `Check` on the PR's head commit.
+# branch, waits for it and posts its result as the required `Check` status.
 # See docs/omp/ci.md ("Upstream merge").
 
 on:
@@ -34,12 +34,14 @@ jobs:
     name: Merge upstream
     if: github.repository != 'pingdotgg/t3code'
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    # Includes waiting for the dispatched ci.yml run (about 20 minutes).
+    timeout-minutes: 120
     permissions:
       contents: write # push the merge branch
       pull-requests: write # open the merge PR, close superseded ones
       issues: write # conflict and push-failure issues, the label
       actions: write # dispatch ci.yml on the merge branch
+      statuses: write # report the dispatched CI result as `Check`
     env:
       UPSTREAM_REPO: pingdotgg/t3code
       UPSTREAM_REF: ${{ inputs.upstream_ref || 'main' }}
@@ -51,6 +53,7 @@ jobs:
       USE_PAT: ${{ secrets.UPSTREAM_MERGE_TOKEN != '' }}
       GH_TOKEN: ${{ secrets.UPSTREAM_MERGE_TOKEN || github.token }}
       LABEL: upstream-merge
+      CI_CONTEXT: Check
     steps:
       - name: Checkout main
         uses: actions/checkout@v6
@@ -60,6 +63,7 @@ jobs:
           token: ${{ secrets.UPSTREAM_MERGE_TOKEN || github.token }}
 
       - name: Merge upstream and open a PR or a conflict issue
+        id: merge
         run: |
           set -euo pipefail
 
@@ -162,7 +166,7 @@ jobs:
             if [[ "$USE_PAT" == true ]]; then
               echo "CI runs on this pull request as usual."
             else
-              echo "This PR was opened with \`GITHUB_TOKEN\`, which starts no \`pull_request\` workflows. The merge workflow dispatched \`ci.yml\` on \`$branch\` instead ([runs](https://github.com/$GITHUB_REPOSITORY/actions/workflows/ci.yml?query=branch%3A$branch)); that run reports the required \`Check\` on this PR. A push to this branch by a person runs CI normally."
+              echo "This PR was opened with \`GITHUB_TOKEN\`, which starts no \`pull_request\` workflows. The merge workflow dispatched \`ci.yml\` on \`$branch\` instead ([runs](https://github.com/$GITHUB_REPOSITORY/actions/workflows/ci.yml?query=branch%3A$branch)), waits for it, and posts its result as the required \`Check\` status ([merge run]($run_url)). A push to this branch by a person runs CI normally."
             fi
             echo
             echo "Review only the files both upstream and the fork changed since the merge base (auto-merged, no conflicts):"
@@ -198,6 +202,14 @@ jobs:
 
           if [[ "$USE_PAT" != true ]]; then
             gh workflow run ci.yml --ref "$branch"
+            # The dispatched run's checks do not count for the PR, so the next
+            # step mirrors its result as a `Check` commit status.
+            gh api "repos/$GITHUB_REPOSITORY/statuses/$(git rev-parse HEAD)" -f state=pending \
+              -f context="$CI_CONTEXT" -f description="ci.yml dispatched by the upstream merge" >/dev/null
+            {
+              echo "ci_branch=$branch"
+              echo "ci_sha=$(git rev-parse HEAD)"
+            } >> "$GITHUB_OUTPUT"
           fi
           if ! url="$(gh pr create --base main --head "$branch" --title "$pr_title" \
             --label "$LABEL" --body-file "$body")"; then
@@ -229,3 +241,42 @@ jobs:
               fi
             done
           summary "Opened $url from \`$branch\`." "" "$(cat "$body")"
+
+      # Branch protection ignores the check runs of a workflow_dispatch run, so
+      # a PR opened with GITHUB_TOKEN would never get its required `Check`.
+      # This step waits for the dispatched ci.yml run and posts its result as
+      # a `Check` commit status from GITHUB_TOKEN (the GitHub Actions app, the
+      # source the required check expects).
+      - name: Report the dispatched CI result as Check
+        if: steps.merge.outputs.ci_sha != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_BRANCH: ${{ steps.merge.outputs.ci_branch }}
+          CI_SHA: ${{ steps.merge.outputs.ci_sha }}
+        run: |
+          set -euo pipefail
+          id=""
+          for _ in $(seq 30); do
+            id="$(gh run list --workflow ci.yml --branch "$CI_BRANCH" --commit "$CI_SHA" \
+              --event workflow_dispatch --limit 1 --json databaseId --jq '.[0].databaseId // empty')"
+            [[ -n "$id" ]] && break
+            sleep 10
+          done
+          status() {
+            gh api "repos/$GITHUB_REPOSITORY/statuses/$CI_SHA" -f state="$1" -f context="$CI_CONTEXT" \
+              -f description="$2" ${3:+-f target_url="$3"} >/dev/null
+          }
+          if [[ -z "$id" ]]; then
+            status error "The dispatched ci.yml run was not found"
+            exit 1
+          fi
+          ci_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$id"
+          status pending "ci.yml dispatched by the upstream merge" "$ci_url"
+          gh run watch "$id" --interval 60 >/dev/null || true
+          conclusion="$(gh run view "$id" --json conclusion --jq .conclusion)"
+          if [[ "$conclusion" == success ]]; then
+            status success "ci.yml passed" "$ci_url"
+          else
+            status failure "ci.yml: ${conclusion:-unknown}" "$ci_url"
+          fi
+          echo "ci.yml run $ci_url: $conclusion" | tee -a "$GITHUB_STEP_SUMMARY"
