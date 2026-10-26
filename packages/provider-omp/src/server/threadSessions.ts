@@ -24,6 +24,8 @@ export interface OmpThreadSession {
   readonly process: Pick<OmpRpcProcess, "request">;
   /** Publishes every key the session must restart for, each time the set grows. */
   readonly onRestartRequired: (keys: ReadonlyArray<string>) => Effect.Effect<void>;
+  /** A T3 turn is running in the session; a fork of it must wait (sessionBranches.ts). */
+  readonly isBusy: () => boolean;
 }
 
 export interface OmpThreadSessions {

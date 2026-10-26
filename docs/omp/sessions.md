@@ -106,14 +106,83 @@ from the instance and session id, so importing twice returns the same thread; a
 session a thread of this instance already runs (by its record) is shown as
 imported.
 
-## For rewind and fork (C-11)
+## Rewind and fork
 
-- Switching the live process to a session by id: `switchOmpSession`.
-- Recording which session a thread runs: `recordOmpThreadSession`, or the
-  adapter's `recordSession` (skips unchanged writes).
-- Re-reading the conversation after `branch`: `readOmpHistoryPages` and
-  `ompHistoryMessages` (the adapter's `readHistory`).
-- OMP's `fork {entryId?}` writes a new session file in the same bucket and
-  switches the live process to it; a fork into another thread has to record
-  the new file for the target thread and switch the source back with
-  `switchOmpSession`.
+The code is in `sessionBranches.ts` and the adapter's `rollbackThread` and
+`forkThread`. Both go through OMP's session tree; T3's own checkpoints restore
+the files as for every other provider.
+
+### Which entry a turn is
+
+Each entry of a session file has an id and a `parentId`; the file's leaf is
+the entry the conversation continues from. After each turn the adapter lists
+what the turn appended (`get_entries {since: <leaf before the turn>}`; the
+whole listing, filtered by the turn's start time, when that leaf is unknown)
+and records the turn's first user message entry as the turn's
+`nativeTurnRef`. A turn that wrote no user message (a builtin command) gets
+`null`. OMP keeps entry ids when it copies a session, so the refs stay valid
+in the files a rewind or fork writes.
+
+A turn from before this was recorded keeps its synthetic weak ref; it is found
+by its time window on the current path (`get_entries`), since OMP and Ompanel
+share the clock.
+
+### Rewind
+
+Rewinding to turn N (or to the thread start) cuts the session before the user
+message of the first later turn that left one still in the session
+(`get_branch_messages` lists the session's user messages):
+
+1. Refused while a turn runs: the adapter's own turn, or OMP reporting
+   `isStreaming`/`isCompacting` (a wake-up T3 did not start). OMP itself lets
+   `branch` run during a turn, which would split the transcript (PRD §12).
+   Turns wait while a rewind or fork runs.
+2. `branch {entryId}` moves the session onto a new file in the same bucket
+   holding everything before that message (an empty session when it was the
+   first), with a new session id and the old file as `parentSession`. The old
+   file keeps the full conversation. OMP sends no `session_info_update`.
+3. The adapter reads `get_state`, moves the thread's native id to the new
+   session and records the new file in `session.json`, so a reopened thread
+   resumes the rewound conversation.
+4. The snapshot returned to T3 is re-read from the new file
+   (`get_messages_page`); its payload carries `restoredText` (the removed
+   message, OMP's `branch` result), `branchMessages` (the user messages left,
+   each a later rewind point) and `branchTree`.
+
+The next prompt continues from the cut. A thread whose process was stopped
+(idle, server restart) is first bound to its recorded session, as a turn would
+bind it. Once `branch` succeeded, a failed read after it (state, messages,
+tree, history) is logged and left out of the snapshot instead of failing the
+rewind, so T3 never keeps turns OMP dropped; the next turn's `get_state`
+records the file if the rewind could not.
+
+### Fork
+
+T3 forks lazily: the new thread's first turn opens its own process and calls
+`forkThread` there with the source thread and the turn to fork from.
+
+1. Refused while the source thread runs a turn (its live session in this
+   instance, by `isBusy` and `get_state`), and with the same message when OMP
+   answers `fork` with `session_busy`.
+2. The new thread's process opens the source's file (`switchOmpSession` with
+   the source thread's record). OMP refuses to open a session recorded for
+   another directory, so a fork into another worktree fails with that reason.
+3. Forking from the latest turn is `fork {}`: a copy of the whole session.
+   From an earlier turn, the cut is found as for a rewind, and `fork
+   {entryId}` keeps the session through the nearest message entry before it
+   (OMP only forks at message entries; `get_entries {since: <previous user
+   message>}` finds it).
+4. OMP writes the new file in the same bucket and moves the process onto it.
+   The new thread is bound to it and recorded; the source thread and its file
+   are untouched, so the source's own process never shares a file. If
+   anything fails after the switch, the process leaves the source's file with
+   `new_session`.
+
+### Branch tree (P-06)
+
+`readOmpBranchTree` (`get_tree`) and the `branchTree` in `readThreadSnapshot`
+and rewind payloads reduce the session tree to user and assistant messages,
+branch summaries and compactions: flat `nodes` (parents first, each with the
+nearest kept ancestor as `parentId`, a preview and OMP's label), the `leafId`
+and the `activePath` from the root to it. A rewind's earlier branch lives in
+the parent file (`parentSession` in the header), not in this tree.

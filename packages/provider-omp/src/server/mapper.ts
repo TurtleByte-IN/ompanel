@@ -81,6 +81,11 @@ export type OmpTurnOutcome =
 export interface OmpTurnRefresh {
   readonly state?: SessionState;
   readonly stats?: SessionStats;
+  /**
+   * The session entry of the user message the turn's prompt wrote, which rewind and fork cut at
+   * (sessionBranches.ts); null when it wrote none, absent when it could not be read.
+   */
+  readonly turnEntryId?: string | null;
 }
 
 export interface OmpFrameResult {
@@ -501,6 +506,11 @@ export class OmpThreadMapper {
     ];
   }
 
+  /** The bound thread now runs session `sessionId`: a rewind moved it onto a new session file. */
+  adoptSession(sessionId: string, now: DateTime.Utc): Array<Event> {
+    return this.#sessionInfo(sessionId, undefined, now);
+  }
+
   /** Binds the app thread to the live OMP session described by `get_state`. */
   bindThread(
     input: {
@@ -896,6 +906,11 @@ export class OmpThreadMapper {
     const tokenUsage = contextTokenUsage ?? turn.tokenUsage;
     const providerTurn: OrchestrationV2ProviderTurn = {
       ...turn.providerTurn,
+      ...(refresh.turnEntryId === undefined
+        ? {}
+        : {
+            nativeTurnRef: refresh.turnEntryId === null ? null : providerRef(refresh.turnEntryId),
+          }),
       status: outcome.status,
       completedAt: now,
       ...(tokenUsage === undefined ? {} : { tokenUsage }),

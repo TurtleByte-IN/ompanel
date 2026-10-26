@@ -172,15 +172,77 @@ test("switches to Full access mid-thread without restarting omp", async () => {
   await screenshot("04-full-access-no-restart");
 });
 
-// C-11 (ompanel#74) adds rewind and fork for OMP threads; it fills these two in.
-test.fixme("rewinds the thread to an earlier turn (C-11, ompanel#74)", async () => {
-  // "Edit from here" on an earlier user message: OMP `branch {entryId}`, the thread re-renders
-  // from `get_branch_messages`, and the later turns are gone from the thread.
+/** A sent user message in the timeline (not the composer, which a rewind refills). */
+const userSaid = (text: string) =>
+  page.locator('[data-user-message-body="true"]').getByText(text, { exact: true });
+
+/**
+ * The user messages of the model request that answered `prompt`: what OMP sent as history,
+ * without the `<system-reminder>` OMP prepends to a session's first message.
+ */
+const historyFor = (prompt: string) =>
+  (
+    stack.model.calls.findLast((call) => call.lastRole === "user" && call.lastText === prompt)
+      ?.userTexts ?? []
+  ).map((text) => text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, ""));
+
+test("rewinds the thread to an earlier turn", async () => {
+  const kept = "run: echo g1-supervised";
+  const removed = "run: echo g1-full-access > g1.txt && echo wrote-g1";
+  const before = threadProcesses().map((entry) => entry.pid);
+  await expect(userSaid(removed)).toBeVisible();
+
+  // "Edit from here" on the last user message: OMP `branch`es before it on the live session.
+  await page.getByRole("button", { name: "Edit from here" }).last().click();
+  const confirm = page.getByRole("alertdialog", { name: "Edit from here?" });
+  await confirm.getByRole("button", { name: "Revert and keep changes" }).click();
+  await expect(userSaid(removed)).toHaveCount(0);
+  await expect(assistantSays(`${TOOL_REPLY_PREFIX}wrote-g1`)).toHaveCount(0);
+  await expect(userSaid(kept)).toBeVisible();
+  await expect(page.getByRole("textbox", { name: /^Message / })).toContainText(removed);
+  await screenshot("05a-rewound");
+
+  // The next prompt continues from the rewound conversation, in the same omp process.
+  await send("after rewind");
+  await expect(assistantSays(STREAMED_PARAGRAPHS[1])).toHaveCount(2);
+  const history = historyFor("after rewind");
+  expect(history).toContain("hello from G1");
+  expect(history).toContain(kept);
+  expect(history.some((text) => text.includes("g1-full-access"))).toBe(false);
+  expect(threadProcesses().map((entry) => entry.pid)).toEqual(before);
+  await screenshot("05b-continued-after-rewind");
 });
 
-test.fixme("forks the thread from a response (C-11, ompanel#74)", async () => {
-  // "Fork from this response": OMP `fork` to a new session file, a new thread opens with the
-  // history up to that response, and the original thread is unchanged.
+test("forks the thread from a response", async () => {
+  const sourceUrl = page.url();
+  const sourceThreadId = threadId;
+  const sourcePids = threadProcesses().map((entry) => entry.pid);
+
+  // The first response: the fork holds only the first exchange.
+  await page.getByRole("button", { name: "Fork from this response" }).first().click();
+  await page.waitForURL((url) => !url.pathname.endsWith(encodeURIComponent(sourceThreadId)));
+  const forkThreadId = decodeURIComponent(new URL(page.url()).pathname.split("/").at(-1) ?? "");
+  await expect(userSaid("hello from G1")).toBeVisible();
+  await expect(userSaid("after rewind")).toHaveCount(0);
+  await screenshot("06a-fork-opened");
+
+  // Its first turn forks OMP's session into a new file, in the fork's own omp process.
+  await send("in the fork");
+  await expect(userSaid("in the fork")).toBeVisible();
+  await expect(assistantSays(STREAMED_PARAGRAPHS[1]).last()).toBeVisible();
+  await expect.poll(() => historyFor("in the fork")).toEqual(["hello from G1", "in the fork"]);
+  const forkProcesses = stack.ompProcesses().filter((entry) => entry.threadId === forkThreadId);
+  expect(forkProcesses).toHaveLength(1);
+  expect(sourcePids).not.toContain(forkProcesses[0]?.pid);
+  await screenshot("06b-fork-continued");
+
+  // The original thread is unchanged and still runs its own session.
+  await page.evaluate((url) => window.location.assign(url), sourceUrl);
+  await page.waitForURL((url) => url.pathname.endsWith(encodeURIComponent(sourceThreadId)));
+  await expect(userSaid("after rewind")).toBeVisible();
+  await expect(userSaid("in the fork")).toHaveCount(0);
+  expect(threadProcesses().map((entry) => entry.pid)).toEqual(sourcePids);
+  await screenshot("06c-source-unchanged");
 });
 
 test("generates a commit message", async () => {

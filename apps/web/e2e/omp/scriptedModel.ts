@@ -41,6 +41,8 @@ export interface ScriptedModelCall {
   readonly lastRole: string;
   readonly lastText: string;
   readonly tools: ReadonlyArray<string>;
+  /** The text of every user message the model was sent, oldest first: the conversation OMP kept. */
+  readonly userTexts: ReadonlyArray<string>;
   readonly reply: Reply;
 }
 
@@ -211,6 +213,9 @@ export const startScriptedModel = async (agentDir: string): Promise<ScriptedMode
         lastText: messageText(last?.content),
         tools: (chat.tools ?? []).flatMap((tool) =>
           tool.function?.name === undefined ? [] : [tool.function.name],
+        ),
+        userTexts: (chat.messages ?? []).flatMap((message) =>
+          message.role === "user" ? [messageText(message.content)] : [],
         ),
         reply,
       });
