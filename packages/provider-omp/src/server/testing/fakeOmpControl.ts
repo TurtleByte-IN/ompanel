@@ -89,11 +89,9 @@ const FAKE_OMP_CONTROL_FIXTURE = NodeURL.fileURLToPath(
   new URL("./fakeOmpControl.fixture.mjs", import.meta.url),
 );
 
-// Output of the pinned omp, captured in a scratch HOME: the CLI outputs from v18.12.6-ompanel.3
-// (darwin-arm64 sidecar sha256 612fff7d..., 2026-10-26; the CLI and its contract are unchanged at
-// v18.12.6-ompanel.4), the RPC frames from v18.12.6-ompanel.4 (darwin-arm64 sha256 1a244df0...).
-// The CLI shapes are checked against the vendored CLI contract. Long values (URLs, provider and
-// setting lists) are cut down, never reshaped.
+// Captured in a scratch HOME: CLI output from v18.12.6-ompanel.3 (its CLI is unchanged at .4), RPC
+// frames from v18.12.6-ompanel.4. Shapes are checked against the vendored contracts; long values
+// (URLs, provider and setting lists) are cut down, never reshaped.
 
 const pretty = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
 const line = (value: unknown) => `${JSON.stringify(value)}\n`;
