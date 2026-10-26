@@ -700,6 +700,45 @@ describe("OMP settings pages", () => {
     await expect.element(chain).toHaveValue("web/searxng, web/duckduckgo");
   });
 
+  it("Search offers no Reset that would clear every role or chain; clearing removes only web", async () => {
+    resetEngine();
+    engine.global.set("modelRoles", { default: "anthropic/claude-sonnet-4-5", web: "web/exa" });
+    engine.global.set("retry.fallbackChains", { default: ["openai/gpt-5"], web: ["web/brave"] });
+    engine.global.set("exa.enabled", false);
+    await using screen = await renderK04c("search");
+    await expect.poll(() => row("modelRoles")?.textContent).toContain("Global");
+    // A Reset here would reset the whole key in the global layer: all roles, all chains.
+    expect(row("modelRoles")?.querySelector("button")).toBeNull();
+    expect(row("retry.fallbackChains")?.querySelector("button")).toBeNull();
+    // Keys the page edits whole keep their Reset.
+    expect(row("exa.enabled")?.textContent).toContain("Reset");
+
+    await userEvent.clear(screen.getByRole("textbox", { name: "modelRoles.web" }));
+    await userEvent.keyboard("{Enter}");
+    expect(commands.write).toHaveBeenLastCalledWith({
+      environmentId,
+      input: {
+        instanceId,
+        scope: "global",
+        key: "modelRoles",
+        value: { default: "anthropic/claude-sonnet-4-5" },
+      },
+    });
+    await userEvent.clear(screen.getByRole("textbox", { name: "retry.fallbackChains.web" }));
+    await userEvent.keyboard("{Enter}");
+    expect(commands.write).toHaveBeenLastCalledWith({
+      environmentId,
+      input: {
+        instanceId,
+        scope: "global",
+        key: "retry.fallbackChains",
+        value: { default: ["openai/gpt-5"] },
+      },
+    });
+    expect(commands.reset).not.toHaveBeenCalled();
+    expect(engine.global.get("modelRoles")).toEqual({ default: "anthropic/claude-sonnet-4-5" });
+  });
+
   it("Discovery toggles Claude skills and keeps provider lists read-only", async () => {
     resetEngine();
     await using screen = await renderK04c("discovery");

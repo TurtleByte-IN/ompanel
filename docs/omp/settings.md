@@ -159,7 +159,9 @@ Runtime page shows PTY as a read-only row.
 is the first `web/<provider>` selector and `retry.fallbackChains.web` the rest
 (OMP migrated the old `providers.webSearch*` order there). The Search page
 edits only those two entries and writes every other role and chain back as it
-read them.
+read them. It offers no Reset on `modelRoles` or `retry.fallbackChains`, since a
+Reset clears the whole key in the global layer (every role, every chain);
+clearing the web field removes just the `web` entry.
 
 Terminal prefs (`terminalOnly` in `OMP_SETTINGS_PAGES`) are read only by OMP's
 terminal UI; every field there is read-only, with no Reset. `keybindings.yml` is

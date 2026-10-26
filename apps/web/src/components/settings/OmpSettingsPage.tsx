@@ -173,6 +173,9 @@ const SEARCH_CONTROLS: NonNullable<OmpSettingsFormProps["controls"]> = {
   ),
 };
 
+/** Search edits only the `web` entry of these; clearing its field removes that entry. */
+const SEARCH_PARTIAL_KEYS: ReadonlyArray<string> = ["modelRoles", "retry.fallbackChains"];
+
 const TERMINAL_ONLY_NOTE = "Terminal-only: OMP's terminal UI reads it; Ompanel does not use it.";
 
 /** OMP has no PTY setting: `--no-pty` / `PI_NO_PTY` turn it off, and `rpc-ui` always does. */
@@ -278,6 +281,7 @@ export function OmpSettingsPageBody({
           scope={SCOPE}
           controls={pageId === "search" ? SEARCH_CONTROLS : CONTROLS}
           {...(page.terminalOnly ? { readOnlyNote: TERMINAL_ONLY_NOTE } : {})}
+          {...(pageId === "search" ? { noReset: SEARCH_PARTIAL_KEYS } : {})}
           onWrite={(key, value) =>
             void writeSetting({
               environmentId,

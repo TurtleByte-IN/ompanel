@@ -35,6 +35,11 @@ export interface OmpSettingsFormProps {
   >;
   /** Why a non-env read-only field is read-only; defaults to the path-scoped explanation. */
   readonly readOnlyNote?: string;
+  /**
+   * Keys whose control edits only part of a shared value; a Reset there would clear the whole key
+   * in the layer, so none is offered.
+   */
+  readonly noReset?: ReadonlyArray<string>;
 }
 
 function JsonField({
@@ -145,6 +150,7 @@ export function OmpSettingsForm({
   onReset,
   controls,
   readOnlyNote = "Can hold entries scoped to other folders, which this view cannot show; edit it in OMP's config file.",
+  noReset = [],
 }: OmpSettingsFormProps) {
   const groups = new Map<string, OmpSettingsField[]>();
   for (const field of form.fields) {
@@ -169,7 +175,7 @@ export function OmpSettingsForm({
                     Restarts threads
                   </Badge>
                 ) : null}
-                {field.source === scope && !field.readOnly ? (
+                {field.source === scope && !field.readOnly && !noReset.includes(field.key) ? (
                   <Button variant="ghost" size="compact" onClick={() => onReset(field.key)}>
                     Reset
                   </Button>
