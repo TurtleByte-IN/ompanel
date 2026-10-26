@@ -106,18 +106,23 @@ interrupted, since the process that ran it is gone.
 
 ## Performance
 
-PRD §9: replaying a 10k-frame session takes under 200 ms. The benchmark in
-`journal.test.ts` records a session of 10,088 frames (about 100 turns, each a
+PRD §9: replaying a 10k-frame session takes under 200 ms. The benchmark,
+`journal.perf.test.ts`, records a session of 10,088 frames (104 turns, each a
 streamed answer of 80 deltas, a tool call with 8 updates, flushes and usage;
 11,130 lines, 2.1 MB), writes it to disk, and holds the median of five replays,
 from reading the file to the last event, to 200 ms. It also checks the replay
 reproduces the live thread view.
 
-| Machine                    | Five replays (ms)            | Median | Margin to 200 ms |
-| -------------------------- | ---------------------------- | ------ | ---------------- |
-| Apple M5 Pro, Node 26.12.1 | 16.9, 16.6, 16.2, 15.1, 15.4 | 16.2   | about 12×        |
+It is a wall-clock benchmark, so it runs only with `OMP_JOURNAL_BENCH=1`
+(`OMP_JOURNAL_BENCH=1 vp test run --config ../../vite.config.ts
+src/server/journal.perf.test.ts` in `packages/provider-omp`). CI runs it in its
+own step of the `Test` job, after the parallel suites, so their load does not
+decide it; the step logs the five times.
 
-The first replay in a fresh process ran 17 to 42 ms. A GitHub `ubuntu-24.04`
-runner is several times slower than this machine and shares it with parallel
-test files; the median absorbs one GC pause or descheduling, and 12× leaves room
-for both.
+| Machine                           | Five replays (ms)            | Median | Margin to 200 ms |
+| --------------------------------- | ---------------------------- | ------ | ---------------- |
+| GitHub `ubuntu-24.04` runner (CI) | 30.7, 31.1, 24.6, 22.7, 24.3 | 24.6   | about 8×         |
+| Apple M5 Pro, Node 26.12.1        | 16.9, 16.6, 16.2, 15.1, 15.4 | 16.2   | about 12×        |
+
+The first replay in a fresh process is the slowest (31 ms on CI, 17 to 42 ms
+locally); even that stays more than 4× under the budget.
