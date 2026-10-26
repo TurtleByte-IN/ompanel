@@ -18,6 +18,7 @@ const reactTests = [
   "src/features/threads/OmpToolCard.test.tsx",
   "src/features/threads/OmpRuntimeRequestCards.test.tsx",
   "src/features/threads/ThreadAgentsTree.test.tsx",
+  "src/features/settings/OmpAccountsSection.test.tsx",
 ];
 
 export default defineConfig({

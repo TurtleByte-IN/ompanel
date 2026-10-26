@@ -27,6 +27,7 @@ import {
   SettingsEnvironmentFilterHeader,
 } from "./components/SettingsEnvironmentFilterHeader";
 import { SettingsScreen } from "./components/SettingsScreen";
+import { OmpProviderAccounts } from "./OmpAccountsSection";
 import { SettingsSection } from "./components/SettingsSection";
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
 
@@ -60,22 +61,25 @@ export function SettingsProviderAccountsRouteScreen() {
                 ) : (
                   <>
                     {(providersByEnvironment.get(environment.environmentId) ?? [])
-                      .filter(
-                        (provider) =>
-                          provider.setup?.canAuthenticate ||
-                          (provider.driver === "acpRegistry" && provider.installed),
-                      )
-                      .map((provider) => (
-                        <ProviderAccount
-                          key={provider.instanceId}
-                          environment={environment}
-                          provider={provider}
-                        />
-                      ))}
+                      .filter(hasInAppSignIn)
+                      .map((provider) =>
+                        provider.driver === "omp" ? (
+                          <OmpProviderAccounts
+                            key={provider.instanceId}
+                            environmentId={environment.environmentId}
+                            instanceId={provider.instanceId}
+                            title={provider.displayName ?? "OMP"}
+                          />
+                        ) : (
+                          <ProviderAccount
+                            key={provider.instanceId}
+                            environment={environment}
+                            provider={provider}
+                          />
+                        ),
+                      )}
                     {!(providersByEnvironment.get(environment.environmentId) ?? []).some(
-                      (provider) =>
-                        provider.setup?.canAuthenticate ||
-                        (provider.driver === "acpRegistry" && provider.installed),
+                      hasInAppSignIn,
                     ) ? (
                       <Text className="p-4 text-foreground-muted">
                         Configure a provider with in-app sign-in in web or desktop Settings.
@@ -89,6 +93,15 @@ export function SettingsProviderAccountsRouteScreen() {
         </ScreenScrollView>
       </SettingsScreen>
     </>
+  );
+}
+
+/** OMP signs in through its own accounts flow; others through the provider auth flow. */
+function hasInAppSignIn(provider: ServerProvider): boolean {
+  return (
+    provider.driver === "omp" ||
+    Boolean(provider.setup?.canAuthenticate) ||
+    (provider.driver === "acpRegistry" && provider.installed)
   );
 }
 
