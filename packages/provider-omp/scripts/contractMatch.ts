@@ -5,10 +5,12 @@ export const TAG_CONTRACT_DIR = "packages/rpc-contract";
 /** Where this package vendors it. */
 export const VENDORED_CONTRACT_DIR = "contract";
 
-/** The files a host vendors, per the OMP fork's `docs/rpc-contract.md`. */
+/** The files a host vendors, per the OMP fork's `docs/rpc-contract.md`: RPC and CLI contracts. */
 export const isVendoredContractPath = (relativePath: string): boolean =>
   relativePath === "contract.json" ||
   relativePath === "rpc-wire.schema.json" ||
+  relativePath === "cli-contract.json" ||
+  relativePath === "cli-contract.schema.json" ||
   relativePath.startsWith("src/");
 
 export const OmpLockFile = Schema.Struct({
@@ -17,6 +19,7 @@ export const OmpLockFile = Schema.Struct({
   commit: Schema.String,
   version: Schema.String,
   contract: Schema.Struct({ version: Schema.String, schemaHash: Schema.String }),
+  cliContract: Schema.Struct({ version: Schema.String, schemaHash: Schema.String }),
   sidecars: Schema.Record(
     Schema.String,
     Schema.Struct({ asset: Schema.String, sha256: Schema.String }),
@@ -29,6 +32,12 @@ export const ContractManifest = Schema.Struct({
   schemaHash: Schema.String,
 });
 export type ContractManifest = typeof ContractManifest.Type;
+
+export const CliContractManifest = Schema.Struct({
+  cliContractVersion: Schema.String,
+  schemaHash: Schema.String,
+});
+export type CliContractManifest = typeof CliContractManifest.Type;
 
 export type ContractMismatch =
   | { readonly kind: "missing"; readonly path: string }
@@ -58,7 +67,11 @@ export function compareContractFiles(
 /** Disagreements between `omp.lock` and what the pinned tag actually contains. */
 export function lockProblems(
   lock: OmpLockFile,
-  tag: { readonly commit: string; readonly contract: ContractManifest },
+  tag: {
+    readonly commit: string;
+    readonly contract: ContractManifest;
+    readonly cliContract: CliContractManifest;
+  },
 ): ReadonlyArray<string> {
   const problems: Array<string> = [];
   if (tag.commit !== lock.commit) {
@@ -72,6 +85,16 @@ export function lockProblems(
   if (tag.contract.schemaHash !== lock.contract.schemaHash) {
     problems.push(
       `tag ${lock.tag} has schema hash ${tag.contract.schemaHash}, omp.lock pins ${lock.contract.schemaHash}`,
+    );
+  }
+  if (tag.cliContract.cliContractVersion !== lock.cliContract.version) {
+    problems.push(
+      `tag ${lock.tag} has CLI contract ${tag.cliContract.cliContractVersion}, omp.lock pins ${lock.cliContract.version}`,
+    );
+  }
+  if (tag.cliContract.schemaHash !== lock.cliContract.schemaHash) {
+    problems.push(
+      `tag ${lock.tag} has CLI schema hash ${tag.cliContract.schemaHash}, omp.lock pins ${lock.cliContract.schemaHash}`,
     );
   }
   return problems;

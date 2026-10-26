@@ -17,6 +17,7 @@ import { Command, Flag } from "effect/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import {
+  CliContractManifest,
   compareContractFiles,
   ContractManifest,
   describeMismatch,
@@ -41,6 +42,7 @@ export class ContractCheckError extends Schema.TaggedError<ContractCheckError>()
 
 const decodeLock = Schema.decodeUnknownEffect(Schema.fromJsonString(OmpLockFile));
 const decodeManifest = Schema.decodeUnknownEffect(Schema.fromJsonString(ContractManifest));
+const decodeCliManifest = Schema.decodeUnknownEffect(Schema.fromJsonString(CliContractManifest));
 
 const concatBytes = (chunks: ReadonlyArray<Uint8Array>): Uint8Array => {
   const bytes = new Uint8Array(chunks.reduce((total, chunk) => total + chunk.length, 0));
@@ -77,6 +79,24 @@ const git = Effect.fn("git")(function* (cwd: string, args: ReadonlyArray<string>
   return stdout;
 }, Effect.scoped);
 
+/** Decodes one of the tag's contract manifests, failing when the tag lacks it. */
+const readTagManifest = Effect.fn("readTagManifest")(function* <A, E>(
+  tag: string,
+  files: ReadonlyMap<string, Uint8Array>,
+  name: string,
+  decode: (text: string) => Effect.Effect<A, E>,
+) {
+  const bytes = files.get(name);
+  if (bytes === undefined) {
+    return yield* new ContractCheckError({ detail: `${tag} has no ${TAG_CONTRACT_DIR}/${name}` });
+  }
+  return yield* decode(new TextDecoder().decode(bytes)).pipe(
+    Effect.mapError(
+      (cause) => new ContractCheckError({ detail: `Invalid ${name} at the tag`, cause }),
+    ),
+  );
+});
+
 /** Fetches the pinned tag without blobs, then reads only the contract files from it. */
 const readTagContract = Effect.fn("readTagContract")(function* (lock: OmpLockFile) {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -102,18 +122,14 @@ const readTagContract = Effect.fn("readTagContract")(function* (lock: OmpLockFil
     if (!isVendoredContractPath(relativePath)) continue;
     files.set(relativePath, yield* git(dir, ["show", `${lock.tag}:${fullPath}`]));
   }
-  const manifestBytes = files.get("contract.json");
-  if (manifestBytes === undefined) {
-    return yield* new ContractCheckError({
-      detail: `${lock.tag} has no ${TAG_CONTRACT_DIR}/contract.json`,
-    });
-  }
-  const contract = yield* decodeManifest(new TextDecoder().decode(manifestBytes)).pipe(
-    Effect.mapError(
-      (cause) => new ContractCheckError({ detail: "Invalid contract.json at the tag", cause }),
-    ),
+  const contract = yield* readTagManifest(lock.tag, files, "contract.json", decodeManifest);
+  const cliContract = yield* readTagManifest(
+    lock.tag,
+    files,
+    "cli-contract.json",
+    decodeCliManifest,
   );
-  return { commit, contract, files };
+  return { commit, contract, cliContract, files };
 }, Effect.scoped);
 
 const readVendoredContract = Effect.fn("readVendoredContract")(function* (dir: string) {
@@ -165,7 +181,7 @@ const checkContract = Effect.fn("checkContract")(function* (write: boolean) {
     });
   }
   yield* Console.log(
-    `contract/ matches ${lock.repository}@${lock.tag} (${lock.commit}), contract ${lock.contract.version}.`,
+    `contract/ matches ${lock.repository}@${lock.tag} (${lock.commit}), contract ${lock.contract.version}, CLI contract ${lock.cliContract.version}.`,
   );
 });
 

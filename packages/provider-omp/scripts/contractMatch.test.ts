@@ -16,6 +16,7 @@ const LOCK: OmpLockFile = {
   commit: "a".repeat(40),
   version: "1.0.0",
   contract: { version: "1.0.0", schemaHash: "sha256:abc" },
+  cliContract: { version: "1.0.0", schemaHash: "sha256:cli" },
   sidecars: {},
 };
 
@@ -23,6 +24,8 @@ describe("isVendoredContractPath", () => {
   it("vendors the schema, the manifest and src/, but not package metadata", () => {
     assert.isTrue(isVendoredContractPath("contract.json"));
     assert.isTrue(isVendoredContractPath("rpc-wire.schema.json"));
+    assert.isTrue(isVendoredContractPath("cli-contract.json"));
+    assert.isTrue(isVendoredContractPath("cli-contract.schema.json"));
     assert.isTrue(isVendoredContractPath("src/wire.generated.ts"));
     assert.isFalse(isVendoredContractPath("package.json"));
     assert.isFalse(isVendoredContractPath("README.md"));
@@ -73,6 +76,7 @@ describe("lockProblems", () => {
       lockProblems(LOCK, {
         commit: LOCK.commit,
         contract: { contractVersion: "1.0.0", schemaHash: "sha256:abc" },
+        cliContract: { cliContractVersion: "1.0.0", schemaHash: "sha256:cli" },
       }),
       [],
     );
@@ -82,10 +86,13 @@ describe("lockProblems", () => {
     const problems = lockProblems(LOCK, {
       commit: "b".repeat(40),
       contract: { contractVersion: "1.1.0", schemaHash: "sha256:def" },
+      cliContract: { cliContractVersion: "1.1.0", schemaHash: "sha256:cli2" },
     });
-    assert.lengthOf(problems, 3);
+    assert.lengthOf(problems, 5);
     assert.include(problems[0], "points at bbbb");
     assert.include(problems[1], "contract 1.1.0");
     assert.include(problems[2], "sha256:def");
+    assert.include(problems[3], "CLI contract 1.1.0");
+    assert.include(problems[4], "sha256:cli2");
   });
 });

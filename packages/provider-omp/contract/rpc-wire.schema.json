@@ -186,6 +186,50 @@
 				"clientOmit": []
 			},
 			{
+				"name": "set_approval_mode",
+				"doc": "Set `tools.approvalMode` for this process without writing config, like relaunching with `--approval-mode`; returns the applied mode.",
+				"params": "SetApprovalModeParams",
+				"result": "SetApprovalModeResult",
+				"nullable": false,
+				"unwrap": "mode",
+				"timeoutMs": null,
+				"completion": null,
+				"clientOmit": []
+			},
+			{
+				"name": "set_advisor",
+				"doc": "Turn the advisor on or off for this session, like `/advisor on|off`.",
+				"params": "SetAdvisorParams",
+				"result": "SetAdvisorResult",
+				"nullable": false,
+				"unwrap": null,
+				"timeoutMs": null,
+				"completion": null,
+				"clientOmit": []
+			},
+			{
+				"name": "set_prewalk",
+				"doc": "Arm the one-shot handoff to the `smol` role model at the next edit/write, or cancel it, like `/prewalk` and `/prewalk off`.",
+				"params": "SetPrewalkParams",
+				"result": "SetPrewalkResult",
+				"nullable": false,
+				"unwrap": null,
+				"timeoutMs": null,
+				"completion": null,
+				"clientOmit": []
+			},
+			{
+				"name": "set_tool_enabled",
+				"doc": "Enable or disable one registered tool for this session; returns whether it is now enabled.",
+				"params": "SetToolEnabledParams",
+				"result": "SetToolEnabledResult",
+				"nullable": false,
+				"unwrap": "enabled",
+				"timeoutMs": null,
+				"completion": null,
+				"clientOmit": []
+			},
+			{
 				"name": "get_available_commands",
 				"doc": "List the slash-command catalog.",
 				"params": null,
@@ -2184,6 +2228,16 @@
 			],
 			"type": "string"
 		},
+		"ApprovalMode": {
+			"enum": [
+				"always-ask",
+				"always-ask-cached",
+				"write",
+				"yolo"
+			],
+			"type": "string",
+			"description": "`tools.approvalMode`: the highest tool tier that runs without asking (the `--approval-mode` choices)."
+		},
 		"MessageUpdates": {
 			"enum": [
 				"full",
@@ -3244,6 +3298,23 @@
 				},
 				"parentToolCallId": {
 					"type": "string"
+				},
+				"parentId": {
+					"anyOf": [
+						{
+							"type": "string"
+						},
+						{
+							"type": "null"
+						}
+					],
+					"description": "Id of the subagent that spawned this one; null when the root session spawned it.",
+					"default": null
+				},
+				"depth": {
+					"type": "integer",
+					"description": "Subagent ancestors above this one: 0 when the root session spawned it, 1 for its children, and so on.",
+					"default": 0
 				}
 			},
 			"required": [
@@ -3806,6 +3877,50 @@
 				"willRetry"
 			]
 		},
+		"ManualCompactionStartEvent": {
+			"type": "object",
+			"properties": {
+				"type": {
+					"const": "manual_compaction_start"
+				},
+				"mode": {
+					"type": "string",
+					"description": "The `/compact <mode>` subcommand, when one was given."
+				}
+			},
+			"required": [
+				"type"
+			],
+			"description": "A manual compaction (`compact` command, `/compact`, extension `ctx.compact()`) began; the live turn is already aborted."
+		},
+		"ManualCompactionEndEvent": {
+			"type": "object",
+			"properties": {
+				"type": {
+					"const": "manual_compaction_end"
+				},
+				"aborted": {
+					"type": "boolean",
+					"description": "The compaction was cancelled (abort, or a `session_before_compact` hook)."
+				},
+				"result": {
+					"$ref": "#/$defs/CompactionResult",
+					"description": "Present when the compaction committed."
+				},
+				"skipped": {
+					"type": "boolean",
+					"description": "There was nothing to compact; `errorMessage` says why."
+				},
+				"errorMessage": {
+					"type": "string"
+				}
+			},
+			"required": [
+				"type",
+				"aborted"
+			],
+			"description": "Outcome of the compaction announced by the matching `manual_compaction_start`."
+		},
 		"AutoRetryStartEvent": {
 			"type": "object",
 			"properties": {
@@ -4035,7 +4150,8 @@
 			"required": [
 				"type",
 				"rules"
-			]
+			],
+			"description": "Rule injection: a TTSR rule matched the stream and its text was injected. Each rule carries at least `name`, `path`, and `content`."
 		},
 		"TodoReminderEvent": {
 			"type": "object",
@@ -4231,6 +4347,12 @@
 				},
 				{
 					"$ref": "#/$defs/AutoCompactionEndEvent"
+				},
+				{
+					"$ref": "#/$defs/ManualCompactionStartEvent"
+				},
+				{
+					"$ref": "#/$defs/ManualCompactionEndEvent"
 				},
 				{
 					"$ref": "#/$defs/AutoRetryStartEvent"
@@ -4475,6 +4597,23 @@
 				"parentToolCallId": {
 					"type": "string"
 				},
+				"parentId": {
+					"anyOf": [
+						{
+							"type": "string"
+						},
+						{
+							"type": "null"
+						}
+					],
+					"description": "Id of the subagent that spawned this one; null when the root session spawned it.",
+					"default": null
+				},
+				"depth": {
+					"type": "integer",
+					"description": "Subagent ancestors above this one: 0 when the root session spawned it, 1 for its children, and so on.",
+					"default": 0
+				},
 				"detached": {
 					"type": "boolean",
 					"description": "The subagent runs as a detached background job."
@@ -4512,6 +4651,23 @@
 				"parentToolCallId": {
 					"type": "string"
 				},
+				"parentId": {
+					"anyOf": [
+						{
+							"type": "string"
+						},
+						{
+							"type": "null"
+						}
+					],
+					"description": "Id of the subagent that spawned this one; null when the root session spawned it.",
+					"default": null
+				},
+				"depth": {
+					"type": "integer",
+					"description": "Subagent ancestors above this one: 0 when the root session spawned it, 1 for its children, and so on.",
+					"default": 0
+				},
 				"assignment": {
 					"type": "string"
 				},
@@ -4539,6 +4695,23 @@
 				"event": {
 					"$ref": "#/$defs/RpcAgentEvent",
 					"x-unknown-fallback": true
+				},
+				"parentId": {
+					"anyOf": [
+						{
+							"type": "string"
+						},
+						{
+							"type": "null"
+						}
+					],
+					"description": "Id of the subagent that spawned this one; null when the root session spawned it.",
+					"default": null
+				},
+				"depth": {
+					"type": "integer",
+					"description": "Subagent ancestors above this one: 0 when the root session spawned it, 1 for its children, and so on.",
+					"default": 0
 				}
 			},
 			"required": [
@@ -6009,6 +6182,113 @@
 			]
 		},
 		"SetAskDialogResult": {
+			"type": "object",
+			"properties": {
+				"enabled": {
+					"type": "boolean"
+				}
+			},
+			"required": [
+				"enabled"
+			]
+		},
+		"SetApprovalModeParams": {
+			"type": "object",
+			"properties": {
+				"mode": {
+					"$ref": "#/$defs/ApprovalMode"
+				}
+			},
+			"required": [
+				"mode"
+			]
+		},
+		"SetApprovalModeResult": {
+			"type": "object",
+			"properties": {
+				"mode": {
+					"$ref": "#/$defs/ApprovalMode"
+				}
+			},
+			"required": [
+				"mode"
+			]
+		},
+		"SetAdvisorParams": {
+			"type": "object",
+			"properties": {
+				"enabled": {
+					"type": "boolean"
+				}
+			},
+			"required": [
+				"enabled"
+			]
+		},
+		"SetAdvisorResult": {
+			"type": "object",
+			"properties": {
+				"enabled": {
+					"type": "boolean",
+					"description": "The session's advisor setting after the call."
+				},
+				"active": {
+					"type": "boolean",
+					"description": "Whether an advisor is running; false when no model is assigned to the `advisor` role."
+				}
+			},
+			"required": [
+				"enabled",
+				"active"
+			]
+		},
+		"SetPrewalkParams": {
+			"type": "object",
+			"properties": {
+				"armed": {
+					"type": "boolean"
+				}
+			},
+			"required": [
+				"armed"
+			]
+		},
+		"SetPrewalkResult": {
+			"type": "object",
+			"properties": {
+				"armed": {
+					"type": "boolean",
+					"description": "Whether a handoff is pending after the call."
+				},
+				"provider": {
+					"type": "string",
+					"description": "Provider of the pending handoff's target model."
+				},
+				"modelId": {
+					"type": "string",
+					"description": "Id of the pending handoff's target model."
+				}
+			},
+			"required": [
+				"armed"
+			]
+		},
+		"SetToolEnabledParams": {
+			"type": "object",
+			"properties": {
+				"tool": {
+					"type": "string"
+				},
+				"enabled": {
+					"type": "boolean"
+				}
+			},
+			"required": [
+				"tool",
+				"enabled"
+			]
+		},
+		"SetToolEnabledResult": {
 			"type": "object",
 			"properties": {
 				"enabled": {

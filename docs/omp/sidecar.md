@@ -4,13 +4,14 @@ Ompanel drives one release of the OMP fork (`TurtleByte-IN/oh-my-pi`).
 `packages/provider-omp/omp.lock` names that release and is the only place the
 pin is recorded:
 
-| Field      | Meaning                                                                                  |
-| ---------- | ---------------------------------------------------------------------------------------- |
-| `tag`      | Fork release tag, `v<upstream-version>-ompanel.<n>`.                                     |
-| `commit`   | Commit the tag points at. The contract check fails if the tag moves.                     |
-| `version`  | Version `omp --version` reports for that release.                                        |
-| `contract` | `contractVersion` and `schemaHash` of the RPC contract at the tag.                       |
-| `sidecars` | Per platform: the release asset name and its sha256 from the release's `SHA256SUMS.txt`. |
+| Field         | Meaning                                                                                  |
+| ------------- | ---------------------------------------------------------------------------------------- |
+| `tag`         | Fork release tag, `v<upstream-version>-ompanel.<n>`.                                     |
+| `commit`      | Commit the tag points at. The contract check fails if the tag moves.                     |
+| `version`     | Version `omp --version` reports for that release.                                        |
+| `contract`    | `contractVersion` and `schemaHash` of the RPC contract at the tag.                       |
+| `cliContract` | `cliContractVersion` and `schemaHash` of the CLI JSON contract at the tag.               |
+| `sidecars`    | Per platform: the release asset name and its sha256 from the release's `SHA256SUMS.txt`. |
 
 A platform with no released asset has no `sidecars` entry. Ompanel then finds
 no managed sidecar on that platform, and only an explicit binary path works.
@@ -18,30 +19,36 @@ no managed sidecar on that platform, and only an explicit binary path works.
 `src/ompLock.ts` mirrors `omp.lock` for the bundled server. `ompLock.test.ts`
 fails when the two differ.
 
-## The vendored RPC contract
+## The vendored contracts
 
 `packages/provider-omp/contract/` is a byte-for-byte copy of
-`packages/rpc-contract` at the pinned tag (`contract.json`,
-`rpc-wire.schema.json` and `src/`). Formatting and lint skip it.
+`packages/rpc-contract` at the pinned tag: the RPC contract (`contract.json`,
+`rpc-wire.schema.json`), the CLI JSON contract for `omp <command> --json`
+output (`cli-contract.json`, `cli-contract.schema.json`) and `src/`, which
+holds the generated types of both. Formatting and lint skip it. No subcommand
+reports the CLI contract version at runtime, so the tag pin is its only check.
 
 `vp run --filter @t3tools/provider-omp contract:check` fetches the tag from the
 public fork with `git` (no credentials), then fails when:
 
 - the tag no longer points at `commit`,
-- the tag's `contractVersion` or `schemaHash` differs from `omp.lock`,
+- the tag's `contractVersion`, `cliContractVersion` or either `schemaHash`
+  differs from `omp.lock`,
 - any vendored file is missing, extra, or differs by a single byte.
 
 CI runs it in the `Lint` job of `ci.yml`.
 
 ## Moving the pin
 
-1. Set `tag`, `commit`, `version` and `contract` in `omp.lock` and in
-   `src/ompLock.ts`.
+1. Set `tag`, `commit`, `version`, `contract` and `cliContract` in `omp.lock`
+   and in `src/ompLock.ts`.
 2. Run `vp run --filter @t3tools/provider-omp contract:vendor`. It replaces
    `contract/` with the tag's files and then runs the check.
 3. Copy each platform's sha256 from the release's `SHA256SUMS.txt`
    (`gh release view <tag> -R TurtleByte-IN/oh-my-pi`) into `sidecars`.
    Leave out platforms the release has no asset for.
+4. Re-record the replay fixtures at the new tag (see
+   [testing.md](testing.md#recording)); the replay suite fails until you do.
 
 ## Finding the sidecar
 
