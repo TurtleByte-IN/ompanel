@@ -25,6 +25,9 @@ import {
   AcpRegistryOperationError,
   OmpAccountsOperationError,
   OmpSettingsOperationError,
+  OmpSessionsOperationError,
+  type OmpImportSessionInput,
+  type OmpListSessionsInput,
   CommandId,
   authScopeResponse,
   AuthAccessStreamError,
@@ -1704,6 +1707,184 @@ export const layerWsRpc = (
         );
       });
 
+      const ompSessionsController = Effect.fn("ws.ompSessions.controller")(function* (
+        instanceId: ProviderInstanceId,
+      ) {
+        const instance = yield* providerInstances.getInstance(instanceId);
+        if (instance === undefined) {
+          return yield* new OmpSessionsOperationError({
+            reason: "instance_not_found",
+            message: `Provider instance ${instanceId} was not found.`,
+          });
+        }
+        if (instance.ompSessions === undefined) {
+          return yield* new OmpSessionsOperationError({
+            reason: "unsupported",
+            message: `Provider instance ${instanceId} does not list OMP sessions.`,
+          });
+        }
+        return { instance, controller: instance.ompSessions };
+      });
+
+      const ompSessionsCwd = Effect.fn("ws.ompSessions.cwd")(function* (projectId: ProjectId) {
+        const project = yield* projectService.getById(projectId).pipe(
+          Effect.mapError(
+            () =>
+              new OmpSessionsOperationError({
+                reason: "project_not_found",
+                message: `Project ${projectId} is unavailable.`,
+              }),
+          ),
+        );
+        return yield* Option.match(project, {
+          onNone: () =>
+            Effect.fail(
+              new OmpSessionsOperationError({
+                reason: "project_not_found",
+                message: `Project ${projectId} was not found.`,
+              }),
+            ),
+          onSome: (found) => Effect.succeed(found.workspaceRoot),
+        });
+      });
+
+      /**
+       * The thread bound to an OMP session: the one the instance last bound it to, else the thread
+       * an earlier import created. Either may have been deleted since.
+       */
+      const ompSessionThread = Effect.fn("ws.ompSessions.thread")(
+        function* (input: {
+          readonly driver: ProviderDriverKind;
+          readonly instanceId: ProviderInstanceId;
+          readonly sessionId: string;
+          readonly hintedThreadId: ThreadId | null;
+        }) {
+          if (input.hintedThreadId !== null) {
+            const hinted = yield* threadManagement.getThreadShell(input.hintedThreadId);
+            if (hinted !== null) return input.hintedThreadId;
+          }
+          const derived = importedAcpThreadId(input);
+          if (derived === input.hintedThreadId) return null;
+          const shell = yield* threadManagement.getThreadShell(derived);
+          return shell === null ? null : derived;
+        },
+        Effect.mapError(
+          () =>
+            new OmpSessionsOperationError({
+              reason: "read_failed",
+              message: "Could not check which OMP sessions already have threads.",
+            }),
+        ),
+      );
+
+      const listOmpSessions = Effect.fn("ws.ompSessions.list")(function* (
+        input: OmpListSessionsInput,
+      ) {
+        const { instance, controller } = yield* ompSessionsController(input.instanceId);
+        const cwd = yield* ompSessionsCwd(input.projectId);
+        const listed = yield* controller.list({ cwd });
+        const sessions = yield* Effect.forEach(
+          listed,
+          ({ threadId, ...session }) =>
+            ompSessionThread({
+              driver: instance.driverKind,
+              instanceId: input.instanceId,
+              sessionId: session.sessionId,
+              hintedThreadId: threadId,
+            }).pipe(Effect.map((importedThreadId) => ({ ...session, importedThreadId }))),
+          { concurrency: 16 },
+        );
+        return { sessions };
+      });
+
+      const importOmpSession = Effect.fn("ws.ompSessions.import")(function* (
+        input: OmpImportSessionInput,
+      ) {
+        const { instance, controller } = yield* ompSessionsController(input.instanceId);
+        const cwd = yield* ompSessionsCwd(input.projectId);
+        const session = (yield* controller.list({ cwd })).find(
+          (candidate) => candidate.sessionId === input.sessionId,
+        );
+        if (session === undefined) {
+          return yield* new OmpSessionsOperationError({
+            reason: "session_not_found",
+            message: `OMP session ${input.sessionId} was not found for this project.`,
+          });
+        }
+        const existing = yield* ompSessionThread({
+          driver: instance.driverKind,
+          instanceId: input.instanceId,
+          sessionId: session.sessionId,
+          hintedThreadId: session.threadId,
+        });
+        if (existing !== null) return { threadId: existing, imported: false } as const;
+
+        const threadId = importedAcpThreadId({
+          driver: instance.driverKind,
+          instanceId: input.instanceId,
+          sessionId: session.sessionId,
+        });
+        const provider = (yield* providerRegistry.getProviders).find(
+          (candidate) => candidate.instanceId === input.instanceId,
+        );
+        const model =
+          provider?.models.find((candidate) => candidate.isDefault)?.slug ??
+          provider?.models[0]?.slug ??
+          "default";
+        const rawTitle = (session.title ?? session.firstMessage ?? "").trim();
+        const title =
+          rawTitle.length === 0
+            ? "Imported OMP session"
+            : rawTitle.length > 120
+              ? `${rawTitle.slice(0, 119)}…`
+              : rawTitle;
+        const commandId = CommandId.make(yield* crypto.randomUUIDv4().pipe(Effect.orDie));
+        const launched = yield* Effect.result(
+          startup.enqueueCommand(
+            threadLaunch.launch({
+              commandId,
+              threadId,
+              projectId: input.projectId,
+              title,
+              modelSelection: { instanceId: input.instanceId, model },
+              runtimeMode: "approval-required",
+              interactionMode: "default",
+              workspaceStrategy: { type: "root" },
+              importedNativeThread: {
+                ref: {
+                  driver: instance.driverKind,
+                  nativeId: session.sessionId,
+                  strength: "strong",
+                },
+                metadata: {
+                  ...(session.title === null ? {} : { title: session.title }),
+                  updatedAt: session.updatedAt,
+                },
+              },
+              createdBy: "user",
+              creationSource: "web",
+            }),
+          ),
+        );
+        if (Result.isFailure(launched)) {
+          const racedImport = yield* threadManagement.getThreadShell(threadId).pipe(
+            Effect.mapError(
+              () =>
+                new OmpSessionsOperationError({
+                  reason: "import_failed",
+                  message: "Could not check the OMP session's thread after the import failed.",
+                }),
+            ),
+          );
+          if (racedImport !== null) return { threadId, imported: false } as const;
+          return yield* new OmpSessionsOperationError({
+            reason: "import_failed",
+            message: "Could not create an Ompanel thread for the OMP session.",
+          });
+        }
+        return { threadId, imported: true } as const;
+      });
+
       const listAcpRegistryProviders = Effect.fn("ws.acpRegistry.listProviders")(function* (
         input: AcpRegistryListProvidersInput,
       ) {
@@ -2541,6 +2722,15 @@ export const layerWsRpc = (
               accounts.signOut({ providerId: input.providerId, credentialId: input.credentialId }),
             ),
           ),
+        [WS_METHODS.serverListOmpSessions]: (input) =>
+          Effect.annotateCurrentSpan({ "provider.instance_id": input.instanceId }).pipe(
+            Effect.andThen(listOmpSessions(input)),
+          ),
+        [WS_METHODS.serverImportOmpSession]: (input) =>
+          Effect.annotateCurrentSpan({
+            "provider.instance_id": input.instanceId,
+            "omp.session_id": input.sessionId,
+          }).pipe(Effect.andThen(importOmpSession(input))),
         [WS_METHODS.serverRefreshProviders]:
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(function* (input) {

@@ -48,6 +48,7 @@ const makeAdapter = (state: FakeOmpState, profile: string, vars: Record<string, 
       pidfiles,
       expectedContractVersion: "1.0.0",
       threadSessions,
+      sessions: state.sessions,
     });
     return { adapter, dirs, threadSessions };
   });
@@ -390,11 +391,12 @@ posixOnly("OmpAdapter.openSession", () => {
           assert.strictEqual(NodeFS.readFileSync(overlayPath, "utf8"), OMP_EMPTY_OVERLAY);
           assert.strictEqual(NodeFS.statSync(overlayPath).mode & 0o777, 0o600);
           // After the handshake the session subscribes to the subagent frames that feed the
-          // agents panel and enables OMP's ask dialog.
+          // agents panel, enables OMP's ask dialog and checks that its session is a fresh one.
           assert.deepStrictEqual(state.events(), [
             "command:negotiate_protocol",
             "command:set_subagent_subscription",
             "command:set_ask_dialog",
+            "command:get_state",
           ]);
           assert.strictEqual(NodeFS.readdirSync(dirs.pidfiles).length, 1);
 

@@ -71,8 +71,8 @@ The session turns on `set_host_cwd_change`. After that, OMP sends a
   so the next command opens in the worktree.
 - Changing a thread's workspace detaches its provider session. OMP finishes
   the move while it drains, then exits. The next message starts OMP in the
-  worktree. Continuing the same OMP conversation there needs session resume
-  (C-10).
+  worktree, which reopens the same OMP session from the worktree's bucket
+  ([sessions.md](./sessions.md#reopening-a-thread)).
 - `/move <path>` (`reason: "move"`) is refused: a T3 thread stays in its project
   or worktree. To work in another directory, start a new thread there.
 - A worktree that cannot be created (not a git repository, detached HEAD, the

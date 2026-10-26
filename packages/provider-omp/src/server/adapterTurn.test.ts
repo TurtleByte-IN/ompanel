@@ -103,6 +103,7 @@ posixOnly("OmpAdapter turns", () => {
         pidfiles: yield* makeOmpPidfiles({ dir: dirs.pidfiles, platform }),
         expectedContractVersion: "1.0.0",
         threadSessions: makeOmpThreadSessions(),
+        sessions: state.sessions,
       });
 
       const events = yield* Effect.gen(function* () {

@@ -15,6 +15,7 @@ import type {
   SubagentLifecyclePayload,
   Usage,
 } from "../../../contract/src/wire.generated.ts";
+import type { OmpSessionsLocation } from "../ompSessions.ts";
 import { isProcessAlive } from "../processTree.ts";
 
 /**
@@ -71,6 +72,19 @@ export const makeFakeOmpState = Effect.acquireRelease(
     }),
     argv: (): { readonly argv: ReadonlyArray<string>; readonly cwd: string } =>
       JSON.parse(NodeFS.readFileSync(NodePath.join(dir, "argv.json"), "utf8")),
+    /** The adapter's `sessions` option: OMP's sessions directory for this fake. */
+    sessions: {
+      root: NodePath.join(dir, "omp-sessions"),
+      flat: false,
+    } satisfies OmpSessionsLocation,
+    /** Env vars that make the fake keep sessions on disk under `root` (default `sessions.root`). */
+    sessionStore: (
+      root: string = NodePath.join(dir, "omp-sessions"),
+      options: { readonly autoResume?: boolean } = {},
+    ): Record<string, string> => ({
+      FAKE_OMP_SESSIONS_DIR: root,
+      ...(options.autoResume === true ? { FAKE_OMP_AUTO_RESUME: "1" } : {}),
+    }),
     /** Writes `script` for the next fake started with these vars; merge into `env(...)`. */
     script: (script: FakeOmpScript): Record<string, string> => {
       const file = NodePath.join(NodeFS.mkdtempSync(NodePath.join(dir, "script-")), "script.json");

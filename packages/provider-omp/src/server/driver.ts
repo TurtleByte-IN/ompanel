@@ -31,6 +31,11 @@ import { makeOmpAdapter } from "./adapter.ts";
 import { makeOmpAccountsController } from "./accountsController.ts";
 import { makeOmpControlService } from "./control.ts";
 import { makeOmpPidfiles } from "./pidfiles.ts";
+import {
+  listOmpSessions,
+  readOmpThreadSessionRecords,
+  resolveOmpSessionsLocation,
+} from "./ompSessions.ts";
 import { ompStateDirs } from "./session.ts";
 import { makeOmpSettingsController } from "./settingsController.ts";
 import { makeOmpSettingsEngine } from "./settingsEngine.ts";
@@ -73,6 +78,7 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
   }) {
     const host = yield* ProviderHost.ProviderHost;
     const path = yield* Path.Path;
+    const fileSystem = yield* FileSystem.FileSystem;
     const processEnv = yield* mergeProviderInstanceEnvironment(environment);
     const bundledPath = (yield* HostProcess.Environment)[OMP_BUNDLED_SIDECAR_ENV];
     const cacheDir = path.join(host.paths.baseDir, "tools", "omp");
@@ -163,6 +169,13 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
       .pipe(Effect.provide(FetchHttpClient.layer));
     // Running threads, shared by the adapter (which registers them) and the settings engine.
     const threadSessions = makeOmpThreadSessions();
+    // Threads map 1:1 to OMP's own session files, so terminal and Ompanel share them.
+    const sessionsLocation = yield* resolveOmpSessionsLocation({
+      environment: processEnv,
+      profile: effectiveConfig.profile,
+      platform,
+      homeDir: yield* HostProcess.HomeDirectory,
+    });
     const orchestrationAdapter = yield* makeOmpAdapter({
       instanceId,
       profile: effectiveConfig.profile,
@@ -175,6 +188,7 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
       pidfiles,
       expectedContractVersion: OMP_LOCK.contract.version,
       threadSessions,
+      sessions: sessionsLocation,
     });
     // Text generation runs in its own empty directory, never the checkout or `launcher`.
     const textGenerationCwd = path.join(stateDirs.launcher, "text-generation");
@@ -228,6 +242,26 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
         readSettings: settingsEngine.read,
         globalCwd: stateDirs.launcher,
       }),
+      // Unreadable buckets and files are skipped, so listing itself does not fail.
+      ompSessions: {
+        list: Effect.fn("OmpSessions.list")(
+          function* ({ cwd }: { readonly cwd: string }) {
+            const owners = yield* readOmpThreadSessionRecords(stateDirs.threads);
+            const sessions = yield* listOmpSessions(sessionsLocation, cwd);
+            return sessions.map((session) => ({
+              sessionId: session.sessionId,
+              cwd: session.cwd,
+              title: session.title,
+              firstMessage: session.firstMessage,
+              createdAt: session.createdAt === "" ? session.updatedAt : session.createdAt,
+              updatedAt: session.updatedAt,
+              threadId: owners.get(session.sessionId) ?? null,
+            }));
+          },
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+        ),
+      },
     } satisfies ProviderInstance;
   }),
 };

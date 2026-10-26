@@ -159,6 +159,7 @@ const runSession = (input: {
       pidfiles: yield* makeOmpPidfiles({ dir: dirs.pidfiles, platform }),
       expectedContractVersion: input.contract,
       threadSessions: makeOmpThreadSessions(),
+      sessions: state.sessions,
     }).pipe(
       Effect.provideService(ProviderHostTools.ProviderHostTools, host.service),
       Effect.provideService(McpProviderSessions.McpProviderSessions, mcpSessions),

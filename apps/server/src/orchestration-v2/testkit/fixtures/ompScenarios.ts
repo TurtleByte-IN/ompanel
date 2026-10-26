@@ -147,6 +147,35 @@ export const OMP_REPLAY_SCENARIOS: ReadonlyArray<OmpReplayScenario> = [
         NodeAssert.equal(switched.sessionFile, first.sessionFile);
       }),
   },
+  {
+    name: "messages_page",
+    description:
+      "`get_messages_page` pages the session oldest first and follows `nextCursor` to the end.",
+    run: (session) =>
+      Effect.gen(function* () {
+        yield* session.prompt("first");
+        yield* session.prompt("second");
+        const first = yield* session.request("get_messages_page", { limit: 3 });
+        NodeAssert.equal(first.totalMessages, 4, "two turns are not four messages");
+        NodeAssert.equal(first.messages.length, 3);
+        NodeAssert.ok(first.nextCursor !== undefined, "a partial page has no nextCursor");
+        const second = yield* session.request("get_messages_page", {
+          limit: 3,
+          cursor: first.nextCursor,
+        });
+        NodeAssert.equal(second.messages.length, 1);
+        NodeAssert.equal(second.nextCursor, undefined, "the last page has a nextCursor");
+        const roles = [...first.messages, ...second.messages].map((message) => message.role);
+        NodeAssert.deepEqual(roles, ["user", "assistant", "user", "assistant"]);
+        const firstUser = first.messages[0];
+        NodeAssert.ok(firstUser?.role === "user");
+        const text =
+          typeof firstUser.content === "string"
+            ? firstUser.content
+            : firstUser.content.flatMap((block) => (block.type === "text" ? [block.text] : []));
+        NodeAssert.deepEqual([text].flat(), ["first"]);
+      }),
+  },
 ];
 
 export const ompTranscriptUrl = (scenario: string) =>
