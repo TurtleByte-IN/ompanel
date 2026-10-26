@@ -25,17 +25,21 @@ frames of one `omp --mode rpc-ui` process into V2 thread events. The adapter
 
 ## Frames
 
-| Frame                                                                       | Shown as                                                           |
-| --------------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| `message_update` `text_delta` / `text_end`                                  | Assistant message, streamed (deltas held 50 ms and sent together). |
-| `message_update` `thinking_delta` / `_end`                                  | Reasoning. Thinking marked `narration` is shown as answer text.    |
-| `message_end` (assistant)                                                   | Closes open text; adds its `usage` to the turn (see Usage).        |
-| `tool_execution_start` / `_update` / `_end`                                 | Tool-call card, updated in place (see Tool cards).                 |
-| `notice`                                                                    | System notice; the title is the notice's `source`.                 |
-| `command_output`                                                            | Notification: first line as summary, full text as detail.          |
-| `extension_ui_request` `notify`                                             | Notification. Other UI requests are C-03's.                        |
-| `session_info_update`                                                       | Session id and title (see Title and /fresh).                       |
-| anything else; any frame above outside a turn, except `session_info_update` | Ignored.                                                           |
+| Frame                                                                                   | Shown as                                                           |
+| --------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `message_update` `text_delta` / `text_end`                                              | Assistant message, streamed (deltas held 50 ms and sent together). |
+| `message_update` `thinking_delta` / `_end`                                              | Reasoning. Thinking marked `narration` is shown as answer text.    |
+| `message_end` (assistant)                                                               | Closes open text; adds its `usage` to the turn (see Usage).        |
+| `tool_execution_start` / `_update` / `_end`                                             | Tool-call card, updated in place (see Tool cards).                 |
+| `notice`                                                                                | System notice; the title is the notice's `source`.                 |
+| `command_output`                                                                        | Notification: first line as summary, full text as detail.          |
+| `extension_ui_request` `notify`                                                         | Notification.                                                      |
+| `extension_ui_request` `open_url`                                                       | Notification: the instructions' first line, the link as detail.    |
+| `extension_ui_request` `set_editor_text`                                                | Notification carrying the text (T has no remote composer channel). |
+| `extension_ui_request` dialogs and `cancel`                                             | Approval cards and question cards (see Dialogs).                   |
+| `extension_ui_request` `setStatus` / `setWidget` / `setTitle`                           | Ignored: they style OMP's own TUI; T keeps its own title.          |
+| `session_info_update`                                                                   | Session id and title (see Title and /fresh).                       |
+| anything else; any frame above outside a turn, except `session_info_update` and dialogs | Ignored.                                                           |
 
 ## Tool cards
 
@@ -78,3 +82,53 @@ Phases become plan steps (`Phase: task` once there is more than one phase);
 - `/fresh` rotates the OMP session id but keeps the session. A new id, from
   `session_info_update` or from `get_state` after the turn, is adopted in
   place: same provider thread, new native id.
+
+## Dialogs
+
+`OmpUiRequests` (`packages/provider-omp/src/server/uiRequests.ts`) turns the
+dialogs OMP opens into V2 runtime requests; the adapter sends the
+`extension_ui_response` and runs the deadlines. Each request is live-only
+(`responseCapability: live`); it sits in the active turn, or on the thread when
+OMP asks between turns.
+
+| Request                            | Card                                                                                                                                                                        | Reply                                                                                        |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `select` titled `Allow tool: NAME` | Approval card: `bash`/`eval`/`ssh`/`python`/`exec` are commands, `edit`/`write`/`ast_edit`/`apply_patch`/`notebook` file changes, `read` a file read, the rest permissions. | `value`: the label of the choice (see Approvals).                                            |
+| any other `select`                 | Question, single choice, no free text; `optionDetails` become option descriptions.                                                                                          | `value`: the chosen option.                                                                  |
+| `confirm`                          | Approval card (permission) with Yes / No.                                                                                                                                   | `confirmed: true` / `false`.                                                                 |
+| `input`                            | Question with free text, plus "Submit empty value".                                                                                                                         | `value`.                                                                                     |
+| `editor`                           | Question with free text, prefilled with `prefill`.                                                                                                                          | `value`.                                                                                     |
+| `ask`                              | One question per OMP question; `multi` allows several options; free text ("Other") is always allowed; the `recommended` option is labelled so.                              | `answers`: one `AskAnswer {id, selectedOptions, customInput?}` per question, in OMP's order. |
+| `cancel`                           | Closes the card of `targetId` (cancelled).                                                                                                                                  | None: OMP has already settled the dialog.                                                    |
+
+- **ask:** the adapter sends `set_ask_dialog {enabled: true}` right after the
+  handshake. Without it OMP falls back to `select`/`editor` and has no
+  multi-select or free text. An omp without the command keeps the fallback.
+  A question answered with option labels sends them as `selectedOptions`;
+  free text that is not an option label is `customInput`. Question ids are
+  OMP's own unless blank, padded or repeated (then `question-N`).
+- **Deadlines:** `timeout` (ms) on `select`, `confirm`, `input` and `ask`
+  starts a timer when the card opens; `editor` has none. When it fires, OMP
+  gets `{cancelled: true, timedOut: true}` (an `ask` then takes its recommended
+  answers) and the request becomes `expired`. OMP runs the same deadline and
+  sends `cancel` for it, whichever comes first.
+- **Cancel = reject:** the `cancel` decision, or no usable answer, replies
+  `{cancelled: true}`, which OMP reads as "no", "deny" or no answer.
+- When the process exits, open cards close (cancelled) with no reply.
+
+### Approvals
+
+OMP's rpc-ui mode has no approval dialog; it asks with a `select` whose options
+are `[grant labels…, grant always-labels…, Approve | Approve Once, session?, Deny]`
+(`approvalChoiceLabels` in OMP's `tools/approval.ts`). The card offers:
+
+| Decision           | Label sent back                                                                |
+| ------------------ | ------------------------------------------------------------------------------ |
+| `accept`           | `Approve` (or `Approve Once` when grants are offered).                         |
+| `acceptForSession` | `Approve SUBJECT for this session`, else the narrowest grant (`Approve File`). |
+| `acceptAlways`     | The narrowest grant's always-label (`Always Approve File`), when grants exist. |
+| `decline`          | `Deny`.                                                                        |
+
+When OMP offers both a folder and a file grant, the card offers the file one:
+the folder grant would cover more than the call being approved. The card shows
+the prompt; its `Reason:` line moves to the card's reason.

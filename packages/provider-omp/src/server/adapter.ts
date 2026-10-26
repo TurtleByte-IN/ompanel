@@ -10,6 +10,7 @@ import type * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -23,6 +24,13 @@ import { OMP_PROVIDER, OmpThreadMapper, type OmpTurnOutcome } from "./mapper.ts"
 import type { OmpPidfiles } from "./pidfiles.ts";
 import { type OmpStateDirs, startOmpSessionProcess } from "./session.ts";
 import type { OmpSidecarError } from "./sidecar.ts";
+import {
+  isOmpCancelRequest,
+  isOmpDialogRequest,
+  OmpUiRequests,
+  type OmpCancelRequest,
+  type OmpDialogRequest,
+} from "./uiRequests.ts";
 
 /** Streamed text is held this long so a burst of deltas becomes one update. */
 const STREAM_FLUSH = Duration.millis(50);
@@ -215,6 +223,9 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
         lastError: null,
       } satisfies OrchestrationV2ProviderSession,
     });
+    const uiRequests = new OmpUiRequests({ providerSessionId: input.providerSessionId });
+    /** OMP's answer deadlines, by native request id. */
+    const dialogTimers = new Map<string, Fiber.Fiber<void>>();
     const events = yield* Queue.unbounded<
       ProviderAdapter.ProviderAdapterV2Event,
       ProviderAdapter.ProviderAdapterV2Error | Cause.Done
@@ -260,7 +271,54 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       );
     });
 
+    const stopDialogTimer = (nativeId: string) => {
+      const timer = dialogTimers.get(nativeId);
+      dialogTimers.delete(nativeId);
+      return timer === undefined ? Effect.void : Fiber.interrupt(timer);
+    };
+    // Runs under the permit, so an answer and the deadline never both reach OMP.
+    const expireDialog = Effect.fnUntraced(function* (nativeId: string) {
+      dialogTimers.delete(nativeId);
+      const expired = uiRequests.expire(nativeId, yield* DateTime.now);
+      if (expired === null) return;
+      yield* process.send(expired.reply).pipe(Effect.ignore);
+      yield* emit(expired.events);
+    });
+
+    const handleDialogFrame = Effect.fnUntraced(function* (
+      frame: OmpDialogRequest | OmpCancelRequest,
+    ) {
+      const now = yield* DateTime.now;
+      if (frame.method === "cancel") {
+        yield* stopDialogTimer(frame.targetId);
+        return yield* emit(uiRequests.close(frame.targetId, now));
+      }
+      const opened = uiRequests.open(frame, mapper.requestPlacement(frame.id, input.threadId), now);
+      if (opened === null) {
+        // Nobody can answer a dialog with no id or no choices: close it so OMP moves on.
+        yield* Effect.logWarning("omp dialog request dropped", { method: frame.method });
+        if (typeof frame.id === "string") {
+          yield* process
+            .send({ type: "extension_ui_response", id: frame.id, cancelled: true })
+            .pipe(Effect.ignore);
+        }
+        return;
+      }
+      yield* emit(opened.events);
+      if (opened.timeoutMs !== null) {
+        const nativeId = frame.id;
+        const timer = yield* Effect.sleep(Duration.millis(opened.timeoutMs)).pipe(
+          Effect.andThen(exclusive(expireDialog(nativeId))),
+          Effect.forkIn(scope),
+        );
+        dialogTimers.set(nativeId, timer);
+      }
+    });
+
     const handleFrame = Effect.fnUntraced(function* (frame: RpcServerFrame) {
+      if (isOmpDialogRequest(frame) || isOmpCancelRequest(frame)) {
+        return yield* handleDialogFrame(frame);
+      }
       const result = mapper.handleFrame(frame, yield* DateTime.now);
       yield* emit(result.events);
       if (result.streaming && !flushScheduled) {
@@ -292,6 +350,9 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
           false,
         );
       }
+      // Dialogs still open close unanswered; OMP is gone or going.
+      yield* Effect.forEach([...dialogTimers.keys()], stopDialogTimer, { discard: true });
+      yield* emit(uiRequests.closeAll(yield* DateTime.now));
       yield* emit(mapper.setSessionStatus(status, lastError, yield* DateTime.now));
       yield* Queue.end(events);
     });
@@ -316,6 +377,11 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
     );
 
     yield* Effect.annotateCurrentSpan({ pid: process.pid });
+    // Multi-select and free-text questions reach the host only through OMP's `ask` dialog, which
+    // the host has to enable; an omp without the command keeps its select/editor fallback.
+    yield* process
+      .request("set_ask_dialog", { enabled: true }, { timeoutMs: SIDE_REQUEST_TIMEOUT_MS })
+      .pipe(Effect.ignore);
 
     /** Binds the thread to the session this process opened; switching sessions is C-10's. */
     const bindThread = Effect.fnUntraced(function* (
@@ -407,6 +473,18 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
         );
     });
 
+    const respond = Effect.fnUntraced(function* (
+      requestInput: ProviderAdapter.ProviderAdapterV2RuntimeRequestResponseInput,
+    ) {
+      const answer = uiRequests.answer(requestInput);
+      if (answer === null) {
+        return yield* protocolError(`No pending OMP request ${requestInput.requestId}`);
+      }
+      yield* stopDialogTimer(answer.nativeId);
+      yield* process.send(answer.reply);
+      yield* emit(uiRequests.resolve(requestInput.requestId, yield* DateTime.now));
+    });
+
     return {
       instanceId: options.instanceId,
       driver: OMP_PROVIDER,
@@ -457,7 +535,17 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
         ),
       steerTurn: () => unavailable("steering"),
       interruptTurn: () => unavailable("interrupts"),
-      respondToRuntimeRequest: () => unavailable("runtime requests"),
+      respondToRuntimeRequest: (requestInput) =>
+        exclusive(respond(requestInput)).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProviderAdapter.ProviderAdapterRuntimeRequestResponseError({
+                driver: OMP_PROVIDER,
+                requestId: requestInput.requestId,
+                cause,
+              }),
+          ),
+        ),
       readThreadSnapshot: () => unavailable("thread snapshots"),
       rollbackThread: () => unavailable("rollback"),
       forkThread: () => unavailable("fork"),
