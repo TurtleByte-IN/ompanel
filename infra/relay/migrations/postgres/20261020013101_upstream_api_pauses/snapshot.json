@@ -498,7 +498,7 @@
       "typeSchema": null,
       "notNull": true,
       "dimensions": 0,
-      "default": "'Ompanel Environment'",
+      "default": "'T3 Environment'",
       "generated": null,
       "identity": null,
       "name": "environment_label",

@@ -165,6 +165,10 @@ Renaming them would only add merge conflicts or break existing data.
   them.
 - Third-party registrations made for upstream: the Grok OAuth referrer `t3code` and the Expo
   owner in `apps/mobile/app.config.ts`.
+- Applied relay database migrations under `infra/relay/migrations/`: they are never rewritten once
+  applied, so their upstream names stay byte for byte.
+- Upstream's dependency forks are named as upstream's, such as T3 Code's react-native-screens fork
+  in `docs/operations/mobile-screens-fork.md`.
 
 ## After an upstream merge
 

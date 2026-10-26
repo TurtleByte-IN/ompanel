@@ -57,6 +57,11 @@ const ALLOWLIST: ReadonlyArray<Allowance> = [
     marks: ["T3 Code"],
     reason: "third-party modification notice",
   },
+  {
+    path: "docs/operations/mobile-screens-fork.md",
+    marks: ["T3 Code"],
+    reason: "names upstream's react-native-screens fork",
+  },
   // Migration inputs.
   { path: "docs/user/install.md", marks: ["T3 Code", "T3CODE_"], reason: "Moving from T3 Code" },
   { path: "apps/server/src/legacyHomeMigration.ts", marks: ["T3 Code"], reason: "~/.t3 migration" },
