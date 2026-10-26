@@ -5,6 +5,7 @@ export * from "./composerContextClipboard.ts";
 export * from "./background.ts";
 export * from "./acpRegistry.ts";
 export * from "./ompSettings.ts";
+export * from "./ompAccounts.ts";
 export * from "./auth.ts";
 export * from "./environment.ts";
 export * from "./environmentHttp.ts";

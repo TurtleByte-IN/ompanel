@@ -24,6 +24,11 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   // A thread override changes what one running thread does, like other thread operations.
   [WS_METHODS.serverSetOmpThreadOverride]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverClearOmpThreadOverride]: AuthOrchestrationOperateScope,
+  // Signing in and out of OMP's providers changes the provider install's stored credentials.
+  [WS_METHODS.serverStartOmpSignIn]: AuthProvidersManageScope,
+  [WS_METHODS.serverAnswerOmpSignIn]: AuthProvidersManageScope,
+  [WS_METHODS.serverCancelOmpSignIn]: AuthProvidersManageScope,
+  [WS_METHODS.serverOmpSignOut]: AuthProvidersManageScope,
   [WS_METHODS.pullRequestsRunAction]: AuthSourceControlWriteScope,
   [WS_METHODS.pullRequestsUpdate]: AuthSourceControlWriteScope,
   [WS_METHODS.pullRequestsComment]: AuthSourceControlWriteScope,

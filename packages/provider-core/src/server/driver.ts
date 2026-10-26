@@ -15,9 +15,16 @@ import type {
   OmpSettingsOperationError,
   OmpSettingsWriteResult,
   OmpThreadOverrideResult,
+  OmpAccountsList,
+  OmpAccountsOperationError,
+  OmpSignInState,
+  OmpSignOutAccounts,
+  OmpSignOutResult,
   ThreadId,
 } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
+import type * as Redacted from "effect/Redacted";
+import type * as Stream from "effect/Stream";
 import type * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 
@@ -83,6 +90,40 @@ export interface ProviderInstance {
   };
   /** OMP's own settings (`omp config`), read and written through the instance's omp. */
   readonly ompSettings?: ProviderOmpSettingsController;
+  /** OMP's own provider accounts: sign-in through RPC `login`, sign-out, auth sources. */
+  readonly ompAccounts?: ProviderOmpAccountsController;
+}
+
+/**
+ * OMP sign-in and sign-out. Keys and secret answers stay `Redacted` until they are written to the
+ * omp process's stdin; they never reach argv, Ompanel's state directory or logs.
+ */
+export interface ProviderOmpAccountsController {
+  /** Providers with auth state; `cwd` adds the project's committed-config credential check. */
+  readonly list: (input: {
+    readonly cwd: string | undefined;
+  }) => Effect.Effect<OmpAccountsList, OmpAccountsOperationError>;
+  /** Starts a sign-in; fails `busy` while another runs on this instance. */
+  readonly start: (input: {
+    readonly providerId: string;
+    readonly apiKey: Redacted.Redacted<string> | undefined;
+  }) => Effect.Effect<OmpSignInState, OmpAccountsOperationError>;
+  /** Answers the running sign-in's prompt; `undefined` cancels the prompt. */
+  readonly answer: (input: {
+    readonly flowId: string;
+    readonly promptId: string;
+    readonly value: Redacted.Redacted<string> | undefined;
+  }) => Effect.Effect<OmpSignInState, OmpAccountsOperationError>;
+  readonly cancel: Effect.Effect<OmpSignInState>;
+  /** The current state, then every change. */
+  readonly subscribe: Stream.Stream<OmpSignInState>;
+  readonly signOutAccounts: (input: {
+    readonly providerId: string;
+  }) => Effect.Effect<OmpSignOutAccounts, OmpAccountsOperationError>;
+  readonly signOut: (input: {
+    readonly providerId: string;
+    readonly credentialId: number;
+  }) => Effect.Effect<OmpSignOutResult, OmpAccountsOperationError>;
 }
 
 /** `cwd` selects the project layer; `undefined` reads and writes global layers only. */

@@ -78,6 +78,19 @@ import {
   OmpThreadOverrideInput,
   OmpThreadOverrideResult,
 } from "./ompSettings.ts";
+import {
+  OmpAccountsList,
+  OmpAccountsListInput,
+  OmpAccountsOperationError,
+  OmpSignInAnswerInput,
+  OmpSignInInput,
+  OmpSignInStartInput,
+  OmpSignInState,
+  OmpSignOutAccounts,
+  OmpSignOutAccountsInput,
+  OmpSignOutInput,
+  OmpSignOutResult,
+} from "./ompAccounts.ts";
 import { ExternalLauncherError, LaunchEditorInput } from "./editor.ts";
 import {
   AuthAccessStreamError,
@@ -518,6 +531,13 @@ export const WS_METHODS = {
   serverResetOmpSetting: "server.resetOmpSetting",
   serverSetOmpThreadOverride: "server.setOmpThreadOverride",
   serverClearOmpThreadOverride: "server.clearOmpThreadOverride",
+  serverListOmpAccounts: "server.listOmpAccounts",
+  serverStartOmpSignIn: "server.startOmpSignIn",
+  serverAnswerOmpSignIn: "server.answerOmpSignIn",
+  serverCancelOmpSignIn: "server.cancelOmpSignIn",
+  serverSubscribeOmpSignIn: "server.subscribeOmpSignIn",
+  serverListOmpSignOutAccounts: "server.listOmpSignOutAccounts",
+  serverOmpSignOut: "server.ompSignOut",
   serverGetTraceDiagnostics: "server.getTraceDiagnostics",
   serverGetProcessDiagnostics: "server.getProcessDiagnostics",
   serverGetHostResources: "server.getHostResources",
@@ -912,6 +932,54 @@ const WsServerClearOmpThreadOverrideRpc = Rpc.make(WS_METHODS.serverClearOmpThre
   payload: OmpThreadOverrideClearInput,
   success: OmpThreadOverrideResult,
   error: OmpSettingsRpcError,
+});
+
+const OmpAccountsRpcError = Schema.Union([
+  OmpAccountsOperationError,
+  EnvironmentAuthorizationError,
+]);
+
+const WsServerListOmpAccountsRpc = Rpc.make(WS_METHODS.serverListOmpAccounts, {
+  payload: OmpAccountsListInput,
+  success: OmpAccountsList,
+  error: OmpAccountsRpcError,
+});
+
+const WsServerStartOmpSignInRpc = Rpc.make(WS_METHODS.serverStartOmpSignIn, {
+  payload: OmpSignInStartInput,
+  success: OmpSignInState,
+  error: OmpAccountsRpcError,
+});
+
+const WsServerAnswerOmpSignInRpc = Rpc.make(WS_METHODS.serverAnswerOmpSignIn, {
+  payload: OmpSignInAnswerInput,
+  success: OmpSignInState,
+  error: OmpAccountsRpcError,
+});
+
+const WsServerCancelOmpSignInRpc = Rpc.make(WS_METHODS.serverCancelOmpSignIn, {
+  payload: OmpSignInInput,
+  success: OmpSignInState,
+  error: OmpAccountsRpcError,
+});
+
+const WsServerSubscribeOmpSignInRpc = Rpc.make(WS_METHODS.serverSubscribeOmpSignIn, {
+  payload: OmpSignInInput,
+  success: OmpSignInState,
+  error: OmpAccountsRpcError,
+  stream: true,
+});
+
+const WsServerListOmpSignOutAccountsRpc = Rpc.make(WS_METHODS.serverListOmpSignOutAccounts, {
+  payload: OmpSignOutAccountsInput,
+  success: OmpSignOutAccounts,
+  error: OmpAccountsRpcError,
+});
+
+const WsServerOmpSignOutRpc = Rpc.make(WS_METHODS.serverOmpSignOut, {
+  payload: OmpSignOutInput,
+  success: OmpSignOutResult,
+  error: OmpAccountsRpcError,
 });
 
 const WsServerGetTraceDiagnosticsRpc = Rpc.make(WS_METHODS.serverGetTraceDiagnostics, {
@@ -2030,6 +2098,13 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerResetOmpSettingRpc,
   WsServerSetOmpThreadOverrideRpc,
   WsServerClearOmpThreadOverrideRpc,
+  WsServerListOmpAccountsRpc,
+  WsServerStartOmpSignInRpc,
+  WsServerAnswerOmpSignInRpc,
+  WsServerCancelOmpSignInRpc,
+  WsServerSubscribeOmpSignInRpc,
+  WsServerListOmpSignOutAccountsRpc,
+  WsServerOmpSignOutRpc,
   WsServerGetTraceDiagnosticsRpc,
   WsServerGetProcessDiagnosticsRpc,
   WsServerGetHostResourcesRpc,

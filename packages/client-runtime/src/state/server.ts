@@ -1500,6 +1500,35 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:omp-settings:clear-thread-override",
       tag: WS_METHODS.serverClearOmpThreadOverride,
     }),
+    listOmpAccounts: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:omp-accounts:list",
+      tag: WS_METHODS.serverListOmpAccounts,
+    }),
+    ompSignInState: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:server:omp-accounts:sign-in-state",
+      tag: WS_METHODS.serverSubscribeOmpSignIn,
+      idleTtlMs: 0,
+    }),
+    startOmpSignIn: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:omp-accounts:sign-in-start",
+      tag: WS_METHODS.serverStartOmpSignIn,
+    }),
+    answerOmpSignIn: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:omp-accounts:sign-in-answer",
+      tag: WS_METHODS.serverAnswerOmpSignIn,
+    }),
+    cancelOmpSignIn: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:omp-accounts:sign-in-cancel",
+      tag: WS_METHODS.serverCancelOmpSignIn,
+    }),
+    listOmpSignOutAccounts: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:omp-accounts:sign-out-accounts",
+      tag: WS_METHODS.serverListOmpSignOutAccounts,
+    }),
+    ompSignOut: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:omp-accounts:sign-out",
+      tag: WS_METHODS.serverOmpSignOut,
+    }),
     signalProcess: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:signal-process",
       tag: WS_METHODS.serverSignalProcess,
