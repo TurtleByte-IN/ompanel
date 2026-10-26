@@ -44,7 +44,7 @@ export const contractAtLeast = (version: string, minimum: string): boolean => {
   return minor !== needMinor ? minor > needMinor : patch >= needPatch;
 };
 
-// Frames and commands newer than the vendored contract (RPC 1.0.0), in O main's shapes. Delete
+// Frames and commands newer than the vendored contract (RPC 1.3.0), in O main's shapes. Delete
 // when the contract is re-vendored at a tag that includes them.
 
 /** `host_cwd_change_request` (oh-my-pi#38). */
@@ -66,10 +66,6 @@ interface OmpHostCwdChangeResult {
 }
 
 interface OmpCommandsAhead {
-  readonly set_tool_enabled: {
-    readonly params: { readonly tool: string; readonly enabled: boolean };
-    readonly result: { readonly enabled: boolean };
-  };
   readonly set_host_cwd_change: {
     readonly params: { readonly enabled: boolean };
     readonly result: { readonly enabled: boolean };
@@ -218,10 +214,7 @@ export const makeOmpHostBridge = Effect.fn("makeOmpHostBridge")(function* (
       });
       return false;
     }
-    const result = yield* requestAhead(process, "set_tool_enabled", {
-      tool: "bash",
-      enabled: false,
-    });
+    const result = yield* process.request("set_tool_enabled", { tool: "bash", enabled: false });
     return result.enabled === false;
   }).pipe(
     Effect.catch((error) =>

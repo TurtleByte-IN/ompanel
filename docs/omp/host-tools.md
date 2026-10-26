@@ -80,7 +80,8 @@ The session turns on `set_host_cwd_change`. After that, OMP sends a
 | `set_host_cwd_change`, `host_cwd_change_request` (`/wt`) | 1.5.0 (oh-my-pi#38) |
 
 The session compares the pinned contract (`omp.lock`) against these versions.
-It leaves out what the pinned sidecar cannot do. The vendored contract does not
-type `set_tool_enabled` or the directory-change frames yet. `hostTools.ts`
-declares them in O main's shapes until the contract is re-vendored at a tag
-that includes them.
+It leaves out what the pinned sidecar cannot do. The current pin
+(v18.12.6-ompanel.2, RPC 1.3.0) has the terminal but not `/wt`. The vendored
+contract does not type `set_host_cwd_change` or the directory-change frames yet.
+`hostTools.ts` declares them in O main's shapes until the contract is
+re-vendored at a tag that includes oh-my-pi#38.
