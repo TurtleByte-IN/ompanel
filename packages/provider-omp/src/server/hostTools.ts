@@ -12,6 +12,8 @@ import * as FiberMap from "effect/FiberMap";
 import * as Scope from "effect/Scope";
 
 import type {
+  HostCwdChangeRequest,
+  HostCwdChangeResult,
   HostToolCallRequest,
   HostToolDefinition,
   HostToolResultPayload,
@@ -23,10 +25,7 @@ import type { OmpRpcProcess } from "./rpcProcess.ts";
 export const OMP_HOST_TERMINAL_TOOL = "terminal";
 /** First RPC contract with `set_tool_enabled` (oh-my-pi C-04). */
 const OMP_TOOL_TOGGLE_CONTRACT = "1.1.0";
-/**
- * First RPC contract with `set_host_cwd_change` and `host_cwd_change_request` (oh-my-pi#38).
- * Renumber if that PR lands under a later minor.
- */
+/** First RPC contract with `set_host_cwd_change` and `host_cwd_change_request` (oh-my-pi#38). */
 export const OMP_HOST_CWD_CHANGE_CONTRACT = "1.5.0";
 
 const DEFAULT_TIMEOUT_SECONDS = 300;
@@ -46,60 +45,6 @@ export const contractAtLeast = (version: string, minimum: string): boolean => {
   if (major !== needMajor) return false;
   return minor !== needMinor ? minor > needMinor : patch >= needPatch;
 };
-
-// Frames and commands newer than the vendored contract (RPC 1.3.0), in O main's shapes. Delete
-// when the contract is re-vendored at a tag that includes them.
-
-/** `host_cwd_change_request` (oh-my-pi#38). */
-export interface OmpHostCwdChangeRequest {
-  readonly type: "host_cwd_change_request";
-  readonly id: string;
-  readonly reason: "worktree" | "move";
-  readonly cwd: string;
-  readonly path?: string;
-  readonly branch?: string;
-}
-
-interface OmpHostCwdChangeResult {
-  readonly type: "host_cwd_change_result";
-  readonly id: string;
-  readonly accepted: boolean;
-  readonly cwd?: string;
-  readonly error?: string;
-}
-
-interface OmpCommandsAhead {
-  readonly set_host_cwd_change: {
-    readonly params: { readonly enabled: boolean };
-    readonly result: { readonly enabled: boolean };
-  };
-}
-
-const requestAhead = <K extends keyof OmpCommandsAhead>(
-  process: OmpRpcProcess,
-  command: K,
-  params: OmpCommandsAhead[K]["params"],
-) =>
-  (
-    process.request as unknown as (
-      command: K,
-      params: OmpCommandsAhead[K]["params"],
-    ) => ReturnType<OmpRpcProcess["request"]>
-  )(command, params) as Effect.Effect<
-    OmpCommandsAhead[K]["result"],
-    Effect.Error<ReturnType<OmpRpcProcess["request"]>>
-  >;
-
-/** Validates an inbound frame the vendored contract does not know yet. */
-const isHostCwdChangeRequest = (frame: unknown): frame is OmpHostCwdChangeRequest =>
-  typeof frame === "object" &&
-  frame !== null &&
-  "type" in frame &&
-  frame.type === "host_cwd_change_request" &&
-  "id" in frame &&
-  typeof frame.id === "string" &&
-  "reason" in frame &&
-  (frame.reason === "worktree" || frame.reason === "move");
 
 const OMP_HOST_TERMINAL_DEFINITION: HostToolDefinition = {
   name: OMP_HOST_TERMINAL_TOOL,
@@ -248,11 +193,13 @@ export const makeOmpHostBridge = Effect.fn("makeOmpHostBridge")(function* (
       );
     }
     if (contractAtLeast(process.contractVersion, OMP_HOST_CWD_CHANGE_CONTRACT)) {
-      yield* requestAhead(process, "set_host_cwd_change", { enabled: true }).pipe(
-        Effect.catch((error) =>
-          Effect.logWarning("OMP keeps handling /wt and /move itself", { detail: error.message }),
-        ),
-      );
+      yield* process
+        .request("set_host_cwd_change", { enabled: true })
+        .pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("OMP keeps handling /wt and /move itself", { detail: error.message }),
+          ),
+        );
     }
   });
 
@@ -323,21 +270,13 @@ export const makeOmpHostBridge = Effect.fn("makeOmpHostBridge")(function* (
     );
 
   const answerCwdChange = (
-    request: OmpHostCwdChangeRequest,
-    answer: Omit<OmpHostCwdChangeResult, "type" | "id">,
-  ) => {
-    const frame: OmpHostCwdChangeResult = {
-      type: "host_cwd_change_result",
-      id: request.id,
-      ...answer,
-    };
-    // The vendored contract's inbound union predates this frame.
-    const inbound = frame as unknown as Parameters<OmpRpcProcess["send"]>[0];
-    return process.send(inbound).pipe(Effect.ignore);
-  };
+    request: HostCwdChangeRequest,
+    answer: Omit<HostCwdChangeResult, "type" | "id">,
+  ) =>
+    process.send({ type: "host_cwd_change_result", id: request.id, ...answer }).pipe(Effect.ignore);
 
   const handleCwdChange = Effect.fn("OmpHostBridge.handleCwdChange")(function* (
-    request: OmpHostCwdChangeRequest,
+    request: HostCwdChangeRequest,
   ) {
     if (request.reason === "move") {
       return yield* answerCwdChange(request, {
@@ -380,20 +319,12 @@ export const makeOmpHostBridge = Effect.fn("makeOmpHostBridge")(function* (
       yield* FiberMap.remove(calls, frame.targetId);
       return true;
     }
-    const unknownFrame: unknown = frame;
-    if (isHostCwdChangeRequest(unknownFrame)) {
-      yield* FiberMap.run(calls, unknownFrame.id, handleCwdChange(unknownFrame));
+    if (frame.type === "host_cwd_change_request") {
+      yield* FiberMap.run(calls, frame.id, handleCwdChange(frame));
       return true;
     }
-    if (
-      typeof unknownFrame === "object" &&
-      unknownFrame !== null &&
-      "type" in unknownFrame &&
-      unknownFrame.type === "host_cwd_change_cancel" &&
-      "targetId" in unknownFrame &&
-      typeof unknownFrame.targetId === "string"
-    ) {
-      yield* FiberMap.remove(calls, unknownFrame.targetId);
+    if (frame.type === "host_cwd_change_cancel") {
+      yield* FiberMap.remove(calls, frame.targetId);
       return true;
     }
     return false;

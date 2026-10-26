@@ -75,8 +75,8 @@ An override changes one key for one thread:
   a file. OMP reloads the overlay live, so only launch-scoped keys mark the
   thread "restart required". The overlay survives a respawn.
 
-`set_approval_mode` and `set_advisor` (O-2) are not in the pinned contract
-1.0.0. `advisor.enabled` goes through the overlay, which OMP applies live.
+The engine does not use `set_advisor` (O-2, in the pinned contract since
+1.3.0): `advisor.enabled` goes through the overlay, which OMP applies live.
 
 ## Restart required
 

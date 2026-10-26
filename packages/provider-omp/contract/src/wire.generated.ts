@@ -742,11 +742,20 @@ export interface BtwHistoryRecord {
 	followUps?: BtwHistoryTurn[];
 }
 
+/** Where a provider's auth comes from: `--api-key`, models config, a stored OAuth grant, a stored API key, or an env var. */
+export type LoginAuthSource = "runtime" | "config" | "oauth" | "api_key" | "env";
+
 export interface LoginProvider {
 	id: string;
 	name: string;
 	available: boolean;
 	authenticated: boolean;
+	/** `login` asks for one pasted API key, which hosts may pass as `input`; false for browser, device-code and multi-step flows. */
+	apiKey?: boolean;
+	/** Auth that currently applies; absent when `authenticated` is false. */
+	source?: LoginAuthSource;
+	/** Env var backing the auth when `source` is `"env"` and one variable names it. */
+	envVar?: string;
 }
 
 /** A stored credential `logout` can remove; `active` marks credentials the session may be using. */
@@ -1262,6 +1271,8 @@ export interface InputUiRequest {
 	title: string;
 	placeholder?: string;
 	timeout?: number;
+	/** Mask the answer and keep it out of history and logs; sent only for a `login` that passed `secretInput: true`. */
+	secret?: boolean;
 }
 
 export interface EditorUiRequest {
@@ -1449,11 +1460,45 @@ export interface HostUriResult {
 	error?: string;
 }
 
-/** Server request for host-owned tools and URI schemes, discriminated by `type`. */
-export type RpcHostRequest = HostToolCallRequest | HostToolCancelRequest | HostUriRequest | HostUriCancelRequest;
+/** Which command wants to change the session directory: `/wt` (`worktree`) or `/move` (`move`). */
+export type HostCwdChangeReason = "worktree" | "move";
+
+/** Asks the host to own a session directory change; sent only after `set_host_cwd_change` enabled it. For `worktree` the host creates the worktree; for `move` it approves the target. */
+export interface HostCwdChangeRequest {
+	type: "host_cwd_change_request";
+	id: string;
+	reason: HostCwdChangeReason;
+	/** The session's current working directory. */
+	cwd: string;
+	/** `move` only: the resolved, existing target directory. */
+	path?: string;
+	/** `worktree` only: the branch the user asked for, or a generated default. */
+	branch?: string;
+}
+
+/** The command waiting on `targetId` was aborted; the server ignores any later result for it. */
+export interface HostCwdChangeCancelRequest {
+	type: "host_cwd_change_cancel";
+	id: string;
+	targetId: string;
+}
+
+/** Host reply to a `host_cwd_change_request`: on accept the server moves the session into `cwd`; on reject it stays put. */
+export interface HostCwdChangeResult {
+	type: "host_cwd_change_result";
+	id: string;
+	accepted: boolean;
+	/** Absolute existing directory to move the session into. Required to accept `worktree`; defaults to the request `path` for `move`. */
+	cwd?: string;
+	/** Reason shown to the user when `accepted` is false. */
+	error?: string;
+}
+
+/** Server request for host-owned tools, URI schemes, and directory changes, discriminated by `type`. */
+export type RpcHostRequest = HostToolCallRequest | HostToolCancelRequest | HostUriRequest | HostUriCancelRequest | HostCwdChangeRequest | HostCwdChangeCancelRequest;
 
 /** Non-command frame the host sends, discriminated by `type`. */
-export type RpcInbound = ExtensionUiResponse | HostToolUpdate | HostToolResult | HostUriResult;
+export type RpcInbound = ExtensionUiResponse | HostToolUpdate | HostToolResult | HostUriResult | HostCwdChangeResult;
 
 /** Response to a command, correlated by `id`. */
 export interface RpcResponse {
@@ -1648,6 +1693,14 @@ export interface SetHostUriSchemesResult {
 	schemes: string[];
 }
 
+export interface SetHostCwdChangeParams {
+	enabled: boolean;
+}
+
+export interface SetHostCwdChangeResult {
+	enabled: boolean;
+}
+
 export interface SetSubagentSubscriptionParams {
 	level: SubagentSubscriptionLevel;
 }
@@ -1687,6 +1740,15 @@ export interface CancelSubagentResult {
 export interface SteerSubagentParams {
 	subagentId: string;
 	message: string;
+}
+
+export interface ReviveSubagentParams {
+	subagentId: string;
+	message?: string;
+}
+
+export interface ReviveSubagentResult {
+	revived: boolean;
 }
 
 export interface LiveStartParams {
@@ -1812,6 +1874,10 @@ export interface GetLoginProvidersResult {
 
 export interface LoginParams {
 	providerId: string;
+	/** Answer to the flow's first prompt, sent instead of an `input` request; for `apiKey` providers, the key. */
+	input?: string;
+	/** The host masks `input` requests marked `secret`; without it, a flow that asks for a secret fails. */
+	secretInput?: boolean;
 }
 
 export interface LoginResult {
@@ -1900,12 +1966,14 @@ export interface RpcWireCommands {
 	set_todos: { params: SetTodosParams; result: SetTodosResult };
 	set_host_tools: { params: SetHostToolsParams; result: SetHostToolsResult };
 	set_host_uri_schemes: { params: SetHostUriSchemesParams; result: SetHostUriSchemesResult };
+	set_host_cwd_change: { params: SetHostCwdChangeParams; result: SetHostCwdChangeResult };
 	set_subagent_subscription: { params: SetSubagentSubscriptionParams; result: SetSubagentSubscriptionResult };
 	set_event_filter: { params: SetEventFilterParams; result: SetEventFilterResult };
 	get_subagents: { params: undefined; result: GetSubagentsResult };
 	get_subagent_messages: { params: GetSubagentMessagesParams; result: SubagentMessages };
 	cancel_subagent: { params: CancelSubagentParams; result: CancelSubagentResult };
 	steer_subagent: { params: SteerSubagentParams; result: undefined };
+	revive_subagent: { params: ReviveSubagentParams; result: ReviveSubagentResult };
 	live_start: { params: LiveStartParams; result: LiveStartResult };
 	live_stop: { params: undefined; result: undefined };
 	live_mute: { params: LiveMuteParams; result: LiveMuteResult };

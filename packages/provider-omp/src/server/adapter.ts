@@ -28,7 +28,7 @@ import { makeOmpHostBridge } from "./hostTools.ts";
 import { ompApprovalModeFor } from "./launch.ts";
 import { OMP_PROVIDER, OmpThreadMapper, type OmpTurnOutcome } from "./mapper.ts";
 import type { OmpSessionsLocation } from "./ompSessions.ts";
-import type { OmpRpcRequestError, OmpRpcRequestOptions } from "./rpcProcess.ts";
+import type { OmpRpcRequestError } from "./rpcProcess.ts";
 import type { OmpPidfiles } from "./pidfiles.ts";
 import { type OmpStateDirs, startOmpSessionProcess } from "./session.ts";
 import {
@@ -74,17 +74,6 @@ const SUBAGENT_REVIVE_TIMEOUT_MS = 60_000;
 const SESSION_CHANGE_TIMEOUT_MS = 60_000;
 /** Reads of the session tree for a rewind or fork, which list user messages or entries. */
 const TREE_READ_TIMEOUT_MS = 30_000;
-
-/**
- * `revive_subagent` (RPC contract 1.4.0) is newer than the pinned contract's typed command
- * table. It is only sent when the pinned contract has it (see `ompSubagentControls`), so the
- * call is typed here until the vendored contract is re-pinned.
- */
-type OmpReviveRequest = (
-  command: "revive_subagent",
-  params: { readonly subagentId: string; readonly message?: string },
-  options?: OmpRpcRequestOptions,
-) => Effect.Effect<{ readonly revived: boolean }, OmpRpcRequestError>;
 
 /**
  * What an `omp --mode rpc-ui` session supports. Rollback maps to OMP's `branch`, a fork to
@@ -835,15 +824,16 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
               `Reviving a subagent needs OMP RPC contract ${OMP_REVIVE_CONTRACT} or later; this build pins ${process.contractVersion}`,
             );
           }
-          const requestRevive = process.request as unknown as OmpReviveRequest;
-          return yield* requestRevive(
-            "revive_subagent",
-            {
-              subagentId,
-              ...(action.message === undefined ? {} : { message: action.message }),
-            },
-            { timeoutMs: SUBAGENT_REVIVE_TIMEOUT_MS },
-          ).pipe(Effect.asVoid, Effect.mapError(subagentRequestError));
+          return yield* process
+            .request(
+              "revive_subagent",
+              {
+                subagentId,
+                ...(action.message === undefined ? {} : { message: action.message }),
+              },
+              { timeoutMs: SUBAGENT_REVIVE_TIMEOUT_MS },
+            )
+            .pipe(Effect.asVoid, Effect.mapError(subagentRequestError));
         }
       }
     });

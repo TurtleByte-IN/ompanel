@@ -48,12 +48,12 @@ export interface OmpLock {
 
 export const OMP_LOCK: OmpLock = {
   repository: "TurtleByte-IN/oh-my-pi",
-  tag: "v18.12.6-ompanel.2",
-  commit: "4b84a778ff526513c75984ed6a5a65861a9acdf7",
+  tag: "v18.12.6-ompanel.3",
+  commit: "acf0d2313915dbff0009ad37088bcd15292288f6",
   version: "18.12.6",
   contract: {
-    version: "1.3.0",
-    schemaHash: "sha256:8e8065b0d9dcc72c4a823c7975eb09751989f476c841f96bade49c4192cce7e0",
+    version: "1.6.0",
+    schemaHash: "sha256:a61c22dd6dc95fdaedac129d37eca8d471e4e9736f0f384452762d69d36233b2",
   },
   cliContract: {
     version: "1.0.0",
