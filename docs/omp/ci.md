@@ -20,6 +20,22 @@ No workflow used Blacksmith-specific actions. Caching already went through
 `.github/actions/setup-apt-mirrors` writes its mirror list to
 `/etc/apt/ubuntu-mirrors.txt` (formerly `blacksmith-ubuntu-mirrors.txt`).
 
+## Required checks
+
+Branch protection on `main` requires one status check, `Check` (the last job in
+`ci.yml`). It passes only when every other `ci.yml` job passed, or was skipped
+because `changes` found the pull request cannot affect it. A failed or
+cancelled job fails it. Through it, every pull request is gated on:
+
+- format and lint: `Lint` (`vp check`, which formats every file, plus knip and
+  the generated GraphQL checks);
+- typecheck: `Build and Typecheck`;
+- unit tests: `Test`, `Test Web`, `Test Server 1`–`8` and `Rust`.
+
+A new job joins the gate by being added to `Check`'s `needs`; the branch
+protection setting does not change. Workflows other than `ci.yml` (PR size,
+vouch, mobile fingerprint) are not required.
+
 ## Jobs that run only upstream
 
 These jobs need secrets or infrastructure that only `pingdotgg/t3code` has.
