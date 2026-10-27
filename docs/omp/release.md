@@ -42,7 +42,7 @@ only"; `-nightly.` and `-preview.` tags, which the release workflow creates itse
 
 Any tag with a suffix after `X.Y.Z` (other than `-nightly.` and `-preview.`, which the trigger
 ignores) is a release candidate. It may be cut from any commit, so a branch can be released before
-it merges; `v0.0.0-ompanel-rc.1` and `-rc.2` were cut from the branch that set this pipeline up.
+it merges; `v0.0.0-ompanel-rc.1` to `-rc.3` were cut from the branch that set this pipeline up.
 A candidate is a GitHub prerelease, is never marked latest, and never runs the finalize job, so it
 never commits a version bump to `main`. A candidate from a commit that is not on `main` builds
 unsigned and never publishes to npm, whatever secrets exist: only reviewed code gets the signing
