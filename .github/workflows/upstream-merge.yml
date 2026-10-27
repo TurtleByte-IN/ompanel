@@ -52,6 +52,10 @@ jobs:
       # upstream change to .github/workflows and whose PRs start no CI.
       USE_PAT: ${{ secrets.UPSTREAM_MERGE_TOKEN != '' }}
       GH_TOKEN: ${{ secrets.UPSTREAM_MERGE_TOKEN || github.token }}
+      # Every gh call targets this fork. Without it gh resolves the repository
+      # from the git remotes and picks `upstream` (pingdotgg/t3code) once that
+      # remote is added, so label, issue and PR calls would aim at upstream.
+      GH_REPO: ${{ github.repository }}
       LABEL: upstream-merge
       CI_CONTEXT: Check
     steps:
