@@ -71,6 +71,10 @@ there are several:
 Each part loads and fails on its own; an error names what went wrong without OMP's output. Refresh
 reloads all three. Account limits need permission to manage providers.
 
+On mobile, **Usage → OMP** appears when a selected environment runs OMP and shows the same three
+parts, read-only, for every OMP instance one after another instead of a picker. Pull down to
+reload them.
+
 ## Set custom model prices
 
 On web or desktop, open the environment dropdown on **Usage**, then choose **Model prices** to add,
