@@ -286,6 +286,10 @@ test("restarts the session after a launch-only setting changes", async () => {
   await expect
     .poll(() => JSON.parse(stack.omp("config", "get", "memory.backend", "--json")).value)
     .toBe("local");
+  // The server marked the open thread: the write reports it before the thread page loads.
+  await expect(
+    page.getByText("1 open thread(s) pick up memory.backend after a restart"),
+  ).toBeVisible();
 
   await page.evaluate((url) => window.location.assign(url), threadUrl);
   const banner = page.getByText("Restart to apply memory.backend");
