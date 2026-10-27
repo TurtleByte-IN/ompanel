@@ -59,7 +59,6 @@ import {
   useId,
   useImperativeHandle,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
 } from "react";
@@ -3125,9 +3124,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const openModelPickerStable = useStableCallback(openModelPicker);
 
   const { favorites: modelFavorites } = useEnvironmentModelPreferences(environmentId);
-  const modelFavoriteKeys = useMemo(
-    () => modelFavorites.map((favorite) => providerModelKey(favorite.provider, favorite.model)),
-    [modelFavorites],
+  const modelFavoriteKeys = modelFavorites.map((favorite) =>
+    providerModelKey(favorite.provider, favorite.model),
   );
   useImperativeHandle(
     composerRef,
