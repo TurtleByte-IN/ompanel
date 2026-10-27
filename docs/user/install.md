@@ -77,7 +77,7 @@ update fails. Download the new `.deb` and install it the same way.
 ### The `ompanel` command
 
 The desktop app includes the `ompanel` command-line tool. To run it from any
-terminal, open **Settings → General → About** and choose **Install** next to
+terminal, open **Settings → About** and choose **Install** next to
 **ompanel command**. On macOS and Linux it adds a `ompanel` link to a folder on your
 `PATH`; on Windows it adds the app's command folder to your `PATH`. Open a new
 terminal afterwards. **Remove** takes it off again. If you already have `ompanel`
@@ -85,7 +85,7 @@ from npm, it stays as it is.
 
 ### Windows Subsystem for Linux
 
-Choose a WSL distro in **Settings → Connections** to run agents and projects
+Choose a WSL distro in **Settings → Sharing & access** to run agents and projects
 there. Install the provider CLIs inside that distro. Ompanel installs its own
 server runtime there automatically; the first launch after an app update can
 take longer.

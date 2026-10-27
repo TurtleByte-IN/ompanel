@@ -137,7 +137,7 @@ function headline(host: string, located: Located, failure: ConnectionAttemptErro
 }
 
 function steps(host: string, located: Located, failure: ConnectionAttemptError | null): string[] {
-  const checkHost = `On ${host}, check Settings > Connections or run \`ompanel connect status\`.`;
+  const checkHost = `On ${host}, check Settings > Sharing & access or run \`ompanel connect status\`.`;
   switch (located.cause) {
     case "offline":
       return ["Connect this device to the internet. Ompanel reconnects on its own."];
@@ -148,7 +148,7 @@ function steps(host: string, located: Located, failure: ConnectionAttemptError |
     case "not_linked":
       return [
         "Check that this device is signed in to the same Ompanel Connect account as the host.",
-        `On ${host}, open Settings > Connections and turn Ompanel Connect on.`,
+        `On ${host}, open Settings > Sharing & access and turn Ompanel Connect on.`,
       ];
     case "tunnel_pending":
       return ["Wait a minute. Ompanel retries on its own.", checkHost];
@@ -158,7 +158,7 @@ function steps(host: string, located: Located, failure: ConnectionAttemptError |
         "If it keeps failing, copy the diagnostics and report it.",
       ];
     case "tunnel_not_enabled":
-      return [`On ${host}, open Settings > Connections and turn Ompanel Connect on.`];
+      return [`On ${host}, open Settings > Sharing & access and turn Ompanel Connect on.`];
     case "released":
     case "tunnel_down":
       return [
