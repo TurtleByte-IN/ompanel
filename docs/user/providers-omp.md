@@ -3,9 +3,18 @@
 OMP (Oh My Pi) is Ompanel's own coding agent. Ompanel pins one OMP release and
 runs it as a sidecar, so OMP does not need to be on the server's `PATH`.
 
-OMP support is a preview. Ompanel can find and check the OMP sidecar, but
-conversations, commit messages and thread titles through OMP are not available
-yet. The OMP provider is off by default.
+OMP threads, commit messages and thread titles all run through the sidecar.
+The OMP provider is off by default; enable it below, then follow
+[OMP setup](./omp-setup.md) if OMP has no model or sign-in yet.
+
+More on OMP:
+
+- [OMP setup](./omp-setup.md) and [OMP accounts](./omp-accounts.md)
+- [OMP settings](./omp-settings.md) and [OMP plugins and skills](./omp-plugins.md)
+- [OMP in the composer](./omp-composer.md), [OMP tool and turn cards](./omp-cards.md)
+  and the [OMP thread menu](./omp-thread-menu.md)
+- [Agents panel](./agents-panel.md), [Notifications](./notifications.md) and
+  [Workspace trust and approvals](./workspace-trust.md)
 
 ## Set Up OMP
 
@@ -50,9 +59,10 @@ Ompanel's keyboard shortcuts work the same in OMP threads as in any other.
 OMP's own key bindings (`keybindings.yml`) apply only to the `omp` terminal app.
 
 Messages OMP or an OMP extension shows to you (for example "Build done")
-appear in the thread. Desktop and phone notifications come, as for other
-agents, when a thread finishes, fails, or needs your approval or input; OMP's
-messages do not send one of their own yet.
+appear in the thread and, when you are not reading it, alert you on desktop,
+web and phone; see [Notifications](./notifications.md). Desktop and phone
+notifications also come, as for other agents, when a thread finishes, fails,
+or needs your approval or input.
 
 ## Status Checks
 
@@ -69,24 +79,13 @@ The provider card shows an error when:
 - the binary path does not exist or is not absolute,
 - OMP speaks a different version of the RPC protocol than this Ompanel release.
 
+A fresh OMP with no model or sign-in shows **Needs setup** instead; see
+[OMP setup](./omp-setup.md).
+
 OMP updates arrive with Ompanel updates. Ompanel does not update OMP on its own.
 **Settings → OMP → Plugins → Check for updates** runs `omp update --check`,
 which only says whether a newer OMP exists.
 
 ## Plugins and Skills
 
-**Settings → OMP → Plugins** lists the plugins and marketplaces of this OMP
-profile. You can install a plugin (an npm package, `github:user/repo`, a git
-URL, a local path, or `name@marketplace` from **Browse**), enable, disable or
-uninstall it, and add or remove marketplaces. Before anything runs, Ompanel
-shows the exact `omp plugin` command and waits for you to confirm.
-
-Plugins are third-party code. An enabled plugin runs on your machine with your
-permissions in every OMP thread: its tools (the agent calls them as `xd://`
-devices), hooks, commands, skills and MCP servers. Install only what you trust.
-
-New threads load plugins when they start. **Reload plugins** also reloads them
-in running threads that are not in the middle of a response.
-
-**Settings → OMP → Skills** lists the skills a new thread loads, including
-those plugins bring, and opens any of them in your editor.
+See [OMP plugins and skills](./omp-plugins.md).

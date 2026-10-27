@@ -47,10 +47,11 @@ unreadable settings with defaults.
 
 ## Check your agents
 
-Ompanel checks each selected computer for Claude Code and Codex. If an agent is
+Ompanel checks each selected computer for OMP, Codex and Claude Code. If an agent is
 not installed or signed in, select its action to open a terminal with the
 correct command ready to run. Install uses the vendor's own installer, which
-keeps **Update now** working in Settings. Other providers can be enabled in
+keeps **Update now** working in Settings. For OMP, **Set up** opens a terminal
+with `omp setup`; see [OMP setup](./omp-setup.md). Other providers can be enabled in
 Settings.
 
 The setup terminal uses the home directory and environment configured for the

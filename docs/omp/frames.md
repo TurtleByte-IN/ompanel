@@ -8,8 +8,8 @@ frames of one `omp --mode rpc-ui` process into V2 thread events. The adapter
 
 - Opening a thread binds it to the session the process opened: `get_state`
   gives the session id (the provider thread's native id), the title, the
-  context window and the todo list. Switching to another session is not
-  wired yet.
+  context window and the todo list. A thread that ran an earlier session
+  reopens it with `switch_session` first ([sessions.md](sessions.md#reopening-a-thread)).
 - A turn is one `prompt`. Before sending it, the adapter sets the OMP session
   name to the thread's title (`set_session_name`), so OMP never auto-titles it.
 - The `prompt` response is echoed onto the frame stream, behind any
