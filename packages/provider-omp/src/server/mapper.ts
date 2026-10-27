@@ -1854,6 +1854,9 @@ export class OmpThreadMapper {
     if (staging && this.#proposalsResolvable && card.type === "dynamic_tool") {
       card = {
         ...card,
+        // `persistent`: like a monitor, the waiting card neither holds the thread as background
+        // work nor ends with Stop (OMP keeps a preview across a Stop).
+        input: { ...asRecord(card.input), persistent: true },
         output: {
           ...asRecord(card.output),
           [OMP_CARD_OUTPUT_KEY]: { ...proposal, resolvable: true },
