@@ -44,6 +44,11 @@ import * as TerminalManager from "../terminal/Manager.ts";
 import * as NodePtyAdapter from "../terminal/NodePtyAdapter.ts";
 import { stripTerminalControl } from "../terminal/TerminalCommand.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
+import * as ServerConfig from "../config.ts";
+import * as GitManager from "../git/GitManager.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
+import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as ProviderHostToolsLive from "./ProviderHostToolsLive.ts";
 
 const threadId = ThreadId.make("thread-host-tools");
@@ -79,7 +84,10 @@ const project = {
   deletedAt: null,
 } as Project;
 
-const makeProjection = (worktreePath: string | null = null): OrchestrationV2ThreadProjection =>
+const makeProjection = (
+  worktreePath: string | null = null,
+  archived = false,
+): OrchestrationV2ThreadProjection =>
   ({
     thread: {
       id: threadId,
@@ -87,7 +95,7 @@ const makeProjection = (worktreePath: string | null = null): OrchestrationV2Thre
       title: "Host tools thread",
       branch: "dev",
       worktreePath,
-      archivedAt: null,
+      archivedAt: archived ? "2026-01-02T00:00:00.000Z" : null,
       deletedAt: null,
     },
   }) as OrchestrationV2ThreadProjection;
@@ -96,6 +104,11 @@ interface HarnessOptions {
   /** Output the fake shell prints for a typed command; `undefined` leaves it running. */
   readonly reply?: (command: string) => string | undefined;
   readonly threadWorktreePath?: string | null;
+  readonly threadArchived?: boolean;
+  /** The project's folder; `/repo/project` by default. */
+  readonly workspaceRoot?: string;
+  /** A real git workflow instead of the scripted fake. */
+  readonly gitWorkflow?: GitWorkflowService.GitWorkflowService["Service"];
   /** A real terminal manager instead of the scripted fake. */
   readonly terminalManager?: TerminalManager.TerminalManager["Service"];
   readonly shell?: string;
@@ -191,31 +204,41 @@ const makeHarness = Effect.fn(function* (options: HarnessOptions = {}) {
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           dispatch,
           getThreadRecords: () =>
-            Effect.succeed(makeProjection(options.threadWorktreePath ?? null)),
+            Effect.succeed(
+              makeProjection(options.threadWorktreePath ?? null, options.threadArchived === true),
+            ),
         }),
         Layer.mock(ProjectService.ProjectService)({
-          getById: () => Effect.succeed(Option.some(project)),
+          getById: () =>
+            Effect.succeed(
+              Option.some({ ...project, workspaceRoot: options.workspaceRoot ?? workspaceRoot }),
+            ),
         }),
-        Layer.mock(GitWorkflowService.GitWorkflowService)({
-          localStatus,
-          listLocalBranchNames: () => Effect.succeed(["dev"]),
-          listRefs: () =>
-            Effect.succeed({
-              refs: [{ name: "dev", current: true, isDefault: false, worktreePath: workspaceRoot }],
-              isRepo: true,
-              hasPrimaryRemote: true,
-              nextCursor: null,
-              totalCount: 1,
-            }),
-          createWorktree,
-          removeWorktree: () => Effect.void,
-          deleteLocalBranch: () => Effect.void,
-        }),
+        options.gitWorkflow === undefined
+          ? Layer.mock(GitWorkflowService.GitWorkflowService)({
+              localStatus,
+              listLocalBranchNames: () => Effect.succeed(["dev"]),
+              listRefs: () =>
+                Effect.succeed({
+                  refs: [
+                    { name: "dev", current: true, isDefault: false, worktreePath: workspaceRoot },
+                  ],
+                  isRepo: true,
+                  hasPrimaryRemote: true,
+                  nextCursor: null,
+                  totalCount: 1,
+                }),
+              createWorktree,
+              removeWorktree: () => Effect.void,
+              deleteLocalBranch: () => Effect.void,
+            })
+          : Layer.succeed(GitWorkflowService.GitWorkflowService, options.gitWorkflow),
         Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({ runForThread }),
         Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({
           refreshStatus: () => Effect.die("refreshStatus stub"),
         }),
         NodeCrypto.layer,
+        NodeServices.layer,
       ),
     ),
     Effect.provideService(HostProcess.Platform, "darwin"),
@@ -491,6 +514,182 @@ describe("ProviderHostToolsLive worktrees", () => {
   );
 });
 
+/** The real git workflow over the `git` on PATH, as `GitWorkflowService.test.ts` builds it. */
+const realGitLayer = GitWorkflowService.layer.pipe(
+  Layer.provide(
+    Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
+      detect: () => Effect.succeed({ kind: "git" } as VcsDriverRegistry.VcsDriverHandle),
+      resolve: () => Effect.succeed({ kind: "git" } as VcsDriverRegistry.VcsDriverHandle),
+    }),
+  ),
+  Layer.provide(Layer.mock(GitManager.GitManager)({})),
+  Layer.provideMerge(GitVcsDriver.layer),
+  Layer.provideMerge(VcsProcess.layer),
+  Layer.provideMerge(
+    ServerConfig.layerTest(process.cwd(), { prefix: "t3-host-move-" }).pipe(
+      Layer.provide(NodeServices.layer),
+    ),
+  ),
+  Layer.provideMerge(NodeServices.layer),
+);
+
+/** A repository on `main` with a worktree on `review`, and a directory outside it. */
+const makeRepoWithWorktree = Effect.gen(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const driver = yield* GitVcsDriver.GitVcsDriver;
+  // Canonical, so paths compare equal to what git reports (macOS temp dirs are symlinked).
+  const base = yield* fileSystem.realPath(
+    yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-host-move-" }),
+  );
+  const root = `${base}/repo`;
+  const worktree = `${base}/repo-review`;
+  const outside = `${base}/elsewhere`;
+  yield* fileSystem.makeDirectory(root);
+  yield* fileSystem.makeDirectory(outside);
+  for (const args of [
+    ["init", "-b", "main"],
+    ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "--allow-empty", "-m", "init"],
+    ["worktree", "add", "-b", "review", worktree],
+  ]) {
+    yield* driver.execute({ operation: "test.setupRepo", cwd: root, args });
+  }
+  return {
+    root,
+    worktree,
+    outside,
+    gitWorkflow: yield* GitWorkflowService.GitWorkflowService,
+  };
+});
+
+describe("ProviderHostToolsLive workspace moves", () => {
+  it.effect("moves a thread from the project folder to a worktree and back", () =>
+    Effect.gen(function* () {
+      const repo = yield* makeRepoWithWorktree;
+      const atRoot = yield* makeHarness({
+        workspaceRoot: repo.root,
+        gitWorkflow: repo.gitWorkflow,
+      });
+      const toWorktree = yield* atRoot.tools.resolveThreadWorkspace({
+        threadId,
+        path: repo.worktree,
+      });
+      expect(toWorktree).toEqual({
+        path: repo.worktree,
+        branch: "review",
+        worktreePath: repo.worktree,
+        current: false,
+      });
+      yield* atRoot.tools.moveThreadWorkspace({ threadId, workspace: toWorktree });
+      expect(atRoot.dispatch.mock.calls[0]![0]).toMatchObject({
+        type: "thread.metadata.update",
+        threadId,
+        branch: "review",
+        worktreePath: repo.worktree,
+        expectedWorktreePath: null,
+      });
+      // The next command opens a fresh shell there; no setup script, no new worktree.
+      expect(atRoot.close.mock.calls[0]![0]).toEqual({ threadId, terminalId });
+      expect(atRoot.runForThread).not.toHaveBeenCalled();
+
+      const inWorktree = yield* makeHarness({
+        workspaceRoot: repo.root,
+        gitWorkflow: repo.gitWorkflow,
+        threadWorktreePath: repo.worktree,
+      });
+      // Any spelling of the folder (here a trailing slash) resolves to the same checkout.
+      const toRoot = yield* inWorktree.tools.resolveThreadWorkspace({
+        threadId,
+        path: `${repo.root}/`,
+      });
+      expect(toRoot).toEqual({
+        path: repo.root,
+        branch: "main",
+        worktreePath: null,
+        current: false,
+      });
+      yield* inWorktree.tools.moveThreadWorkspace({ threadId, workspace: toRoot });
+      expect(inWorktree.dispatch.mock.calls[0]![0]).toMatchObject({
+        type: "thread.metadata.update",
+        branch: "main",
+        worktreePath: null,
+        expectedWorktreePath: repo.worktree,
+      });
+    }).pipe(Effect.scoped, Effect.provide(realGitLayer)),
+  );
+
+  it.effect("accepts a move into the thread's own checkout as a no-op", () =>
+    Effect.gen(function* () {
+      const repo = yield* makeRepoWithWorktree;
+      const { tools, dispatch, close } = yield* makeHarness({
+        workspaceRoot: repo.root,
+        gitWorkflow: repo.gitWorkflow,
+      });
+      const same = yield* tools.resolveThreadWorkspace({ threadId, path: repo.root });
+      expect(same.current).toBe(true);
+      yield* tools.moveThreadWorkspace({ threadId, workspace: same });
+      expect(dispatch).not.toHaveBeenCalled();
+      expect(close).not.toHaveBeenCalled();
+    }).pipe(Effect.scoped, Effect.provide(realGitLayer)),
+  );
+
+  it.effect("refuses a directory outside the project's checkouts", () =>
+    Effect.gen(function* () {
+      const repo = yield* makeRepoWithWorktree;
+      const { tools, dispatch } = yield* makeHarness({
+        workspaceRoot: repo.root,
+        gitWorkflow: repo.gitWorkflow,
+      });
+      const outside = yield* tools
+        .resolveThreadWorkspace({ threadId, path: repo.outside })
+        .pipe(Effect.flip);
+      expect(outside).toMatchObject({ operation: "worktree" });
+      expect(outside.detail).toContain("is not a checkout of the project");
+      expect(outside.detail).toContain("add it as a project in T3 and start a thread there");
+
+      const fileSystem = yield* FileSystem.FileSystem;
+      yield* fileSystem.makeDirectory(`${repo.worktree}/src`);
+      const inside = yield* tools
+        .resolveThreadWorkspace({ threadId, path: `${repo.worktree}/src` })
+        .pipe(Effect.flip);
+      expect(inside.detail).toContain(`is inside the checkout '${repo.worktree}'`);
+
+      const missing = yield* tools
+        .resolveThreadWorkspace({ threadId, path: `${repo.outside}/missing` })
+        .pipe(Effect.flip);
+      expect(missing.detail).toContain("is not an existing directory");
+      expect(dispatch).not.toHaveBeenCalled();
+    }).pipe(Effect.scoped, Effect.provide(realGitLayer)),
+  );
+
+  it.effect("refuses to move an archived thread", () =>
+    Effect.gen(function* () {
+      const repo = yield* makeRepoWithWorktree;
+      const { tools, dispatch } = yield* makeHarness({
+        workspaceRoot: repo.root,
+        gitWorkflow: repo.gitWorkflow,
+        threadArchived: true,
+      });
+      const resolved = yield* tools
+        .resolveThreadWorkspace({ threadId, path: repo.worktree })
+        .pipe(Effect.flip);
+      expect(resolved.detail).toContain("is archived and cannot move");
+      const moved = yield* tools
+        .moveThreadWorkspace({
+          threadId,
+          workspace: {
+            path: repo.worktree,
+            branch: "review",
+            worktreePath: repo.worktree,
+            current: false,
+          },
+        })
+        .pipe(Effect.flip);
+      expect(moved.detail).toContain("is archived and cannot move");
+      expect(dispatch).not.toHaveBeenCalled();
+    }).pipe(Effect.scoped, Effect.provide(realGitLayer)),
+  );
+});
+
 describe("ProviderHostToolsLive late binding", () => {
   it.effect("forwards driver calls to the implementation bound after the drivers", () =>
     Effect.gen(function* () {
@@ -506,6 +705,8 @@ describe("ProviderHostToolsLive late binding", () => {
             Effect.succeed({ terminalId, output: input.command, exitCode: 0, timedOut: false }),
           createThreadWorktree: () => Effect.die("unused"),
           bindThreadWorktree: () => Effect.die("unused"),
+          resolveThreadWorkspace: () => Effect.die("unused"),
+          moveThreadWorkspace: () => Effect.die("unused"),
           connectMcp: () => Effect.die("unused"),
         }),
       );

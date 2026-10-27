@@ -8,6 +8,7 @@ import {
   type ProviderHostMcpCallResult,
   type ProviderHostMcpContent,
   type ProviderHostMcpTool,
+  type ProviderHostThreadWorkspace,
   ProviderHostToolError,
   ProviderHostTools,
 } from "@t3tools/provider-core/server/ProviderHostTools";
@@ -22,8 +23,10 @@ import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Semaphore from "effect/Semaphore";
 
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
@@ -154,6 +157,8 @@ export const make = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
   const setupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const crypto = yield* Crypto.Crypto;
   const completionShell = resolveCompletionShell(
     yield* HostProcess.Platform,
@@ -519,6 +524,148 @@ export const make = Effect.gen(function* () {
         hostToolError("mcp", `Unable to list the T3 MCP tools: ${errorMessage(error)}`),
     });
 
+  /** `dir` with symlinks resolved, or as given when it cannot be resolved. */
+  const canonicalDir = (dir: string) =>
+    fileSystem.realPath(dir).pipe(Effect.orElseSucceed(() => path.resolve(dir)));
+
+  /** Each local branch checked out in a worktree of the repository at `cwd`, as git lists it. */
+  const listBranchCheckouts = Effect.fn("ProviderHostTools.listBranchCheckouts")(function* (
+    cwd: string,
+  ) {
+    const checkouts: Array<{ readonly branch: string; readonly path: string }> = [];
+    let cursor: number | undefined;
+    do {
+      const page = yield* gitWorkflow
+        .listRefs({
+          cwd,
+          refKind: "local",
+          limit: 200,
+          // The first page re-reads git so worktrees added since the last listing count.
+          ...(cursor === undefined ? { refresh: true } : { cursor }),
+        })
+        .pipe(mapToolError("worktree", "Unable to list the project's worktrees"));
+      if (!page.isRepo) return checkouts;
+      for (const ref of page.refs) {
+        if (ref.isRemote !== true && ref.worktreePath !== null) {
+          checkouts.push({ branch: ref.name, path: ref.worktreePath });
+        }
+      }
+      cursor = page.nextCursor ?? undefined;
+    } while (cursor !== undefined);
+    return checkouts;
+  });
+
+  const resolveThreadWorkspace: ProviderHostTools["Service"]["resolveThreadWorkspace"] = Effect.fn(
+    "ProviderHostTools.resolveThreadWorkspace",
+  )(function* (input) {
+    const projection = yield* loadThread(input.threadId);
+    if (projection.thread.archivedAt !== null) {
+      return yield* hostToolError(
+        "worktree",
+        `Thread '${input.threadId}' is archived and cannot move.`,
+      );
+    }
+    const project = yield* loadProject(input.threadId, projection.thread.projectId);
+    const target = yield* fileSystem
+      .realPath(input.path)
+      .pipe(
+        Effect.mapError(() =>
+          hostToolError("worktree", `'${input.path}' is not an existing directory.`),
+        ),
+      );
+    const rootReal = yield* canonicalDir(project.workspaceRoot);
+    const currentReal = yield* canonicalDir(
+      projection.thread.worktreePath ?? project.workspaceRoot,
+    );
+    const branchCheckouts = yield* Effect.forEach(
+      yield* listBranchCheckouts(project.workspaceRoot),
+      (checkout) => Effect.map(canonicalDir(checkout.path), (real) => ({ ...checkout, real })),
+    );
+    const checkouts = [
+      {
+        path: project.workspaceRoot,
+        real: rootReal,
+        branch: branchCheckouts.find((checkout) => checkout.real === rootReal)?.branch ?? null,
+        worktreePath: null,
+      },
+      ...branchCheckouts
+        .filter((checkout) => checkout.real !== rootReal)
+        .map((checkout) => ({ ...checkout, worktreePath: checkout.path })),
+    ];
+    const match = checkouts.find((checkout) => checkout.real === target);
+    if (match !== undefined) {
+      return {
+        path: match.path,
+        branch: match.branch,
+        worktreePath: match.worktreePath,
+        current: match.real === currentReal,
+      } satisfies ProviderHostThreadWorkspace;
+    }
+    const enclosing = checkouts.find((checkout) =>
+      target.startsWith(`${checkout.real}${path.sep}`),
+    );
+    if (enclosing !== undefined) {
+      return yield* hostToolError(
+        "worktree",
+        `'${input.path}' is inside the checkout '${enclosing.path}'; a T3 thread works at the root of a checkout. Move to '${enclosing.path}' instead.`,
+      );
+    }
+    return yield* hostToolError(
+      "worktree",
+      `'${input.path}' is not a checkout of the project '${project.title}'; a T3 thread can move only to the project's folder or one of its git worktrees. To work in '${input.path}', add it as a project in T3 and start a thread there.`,
+    );
+  });
+
+  const moveThreadWorkspace: ProviderHostTools["Service"]["moveThreadWorkspace"] = Effect.fn(
+    "ProviderHostTools.moveThreadWorkspace",
+  )(function* (input) {
+    const { threadId, workspace } = input;
+    const projection = yield* loadThread(threadId);
+    if (projection.thread.archivedAt !== null) {
+      return yield* hostToolError("worktree", `Thread '${threadId}' is archived and cannot move.`);
+    }
+    if (workspace.current || projection.thread.worktreePath === workspace.worktreePath) return;
+    const uuid = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
+    const commandId = CommandId.make(
+      ["command", "host-tools", encodeURIComponent(threadId), "workspace-move", uuid].join(":"),
+    );
+    // Re-pointing the thread detaches the calling provider session, which can interrupt this
+    // call; finish the move regardless.
+    yield* Effect.uninterruptible(
+      Effect.gen(function* () {
+        yield* threadManagement
+          .dispatch({
+            type: "thread.metadata.update",
+            commandId,
+            threadId,
+            branch: workspace.branch,
+            worktreePath: workspace.worktreePath,
+            expectedWorktreePath: projection.thread.worktreePath,
+          })
+          .pipe(
+            Effect.catchCause((cause) =>
+              Effect.fail(
+                hostToolError(
+                  "worktree",
+                  `Unable to point the thread at '${workspace.path}': ${errorMessage(Cause.squash(cause))}`,
+                ),
+              ),
+            ),
+          );
+
+        // The next command opens a fresh shell in the new checkout instead of the old directory.
+        agentShells.delete(threadId);
+        yield* terminalManager
+          .close({ threadId, terminalId: AGENT_TERMINAL_ID })
+          .pipe(Effect.ignore);
+
+        yield* vcsStatusBroadcaster
+          .refreshStatus(workspace.path)
+          .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach);
+      }),
+    );
+  });
+
   const connectMcp: ProviderHostTools["Service"]["connectMcp"] = (
     session: McpProviderSessionConfig,
   ) =>
@@ -568,6 +715,8 @@ export const make = Effect.gen(function* () {
     runTerminalCommand,
     createThreadWorktree,
     bindThreadWorktree,
+    resolveThreadWorkspace,
+    moveThreadWorkspace,
     connectMcp,
   });
 });
@@ -597,6 +746,10 @@ export const layer = Layer.effect(
         Effect.flatMap(bound, (tools) => tools.createThreadWorktree(input)),
       bindThreadWorktree: (input) =>
         Effect.flatMap(bound, (tools) => tools.bindThreadWorktree(input)),
+      resolveThreadWorkspace: (input) =>
+        Effect.flatMap(bound, (tools) => tools.resolveThreadWorkspace(input)),
+      moveThreadWorkspace: (input) =>
+        Effect.flatMap(bound, (tools) => tools.moveThreadWorkspace(input)),
       connectMcp: (session) => Effect.flatMap(bound, (tools) => tools.connectMcp(session)),
     });
   }),

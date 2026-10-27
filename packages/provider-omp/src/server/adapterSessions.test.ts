@@ -550,6 +550,8 @@ posixOnly("OMP thread sessions", () => {
         runTerminalCommand: () => Effect.die("unused"),
         createThreadWorktree: () => Effect.succeed({ path: worktree, branch: "feature/x" }),
         bindThreadWorktree: (input) => Effect.sync(() => void bound.push(input.worktree.path)),
+        resolveThreadWorkspace: () => Effect.die("unused"),
+        moveThreadWorkspace: () => Effect.die("unused"),
         connectMcp: () => Effect.die("unused"),
       });
       const script = {

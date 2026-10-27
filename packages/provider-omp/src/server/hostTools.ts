@@ -1,22 +1,25 @@
 /**
  * T3 for a thread's OMP (K-08; docs/omp/host-tools.md): a `terminal` host tool in place of the
- * disabled `bash`, the thread's T3 MCP tools as host tools, and `/wt` via `host_cwd_change_request`.
- * Features the pinned contract lacks stay off.
+ * disabled `bash`, the thread's T3 MCP tools as host tools, a read-only `t3://` URI scheme over
+ * them, and `/wt` and `/move` via `host_cwd_change_request`. Features the pinned contract lacks
+ * stay off.
  */
 import type { ThreadId } from "@t3tools/contracts";
 import type { McpProviderSessionConfig } from "@t3tools/provider-core/server/mcpSession";
 import type * as ProviderHostTools from "@t3tools/provider-core/server/ProviderHostTools";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FiberMap from "effect/FiberMap";
 import * as Scope from "effect/Scope";
-
 import type {
   HostCwdChangeRequest,
   HostCwdChangeResult,
   HostToolCallRequest,
   HostToolDefinition,
   HostToolResultPayload,
+  HostUriRequest,
+  HostUriResult,
   RpcServerFrame,
 } from "../../contract/src/wire.generated.ts";
 import type { OmpRpcProcess } from "./rpcProcess.ts";
@@ -27,6 +30,10 @@ export const OMP_HOST_TERMINAL_TOOL = "terminal";
 const OMP_TOOL_TOGGLE_CONTRACT = "1.1.0";
 /** First RPC contract with `set_host_cwd_change` and `host_cwd_change_request` (oh-my-pi#38). */
 export const OMP_HOST_CWD_CHANGE_CONTRACT = "1.5.0";
+/** First RPC contract with `set_host_uri_schemes` and `host_uri_request` (the first release). */
+const OMP_HOST_URI_SCHEMES_CONTRACT = "1.0.0";
+/** The read-only URI scheme over the thread's T3 MCP tools. */
+export const OMP_T3_URI_SCHEME = "t3";
 
 const DEFAULT_TIMEOUT_SECONDS = 300;
 const MAX_TIMEOUT_SECONDS = 3_600;
@@ -77,13 +84,21 @@ export interface OmpHostBridgeInput {
   readonly cwd: string;
   /** T3's host services; absent outside the T3 server (then the bridge does nothing). */
   readonly hostTools: ProviderHostTools.ProviderHostTools["Service"] | undefined;
-  /** The thread's T3 MCP credential, when T3 issued one. */
-  readonly mcpSession: McpProviderSessionConfig | undefined;
+  /**
+   * The thread's T3 MCP credential, when T3 has issued one. Read at setup and before each turn,
+   * so a credential T3 issues or replaces later is picked up.
+   */
+  readonly readMcpSession: Effect.Effect<McpProviderSessionConfig | undefined>;
 }
 
 export interface OmpHostBridge {
   /** Registers the host tools and turns on host-owned directory changes. Never fails. */
   readonly setup: Effect.Effect<void>;
+  /**
+   * Before a turn: connects to the thread's T3 MCP server when its credential appeared or
+   * changed since the last look, and registers the tools and `t3://` scheme again. Never fails.
+   */
+  readonly refreshMcp: Effect.Effect<void>;
   /** Handles host requests; returns false for frames that are not host requests. */
   readonly handleFrame: (frame: RpcServerFrame) => Effect.Effect<boolean>;
 }
@@ -115,45 +130,146 @@ export const formatTerminalResult = (
   };
 };
 
+/** A `t3://` path, the T3 MCP tool that answers it, and how the scheme describes it to the agent. */
+const T3_URI_ROUTES = [
+  { kind: "threads", tool: "t3_thread_list", help: "t3://threads lists this project's threads" },
+  {
+    kind: "thread",
+    tool: "t3_thread_read",
+    help: "t3://thread/<threadId> reads a thread's messages",
+  },
+  { kind: "projects", tool: "t3_project_list", help: "t3://projects lists the T3 projects" },
+  {
+    kind: "project",
+    tool: "t3_project_read",
+    help: "t3://project/<projectId> reads a project's workspace and scripts",
+  },
+] as const;
+
+/**
+ * The T3 MCP tool call that answers a `t3://` URL, among the routes whose tool the thread's MCP
+ * connection has; `undefined` for any other URL.
+ */
+export const t3UriToolCall = (
+  url: string,
+  toolNames: ReadonlySet<string>,
+): { readonly tool: string; readonly args: Record<string, unknown> } | undefined => {
+  const parsed = /^t3:\/\/([^/?#]+)(?:\/([^?#]+?))?\/?$/i.exec(url);
+  if (parsed === null) return undefined;
+  const kind = parsed[1]!.toLowerCase();
+  let id: string | undefined;
+  try {
+    id = parsed[2] === undefined ? undefined : decodeURIComponent(parsed[2]);
+  } catch {
+    return undefined;
+  }
+  const route = T3_URI_ROUTES.find((candidate) => candidate.kind === kind);
+  if (route === undefined || !toolNames.has(route.tool)) return undefined;
+  switch (route.kind) {
+    case "threads":
+    case "projects":
+      return id === undefined ? { tool: route.tool, args: {} } : undefined;
+    case "thread":
+      return id === undefined ? undefined : { tool: route.tool, args: { threadId: id } };
+    case "project":
+      return id === undefined ? undefined : { tool: route.tool, args: { projectId: id } };
+  }
+};
+
+/** A T3 MCP tool result as a `t3://` read: its text, JSON when the text is a JSON object or array. */
+export const t3UriContent = (
+  content: ReadonlyArray<ProviderHostTools.ProviderHostMcpContent>,
+): Pick<HostUriResult, "content" | "contentType" | "notes"> => {
+  const texts = content.flatMap((block) => (block.type === "text" ? [block.text] : []));
+  const body = texts.join("\n");
+  const images = content.length - texts.length;
+  let json = false;
+  if (/^\s*[[{]/.test(body)) {
+    try {
+      JSON.parse(body);
+      json = true;
+    } catch {
+      // Not JSON after all: plain text.
+    }
+  }
+  return {
+    content: body,
+    contentType: json ? "application/json" : "text/plain",
+    ...(images > 0 ? { notes: [`${images} image block(s) omitted`] } : {}),
+  };
+};
+
 export const makeOmpHostBridge = Effect.fn("makeOmpHostBridge")(function* (
   input: OmpHostBridgeInput,
 ): Effect.fn.Return<OmpHostBridge, never, Scope.Scope> {
   const { process, threadId, hostTools } = input;
   if (hostTools === undefined) {
-    return { setup: Effect.void, handleFrame: () => Effect.succeed(false) } satisfies OmpHostBridge;
+    return {
+      setup: Effect.void,
+      refreshMcp: Effect.void,
+      handleFrame: () => Effect.succeed(false),
+    } satisfies OmpHostBridge;
   }
   // Host calls run beside the frame loop; a cancel interrupts the one it names.
   const calls = yield* FiberMap.make<string>();
-  // The MCP connection lives as long as the session that created the bridge.
+  // MCP connections live at most as long as the session that created the bridge.
   const sessionScope = yield* Effect.scope;
   let mcp: ProviderHostTools.ProviderHostMcpClient | undefined;
+  let mcpScope: Scope.Closeable | undefined;
+  // The credential `mcp` was opened with ("" for none); `undefined` before the first look.
+  let mcpKey: string | undefined;
+  // MCP tools OMP accepted as host tools.
   let mcpToolNames = new Set<string>();
   let terminalRegistered = false;
+  // OMP holds a host tool set or a `t3://` scheme from this bridge (a later empty set clears it).
+  let hostToolsRegistered = false;
+  let t3UriRegistered = false;
+  // The MCP tools behind the registered `t3://` scheme, and the paths they serve.
+  let t3UriTools = new Set<string>();
+  const noT3UriHelp = `OMP has no ${OMP_T3_URI_SCHEME}:// scheme from T3.`;
+  let t3UriHelp = noT3UriHelp;
   let cwd = input.cwd;
 
   const reply = (id: string, result: HostToolResultPayload, isError = false) =>
     process.send({ type: "host_tool_result", id, result, ...(isError ? { isError } : {}) });
 
-  const connectMcp = Effect.gen(function* () {
-    if (input.mcpSession === undefined) return [];
+  /** Connects with the thread's current MCP credential; succeeds with whether it changed. */
+  const syncMcp = Effect.gen(function* () {
+    const session = yield* input.readMcpSession;
+    const key =
+      session === undefined
+        ? ""
+        : [
+            session.endpoint,
+            session.authorizationHeader,
+            String(session.browserToolsAvailable),
+          ].join("\n");
+    if (key === mcpKey) return false;
+    // Remembered even when connecting fails: a dead MCP server is not retried every turn.
+    mcpKey = key;
+    if (mcpScope !== undefined) yield* Scope.close(mcpScope, Exit.void);
+    mcp = undefined;
+    mcpScope = undefined;
+    if (session === undefined) return true;
+    const scope = yield* Scope.fork(sessionScope);
     // A T3 MCP server that does not answer must not hold the session open.
-    const client = yield* hostTools
-      .connectMcp(input.mcpSession)
-      .pipe(Effect.timeout("15 seconds"), Effect.provideService(Scope.Scope, sessionScope));
-    mcp = client;
-    mcpToolNames = new Set(client.tools.map((tool) => tool.name));
-    return client.tools.map((tool): HostToolDefinition => ({
-      name: tool.name,
-      description: tool.description,
-      parameters: { ...tool.inputSchema },
-    }));
-  }).pipe(
-    Effect.catch((error) =>
-      Effect.logWarning("T3 MCP tools are unavailable to OMP", { detail: error.message }).pipe(
-        Effect.as([]),
+    yield* hostTools.connectMcp(session).pipe(
+      Effect.timeout("15 seconds"),
+      Effect.provideService(Scope.Scope, scope),
+      Effect.tap((client) =>
+        Effect.sync(() => {
+          mcp = client;
+          mcpScope = scope;
+        }),
       ),
-    ),
-  );
+      Effect.catch((error) =>
+        Effect.logWarning("T3 MCP tools are unavailable to OMP", { detail: error.message }).pipe(
+          Effect.andThen(Scope.close(scope, Exit.void)),
+        ),
+      ),
+    );
+    return true;
+  });
 
   const disableBuiltinBash = Effect.gen(function* () {
     if (!contractAtLeast(process.contractVersion, OMP_TOOL_TOGGLE_CONTRACT)) {
@@ -183,29 +299,76 @@ export const makeOmpHostBridge = Effect.fn("makeOmpHostBridge")(function* (
       ),
     );
 
-  const setup = Effect.gen(function* () {
-    terminalRegistered = yield* disableBuiltinBash;
-    const bashDisabled = terminalRegistered;
+  /** Sends OMP the T3 terminal and the MCP tools; OMP replaces its host tool set with them. */
+  const registerHostTools = Effect.gen(function* () {
+    const mcpTools = mcp?.tools ?? [];
     const tools = [
       ...(terminalRegistered ? [OMP_HOST_TERMINAL_DEFINITION] : []),
-      ...(yield* connectMcp),
+      ...mcpTools.map((tool): HostToolDefinition => ({
+        name: tool.name,
+        description: tool.description,
+        parameters: { ...tool.inputSchema },
+      })),
     ];
-    if (tools.length > 0) {
-      yield* process.request("set_host_tools", { tools }).pipe(
-        Effect.catch((error) =>
-          Effect.logWarning("OMP refused T3's host tools", { detail: error.message }).pipe(
-            Effect.andThen(
-              Effect.sync(() => {
-                terminalRegistered = false;
-                mcpToolNames = new Set();
-              }),
-            ),
-            // Without the T3 terminal the thread needs OMP's own bash back (the terminal fallback).
-            Effect.andThen(bashDisabled ? restoreBuiltinBash : Effect.void),
-          ),
+    if (tools.length === 0 && !hostToolsRegistered) return;
+    const accepted = yield* process.request("set_host_tools", { tools }).pipe(
+      Effect.as(true),
+      Effect.catch((error) =>
+        Effect.logWarning("OMP refused T3's host tools", { detail: error.message }).pipe(
+          Effect.as(false),
         ),
-      );
+      ),
+    );
+    if (accepted) {
+      hostToolsRegistered = tools.length > 0;
+      mcpToolNames = new Set(mcpTools.map((tool) => tool.name));
+      return;
     }
+    mcpToolNames = new Set();
+    if (terminalRegistered) {
+      terminalRegistered = false;
+      // Without the T3 terminal the thread needs OMP's own bash back (the terminal fallback).
+      yield* restoreBuiltinBash;
+    }
+  });
+
+  /** Registers `t3://` for the T3 tools the MCP connection has, or drops it when it has none. */
+  const registerT3UriScheme = Effect.gen(function* () {
+    if (!contractAtLeast(process.contractVersion, OMP_HOST_URI_SCHEMES_CONTRACT)) return;
+    const toolNames = new Set(mcp?.tools.map((tool) => tool.name));
+    const routes = T3_URI_ROUTES.filter((route) => toolNames.has(route.tool));
+    if (routes.length === 0 && !t3UriRegistered) return;
+    const help = `Paths: ${routes.map((route) => route.help).join("; ")}.`;
+    t3UriTools = new Set();
+    yield* process.request("set_host_uri_schemes", {
+      schemes:
+        routes.length === 0
+          ? []
+          : [
+              {
+                scheme: OMP_T3_URI_SCHEME,
+                description: `Read-only T3 (Ompanel) data: threads and projects, as JSON. ${help}`,
+                writable: false,
+                immutable: false,
+              },
+            ],
+    });
+    t3UriRegistered = routes.length > 0;
+    t3UriTools = new Set(routes.map((route) => route.tool));
+    t3UriHelp = routes.length === 0 ? noT3UriHelp : help;
+  }).pipe(
+    Effect.catch((error) =>
+      Effect.logWarning(`OMP refused the ${OMP_T3_URI_SCHEME}:// URI scheme`, {
+        detail: error.message,
+      }),
+    ),
+  );
+
+  const setup = Effect.gen(function* () {
+    terminalRegistered = yield* disableBuiltinBash;
+    yield* syncMcp;
+    yield* registerHostTools;
+    yield* registerT3UriScheme;
     if (contractAtLeast(process.contractVersion, OMP_HOST_CWD_CHANGE_CONTRACT)) {
       yield* process
         .request("set_host_cwd_change", { enabled: true })
@@ -215,6 +378,12 @@ export const makeOmpHostBridge = Effect.fn("makeOmpHostBridge")(function* (
           ),
         );
     }
+  });
+
+  const refreshMcp = Effect.gen(function* () {
+    if (!(yield* syncMcp)) return;
+    yield* registerHostTools;
+    yield* registerT3UriScheme;
   });
 
   const runTerminal = Effect.fnUntraced(function* (call: HostToolCallRequest) {
@@ -283,22 +452,77 @@ export const makeOmpHostBridge = Effect.fn("makeOmpHostBridge")(function* (
       Effect.ignore,
     );
 
+  const answerUri = (id: string, answer: Omit<HostUriResult, "type" | "id">) =>
+    process.send({ type: "host_uri_result", id, ...answer }).pipe(Effect.ignore);
+
+  const handleUriRequest = Effect.fn("OmpHostBridge.handleUriRequest")(function* (
+    request: HostUriRequest,
+  ) {
+    if (request.operation !== "read") {
+      return yield* answerUri(request.id, {
+        isError: true,
+        error: `${OMP_T3_URI_SCHEME}:// is read-only; change T3 data with the T3 tools instead.`,
+      });
+    }
+    const call = t3UriToolCall(request.url, t3UriTools);
+    if (mcp === undefined || call === undefined) {
+      return yield* answerUri(request.id, {
+        isError: true,
+        error: `Unknown T3 URI ${request.url}. ${t3UriHelp}`,
+      });
+    }
+    const result = yield* mcp.call(call.tool, call.args).pipe(Effect.result);
+    if (result._tag === "Failure") {
+      return yield* answerUri(request.id, { isError: true, error: result.failure.message });
+    }
+    const read = t3UriContent(result.success.content);
+    yield* answerUri(
+      request.id,
+      result.success.isError
+        ? { isError: true, error: read.content || `${call.tool} failed for ${request.url}` }
+        : read,
+    );
+  });
+
   const answerCwdChange = (
     request: HostCwdChangeRequest,
     answer: Omit<HostCwdChangeResult, "type" | "id">,
   ) =>
     process.send({ type: "host_cwd_change_result", id: request.id, ...answer }).pipe(Effect.ignore);
 
+  const handleMove = Effect.fn("OmpHostBridge.handleMove")(function* (
+    request: HostCwdChangeRequest,
+  ) {
+    const target = request.path?.trim() ?? "";
+    if (target.length === 0) {
+      return yield* answerCwdChange(request, { accepted: false, error: "no target directory" });
+    }
+    const resolved = yield* hostTools
+      .resolveThreadWorkspace({ threadId, path: target })
+      .pipe(Effect.result);
+    if (resolved._tag === "Failure") {
+      return yield* answerCwdChange(request, { accepted: false, error: resolved.failure.message });
+    }
+    const workspace = resolved.success;
+    // Answer first: moving the thread detaches this session once this turn has ended, and OMP
+    // has moved its session into the checkout by then.
+    yield* answerCwdChange(request, { accepted: true, cwd: workspace.path });
+    cwd = workspace.path;
+    if (workspace.current) return;
+    yield* hostTools.moveThreadWorkspace({ threadId, workspace }).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("OMP moved into a checkout the T3 thread could not be moved to", {
+          path: workspace.path,
+          detail: error.message,
+        }),
+      ),
+    );
+  });
+
   const handleCwdChange = Effect.fn("OmpHostBridge.handleCwdChange")(function* (
     request: HostCwdChangeRequest,
   ) {
-    if (request.reason === "move") {
-      return yield* answerCwdChange(request, {
-        accepted: false,
-        error:
-          "a T3 thread stays in its project or worktree; start a new thread in that directory instead",
-      });
-    }
+    if (request.reason === "move") return yield* handleMove(request);
     const branch = request.branch?.trim() ?? "";
     if (branch.length === 0) {
       return yield* answerCwdChange(request, { accepted: false, error: "no branch name" });
@@ -337,12 +561,16 @@ export const makeOmpHostBridge = Effect.fn("makeOmpHostBridge")(function* (
       yield* FiberMap.run(calls, frame.id, handleCwdChange(frame));
       return true;
     }
-    if (frame.type === "host_cwd_change_cancel") {
+    if (frame.type === "host_cwd_change_cancel" || frame.type === "host_uri_cancel") {
       yield* FiberMap.remove(calls, frame.targetId);
+      return true;
+    }
+    if (frame.type === "host_uri_request") {
+      yield* FiberMap.run(calls, frame.id, handleUriRequest(frame));
       return true;
     }
     return false;
   });
 
-  return { setup, handleFrame } satisfies OmpHostBridge;
+  return { setup, refreshMcp, handleFrame } satisfies OmpHostBridge;
 });
