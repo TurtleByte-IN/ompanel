@@ -64,8 +64,9 @@ const fakeOmp = (contractVersion: string | undefined) => {
       ...(contractVersion ? { contractVersion } : {}),
     };
     const stdin = command.options.stdin;
-    // The RPC server answers each command: `get_available_commands` with two commands, anything
-    // else (`get_login_providers`) with no providers.
+    // The RPC server answers each command: `get_available_commands` with two commands,
+    // `get_available_models` with the directory's models (`/repo`'s project config keeps one of
+    // two), anything else (`get_login_providers`) with no providers.
     const responses = (Stream.isStream(stdin) ? stdin : Stream.empty).pipe(
       Stream.decodeText(),
       Stream.splitLines,
@@ -79,7 +80,16 @@ const fakeOmp = (contractVersion: string | undefined) => {
                   { name: "skill:tdd", source: "skill" },
                 ],
               }
-            : { providers: [] };
+            : type === "get_available_models"
+              ? {
+                  models: [
+                    { id: "a", name: "Lab A", provider: "lab", reasoning: false },
+                    ...(command.options.cwd === "/repo"
+                      ? []
+                      : [{ id: "b", name: "Lab B", provider: "lab", reasoning: false }]),
+                  ],
+                }
+              : { providers: [] };
         return { type: "response", id, command: type, success: true, data };
       }),
     );
@@ -156,59 +166,66 @@ it.layer(layerTest)("OmpDriver", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("lists a workspace's commands and skills once and puts them on the snapshot", () =>
-    Effect.gen(function* () {
-      const omp = fakeOmp(OMP_LOCK.contract.version);
-      const binaryPath = yield* overrideBinary;
-      const instance = yield* create({ binaryPath }).pipe(
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, omp.spawner),
-      );
-      yield* instance.snapshot.refresh;
-      const before = omp.launches.length;
-      const publishedSnapshot = yield* instance.snapshot.streamChanges.pipe(
-        Stream.filter((snapshot) => snapshot.workspaceSnapshots !== undefined),
-        Stream.runHead,
-        Effect.forkChild({ startImmediately: true }),
-      );
-      const workspace = yield* instance.snapshotForCwd!("/repo");
-      assert.deepStrictEqual(
-        workspace.slashCommands.map((command) => command.name),
-        ["compact", "goal"],
-      );
-      assert.deepStrictEqual(workspace.slashCommands[0], {
-        name: "compact",
-        description: "Compact the context",
-      });
-      assert.deepStrictEqual(workspace.skills, [
-        {
-          name: "tdd",
-          path: "/repo/.omp/skills/tdd/SKILL.md",
-          enabled: true,
-          description: "Test first",
-          scope: "project",
-        },
-      ]);
-      assert.strictEqual(workspace.slashCommandsPending, false);
-      const catalogLaunches = omp.launches.slice(before);
-      // Both run at once, each behind its own sidecar check, so their order is not fixed.
-      assert.sameDeepMembers(
-        catalogLaunches.map((launch) => [launch.args.includes("skill"), launch.options.cwd]),
-        [
-          [false, "/repo"],
-          [true, "/repo"],
-        ],
-      );
-      yield* instance.snapshotForCwd!("/repo");
-      assert.strictEqual(omp.launches.length, before + 2, "the same workspace reuses its lists");
+  it.effect(
+    "lists a workspace's commands, skills and models once and puts them on the snapshot",
+    () =>
+      Effect.gen(function* () {
+        const omp = fakeOmp(OMP_LOCK.contract.version);
+        const binaryPath = yield* overrideBinary;
+        const instance = yield* create({ binaryPath }).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, omp.spawner),
+        );
+        yield* instance.snapshot.refresh;
+        const before = omp.launches.length;
+        const publishedSnapshot = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter((snapshot) => snapshot.workspaceSnapshots !== undefined),
+          Stream.runHead,
+          Effect.forkChild({ startImmediately: true }),
+        );
+        const workspace = yield* instance.snapshotForCwd!("/repo");
+        assert.deepStrictEqual(
+          workspace.slashCommands.map((command) => command.name),
+          ["compact", "goal"],
+        );
+        assert.deepStrictEqual(workspace.slashCommands[0], {
+          name: "compact",
+          description: "Compact the context",
+        });
+        assert.deepStrictEqual(workspace.skills, [
+          {
+            name: "tdd",
+            path: "/repo/.omp/skills/tdd/SKILL.md",
+            enabled: true,
+            description: "Test first",
+            scope: "project",
+          },
+        ]);
+        assert.strictEqual(workspace.slashCommandsPending, false);
+        const slugs = (models: ReadonlyArray<{ readonly slug: string }> | undefined) =>
+          models?.map((model) => model.slug);
+        assert.deepStrictEqual(slugs(workspace.workspaceModels), ["default", "lab/a"]);
+        assert.deepStrictEqual(slugs(workspace.models), ["default", "lab/a", "lab/b"]);
+        const catalogLaunches = omp.launches.slice(before);
+        // All run at once, each behind its own sidecar check, so their order is not fixed.
+        assert.sameDeepMembers(
+          catalogLaunches.map((launch) => [launch.args.includes("skill"), launch.options.cwd]),
+          [
+            [false, "/repo"],
+            [false, "/repo"],
+            [true, "/repo"],
+          ],
+        );
+        yield* instance.snapshotForCwd!("/repo");
+        assert.strictEqual(omp.launches.length, before + 3, "the same workspace reuses its lists");
 
-      const published = yield* Fiber.join(publishedSnapshot);
-      assert.deepStrictEqual(
-        published._tag === "Some"
-          ? published.value.workspaceSnapshots?.map((entry) => entry.cwd)
-          : null,
-        ["/repo"],
-      );
-    }).pipe(Effect.scoped),
+        const published = yield* Fiber.join(publishedSnapshot);
+        assert.deepStrictEqual(
+          published._tag === "Some"
+            ? published.value.workspaceSnapshots?.map((entry) => [entry.cwd, slugs(entry.models)])
+            : null,
+          [["/repo", ["default", "lab/a"]]],
+        );
+      }).pipe(Effect.scoped),
   );
 
   it.effect("answers the provider list while the probe hangs", () =>

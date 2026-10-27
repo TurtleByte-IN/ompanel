@@ -22,6 +22,37 @@ import {
 } from "./modelOptions";
 
 describe("mobile model options", () => {
+  it("lists the models OMP lists in the thread's directory", () => {
+    const model = (slug: string) => ({ slug, name: slug, isCustom: false, capabilities: null });
+    const config = {
+      providers: [
+        {
+          instanceId: "omp",
+          driver: "omp",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          models: [model("default"), model("lab/a"), model("lab/b")],
+          workspaceSnapshots: [
+            {
+              cwd: "/repo",
+              checkedAt: "2026-01-01T00:00:00.000Z",
+              slashCommands: [],
+              skills: [],
+              models: [model("default"), model("lab/a")],
+            },
+          ],
+        },
+      ],
+    } as unknown as ServerConfig;
+    const keys = (cwd: string | null) =>
+      buildModelOptions(config, null, undefined, null, false, cwd).map((option) => option.key);
+
+    expect(keys("/repo")).toEqual(["omp:default", "omp:lab/a"]);
+    expect(keys("/elsewhere")).toEqual(["omp:default", "omp:lab/a", "omp:lab/b"]);
+    expect(keys(null)).toEqual(["omp:default", "omp:lab/a", "omp:lab/b"]);
+  });
+
   it("distinguishes same-name OpenCode models without changing their routing", () => {
     const sources = [
       { id: "anthropic", label: "Anthropic" },

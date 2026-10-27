@@ -171,6 +171,7 @@ export type OmpControlOperation =
   | "config_path"
   | "skill_list"
   | "available_commands"
+  | "available_models"
   | "models_check"
   | "agents_unpack"
   | "plugin_list"
@@ -199,6 +200,7 @@ export class OmpControlError extends Schema.TaggedError<OmpControlError>()("OmpC
     "config_path",
     "skill_list",
     "available_commands",
+    "available_models",
     "models_check",
     "agents_unpack",
     "plugin_list",
@@ -613,6 +615,15 @@ export interface OmpControlService {
   readonly availableCommands: (
     target: OmpControlTarget,
   ) => Effect.Effect<ReadonlyArray<OmpAvailableSlashCommand>, OmpControlError>;
+  /**
+   * RPC `get_available_models` in a fresh control server in `target.cwd` (20 s, as the probe's),
+   * uncached: the models a session there may pick, after the directory's project config and
+   * path-scoped `enabledModels` / `disabledProviders`. A directory whose scope matches no model
+   * lists none.
+   */
+  readonly availableModels: (
+    target: OmpControlTarget,
+  ) => Effect.Effect<ReadonlyArray<OmpCatalogModel>, OmpControlError>;
   /**
    * RPC `get_available_models` (15 s) from a fresh control server whose agent directory is
    * `agentDir` (`PI_CODING_AGENT_DIR`; the profile is dropped, since a profile outranks it), run
@@ -1312,6 +1323,28 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
     return data.commands;
   });
 
+  const availableModels = Effect.fn("OmpControl.availableModels")(function* (
+    target: OmpControlTarget,
+  ) {
+    const data = yield* withDeadline(
+      "available_models",
+      "ready",
+      // A scope that matches no model stops OMP before `ready`; the placeholder start lists none.
+      openControlRpcSession("available_models", target).pipe(
+        Effect.flatMap((session) => session.request({ type: "get_available_models" })),
+        Effect.flatMap((response) =>
+          decodeCatalog(response).pipe(
+            Effect.mapError(
+              (cause) =>
+                new OmpControlError({ operation: "available_models", reason: "invalid", cause }),
+            ),
+          ),
+        ),
+      ),
+    );
+    return data.models;
+  });
+
   const modelsInAgentDir = Effect.fn("OmpControl.modelsInAgentDir")(function* (
     target: OmpControlTarget,
     agentDir: string,
@@ -1536,6 +1569,7 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
     configPath,
     skillList,
     availableCommands,
+    availableModels,
     modelsInAgentDir,
     agentsUnpack,
     pluginList,

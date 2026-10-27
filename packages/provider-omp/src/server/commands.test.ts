@@ -19,6 +19,8 @@ import {
   type OmpControlTarget,
   type OmpSkillList,
 } from "./control.ts";
+import type { OmpCatalogModel } from "./modelTraits.ts";
+import { ompProviderModels } from "./status.ts";
 
 const BUILTINS: ReadonlyArray<OmpAvailableSlashCommand> = [
   {
@@ -54,9 +56,17 @@ const skillList = (cwd: string): OmpSkillList => ({
   warnings: [],
 });
 
+/** `/repo`'s project config scopes OMP to one of the two models every other directory lists. */
+const listedModels = (cwd: string): ReadonlyArray<OmpCatalogModel> => [
+  { id: "a", name: "Lab A", provider: "lab", reasoning: false },
+  ...(cwd === "/repo" ? [] : [{ id: "b", name: "Lab B", provider: "lab", reasoning: false }]),
+];
+
 /** A control service whose catalog operations record the directory of every `omp` they start. */
-const fakeControl = (options: { readonly failSkills?: boolean } = {}) => {
-  const spawns: Array<{ readonly op: "commands" | "skills"; readonly cwd: string }> = [];
+const fakeControl = (
+  options: { readonly failSkills?: boolean; readonly failModels?: boolean } = {},
+) => {
+  const spawns: Array<{ readonly op: "commands" | "skills" | "models"; readonly cwd: string }> = [];
   const control = {
     availableCommands: (target: OmpControlTarget) =>
       Effect.sync(() => {
@@ -70,6 +80,13 @@ const fakeControl = (options: { readonly failSkills?: boolean } = {}) => {
           ? Effect.fail(new OmpControlError({ operation: "skill_list", reason: "exit" }))
           : Effect.succeed(skillList(target.cwd));
       }),
+    availableModels: (target: OmpControlTarget) =>
+      Effect.suspend(() => {
+        spawns.push({ op: "models", cwd: target.cwd });
+        return options.failModels === true
+          ? Effect.fail(new OmpControlError({ operation: "available_models", reason: "timeout" }))
+          : Effect.succeed(listedModels(target.cwd));
+      }),
   } as unknown as OmpControlService;
   return { control, spawns };
 };
@@ -81,6 +98,16 @@ const target = (cwd: string) =>
     environment: {},
     cwd,
   });
+
+const makeCatalog = (control: OmpControlService) =>
+  makeOmpCommandCatalog({
+    control,
+    target,
+    models: (listed) => ompProviderModels([], listed),
+  });
+
+const slugs = (models: ReadonlyArray<{ readonly slug: string }> | undefined) =>
+  models?.map((model) => model.slug);
 
 describe("OMP command mapping", () => {
   it("lists every command but skill ones, with non-empty descriptions and hints, then /goal", () => {
@@ -152,7 +179,7 @@ describe("OmpCommandCatalog", () => {
   it.effect("discovers a directory once, and again for another directory", () =>
     Effect.gen(function* () {
       const { control, spawns } = fakeControl();
-      const catalog = yield* makeOmpCommandCatalog({ control, target });
+      const catalog = yield* makeCatalog(control);
       const first = yield* catalog.forCwd("/repo");
       assert.deepStrictEqual(
         first.slashCommands.map((command) => command.name),
@@ -162,43 +189,44 @@ describe("OmpCommandCatalog", () => {
         first.skills.map((skill) => skill.name),
         ["tdd", "release"],
       );
-      assert.lengthOf(spawns, 2);
+      assert.lengthOf(spawns, 3);
 
       const second = yield* catalog.forCwd("/repo");
       assert.deepStrictEqual(second, first);
-      assert.lengthOf(spawns, 2, "the same directory reuses its lists");
+      assert.lengthOf(spawns, 3, "the same directory reuses its lists");
 
       yield* catalog.forCwd("/other");
-      assert.deepStrictEqual(spawns.slice(2), [
+      assert.deepStrictEqual(spawns.slice(3), [
         { op: "commands", cwd: "/other" },
         { op: "skills", cwd: "/other" },
+        { op: "models", cwd: "/other" },
       ]);
 
       yield* TestClock.adjust(OMP_COMMAND_CATALOG_TTL_MS);
       yield* catalog.forCwd("/repo");
-      assert.lengthOf(spawns, 6, "an expired directory is discovered again");
+      assert.lengthOf(spawns, 9, "an expired directory is discovered again");
 
       yield* catalog.invalidate;
       yield* catalog.forCwd("/repo");
-      assert.lengthOf(spawns, 8, "invalidate drops discovered lists");
+      assert.lengthOf(spawns, 12, "invalidate drops discovered lists");
     }).pipe(Effect.scoped),
   );
 
   it.effect("shares one discovery between concurrent callers", () =>
     Effect.gen(function* () {
       const { control, spawns } = fakeControl();
-      const catalog = yield* makeOmpCommandCatalog({ control, target });
+      const catalog = yield* makeCatalog(control);
       yield* Effect.all([catalog.forCwd("/repo"), catalog.forCwd("/repo")], {
         concurrency: "unbounded",
       });
-      assert.lengthOf(spawns, 2);
+      assert.lengthOf(spawns, 3);
     }).pipe(Effect.scoped),
   );
 
   it.effect("does not keep a failed discovery", () =>
     Effect.gen(function* () {
       const failing = fakeControl({ failSkills: true });
-      const catalog = yield* makeOmpCommandCatalog({ control: failing.control, target });
+      const catalog = yield* makeCatalog(failing.control);
       const error = yield* catalog.forCwd("/repo").pipe(Effect.flip);
       assert.strictEqual(error._tag, "OmpControlError");
       yield* catalog.forCwd("/repo").pipe(Effect.flip);
@@ -215,7 +243,7 @@ describe("OmpCommandCatalog", () => {
   it.effect("replaces the menu with a pushed list and publishes it", () =>
     Effect.gen(function* () {
       const { control, spawns } = fakeControl();
-      const catalog = yield* makeOmpCommandCatalog({ control, target });
+      const catalog = yield* makeCatalog(control);
       const published: Array<ReadonlyArray<ServerProviderWorkspaceSnapshot>> = [];
       const watcher = yield* catalog.workspaceSnapshots.pipe(
         Stream.runForEach((list) => Effect.sync(() => published.push(list))),
@@ -258,7 +286,7 @@ describe("OmpCommandCatalog", () => {
   it.effect("lists skills in the background when a push arrives for a new directory", () =>
     Effect.gen(function* () {
       const { control, spawns } = fakeControl();
-      const catalog = yield* makeOmpCommandCatalog({ control, target });
+      const catalog = yield* makeCatalog(control);
       yield* catalog.onAvailableCommands("/repo", BUILTINS);
       const published = yield* catalog.workspaceSnapshots.pipe(
         Stream.filter((list) => list.length > 0),
@@ -268,14 +296,17 @@ describe("OmpCommandCatalog", () => {
         published._tag === "Some" ? published.value.map((entry) => entry.cwd) : null,
         ["/repo"],
       );
-      assert.deepStrictEqual(spawns, [{ op: "skills", cwd: "/repo" }]);
+      assert.deepStrictEqual(spawns, [
+        { op: "skills", cwd: "/repo" },
+        { op: "models", cwd: "/repo" },
+      ]);
     }).pipe(Effect.scoped),
   );
 
   it.effect("rewrites a known $skill and leaves other prompts alone without listing", () =>
     Effect.gen(function* () {
       const { control, spawns } = fakeControl();
-      const catalog = yield* makeOmpCommandCatalog({ control, target });
+      const catalog = yield* makeCatalog(control);
       assert.strictEqual(yield* catalog.resolvePrompt("/repo", "plain prompt"), "plain prompt");
       assert.lengthOf(spawns, 0);
       assert.strictEqual(
@@ -290,8 +321,59 @@ describe("OmpCommandCatalog", () => {
   it.effect("sends the prompt as typed when skills cannot be listed", () =>
     Effect.gen(function* () {
       const { control } = fakeControl({ failSkills: true });
-      const catalog = yield* makeOmpCommandCatalog({ control, target });
+      const catalog = yield* makeCatalog(control);
       assert.strictEqual(yield* catalog.resolvePrompt("/repo", "$tdd go"), "$tdd go");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("lists a workspace's project models", () =>
+    Effect.gen(function* () {
+      const { control, spawns } = fakeControl();
+      const catalog = yield* makeCatalog(control);
+      const repo = yield* catalog.forCwd("/repo");
+      const other = yield* catalog.forCwd("/other");
+      assert.deepStrictEqual(slugs(repo.models), ["default", "lab/a"]);
+      assert.deepStrictEqual(slugs(other.models), ["default", "lab/a", "lab/b"]);
+
+      const published = yield* catalog.workspaceSnapshots.pipe(Stream.runHead);
+      assert.deepStrictEqual(
+        published._tag === "Some"
+          ? published.value.map((entry) => [entry.cwd, slugs(entry.models)])
+          : null,
+        [
+          ["/repo", ["default", "lab/a"]],
+          ["/other", ["default", "lab/a", "lab/b"]],
+        ],
+      );
+
+      yield* catalog.forCwd("/repo");
+      assert.deepStrictEqual(
+        spawns.filter((spawn) => spawn.op === "models"),
+        [
+          { op: "models", cwd: "/repo" },
+          { op: "models", cwd: "/other" },
+        ],
+        "each directory's list is cached",
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("keeps the menu and skills when OMP cannot list a directory's models", () =>
+    Effect.gen(function* () {
+      const { control, spawns } = fakeControl({ failModels: true });
+      const catalog = yield* makeCatalog(control);
+      const workspace = yield* catalog.forCwd("/repo");
+      assert.isUndefined(workspace.models);
+      assert.include(
+        workspace.slashCommands.map((command) => command.name),
+        "compact",
+      );
+      yield* catalog.forCwd("/repo");
+      assert.lengthOf(
+        spawns.filter((spawn) => spawn.op === "models"),
+        2,
+        "a failed list is not kept",
+      );
     }).pipe(Effect.scoped),
   );
 });

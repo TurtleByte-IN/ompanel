@@ -11,6 +11,7 @@ import {
   type ServerSettings,
   type ServerProviderState,
 } from "@t3tools/contracts";
+import { resolveProviderModelsForCwd } from "@t3tools/client-runtime/providerSkills";
 import {
   normalizeProviderAccentColor,
   resolveProviderInstanceDisplayName,
@@ -64,8 +65,10 @@ export function isProviderInstancePickerVisible(entry: ProviderInstanceEntry): b
   return entry.enabled;
 }
 
+/** `cwd` picks each provider's model list for that directory, where the provider lists one. */
 export function deriveProviderInstanceEntries(
   providers: ReadonlyArray<ServerProvider>,
+  cwd?: string | null,
 ): ReadonlyArray<ProviderInstanceEntry> {
   return providers.map((snapshot) => {
     const instanceId = snapshot.instanceId;
@@ -87,7 +90,7 @@ export function deriveProviderInstanceEntries(
       isDefault,
       isAvailable: snapshot.availability !== "unavailable",
       snapshot,
-      models: snapshot.models,
+      models: resolveProviderModelsForCwd(snapshot, cwd),
     } satisfies ProviderInstanceEntry;
   });
 }

@@ -1,8 +1,10 @@
 /**
- * OMP's `/` menu and `$` skills per directory: control discovery, replaced by a thread's pushed
- * `available_commands_update`; skills from `omp skill list`. See docs/omp/commands.md.
+ * OMP's `/` menu, `$` skills and model list per directory: control discovery, the menu replaced by
+ * a thread's pushed `available_commands_update`; skills from `omp skill list`. See
+ * docs/omp/commands.md and docs/omp/models.md.
  */
 import type {
+  ServerProviderModel,
   ServerProviderSkill,
   ServerProviderSlashCommand,
   ServerProviderWorkspaceSnapshot,
@@ -23,10 +25,11 @@ import type {
   OmpControlTarget,
   OmpSkillList,
 } from "./control.ts";
+import type { OmpCatalogModel } from "./modelTraits.ts";
 import type { OmpSidecarError } from "./sidecar.ts";
 import { ompBuiltinAllowed, ompReportedBuiltins } from "./toolGuards.ts";
 
-/** How long a discovered command list or skill list is reused for one directory. */
+/** How long a discovered command, skill or model list is reused for one directory. */
 export const OMP_COMMAND_CATALOG_TTL_MS = 60_000;
 /** Directories whose catalogs the provider snapshot carries; the registry keeps as many. */
 const MAX_PUBLISHED_WORKSPACES = 16;
@@ -138,6 +141,8 @@ export const rewriteOmpSkillMention = (text: string, skillNames: ReadonlySet<str
 export interface OmpWorkspaceCatalog {
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
   readonly skills: ReadonlyArray<ServerProviderSkill>;
+  /** The directory's model list; absent when OMP could not list it (the instance's list stands). */
+  readonly models?: ReadonlyArray<ServerProviderModel>;
 }
 
 /** What a thread's session feeds into, and asks of, the catalog. */
@@ -156,7 +161,7 @@ export interface OmpCommandCatalog extends OmpCommandHooks {
   readonly forCwd: (
     cwd: string,
   ) => Effect.Effect<OmpWorkspaceCatalog, OmpControlError | OmpSidecarError>;
-  /** Every directory with both lists known, newest last; for the provider snapshot. */
+  /** Every directory with commands and skills known, newest last; for the provider snapshot. */
   readonly workspaceSnapshots: Stream.Stream<ReadonlyArray<ServerProviderWorkspaceSnapshot>>;
   /** Drops discovered lists; lists a thread's server pushed stay until it pushes again. */
   readonly invalidate: Effect.Effect<void>;
@@ -166,6 +171,8 @@ export interface OmpCommandCatalogOptions {
   readonly control: OmpControlService;
   /** The control target for a directory; resolves the binary. */
   readonly target: (cwd: string) => Effect.Effect<OmpControlTarget, OmpSidecarError>;
+  /** The picker's entries for the models OMP lists in a directory (OMP default and custom ones). */
+  readonly models: (listed: ReadonlyArray<OmpCatalogModel>) => ReadonlyArray<ServerProviderModel>;
   readonly ttlMs?: number;
 }
 
@@ -187,6 +194,7 @@ export const makeOmpCommandCatalog = Effect.fn("makeOmpCommandCatalog")(function
   const ttlMs = options.ttlMs ?? OMP_COMMAND_CATALOG_TTL_MS;
   const commands = new Map<string, Entry<ReadonlyArray<ServerProviderSlashCommand>>>();
   const skills = new Map<string, Entry<ReadonlyArray<ServerProviderSkill>>>();
+  const models = new Map<string, Entry<ReadonlyArray<ServerProviderModel>>>();
   const published = yield* SubscriptionRef.make<ReadonlyArray<ServerProviderWorkspaceSnapshot>>([]);
 
   /** Shares one run per directory while in flight and, once it succeeded, for `ttlMs`. */
@@ -231,22 +239,48 @@ export const makeOmpCommandCatalog = Effect.fn("makeOmpCommandCatalog")(function
   const discoverSkills = (cwd: string) =>
     options.target(cwd).pipe(Effect.flatMap(options.control.skillList), Effect.map(ompSkills));
 
-  /** Puts the directory's current lists into the published snapshots once both are known. */
+  /**
+   * The directory's model list, or `undefined` when OMP could not list it: the picker then keeps
+   * the instance's list, and the menu and skills still arrive.
+   */
+  const discoverModels = (cwd: string) =>
+    memo(
+      models,
+      cwd,
+      options
+        .target(cwd)
+        .pipe(Effect.flatMap(options.control.availableModels), Effect.map(options.models)),
+    ).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("omp models not listed", { cwd, detail: error.message }).pipe(
+          Effect.as(undefined),
+        ),
+      ),
+    );
+
+  /** Publishes the directory's current lists once its menu and skills are both known. */
   const publish = Effect.fnUntraced(function* (cwd: string) {
     const slashCommands = commands.get(cwd)?.value;
     const skillList = skills.get(cwd)?.value;
     if (slashCommands === undefined || skillList === undefined) return;
+    const modelList = models.get(cwd)?.value;
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
     yield* SubscriptionRef.update(published, (current) =>
       [
         ...current.filter((entry) => entry.cwd !== cwd),
-        { cwd, checkedAt, slashCommands, skills: skillList },
+        {
+          cwd,
+          checkedAt,
+          slashCommands,
+          skills: skillList,
+          ...(modelList === undefined ? {} : { models: modelList }),
+        },
       ].slice(-MAX_PUBLISHED_WORKSPACES),
     );
   });
 
   const forCwd = Effect.fn("OmpCommandCatalog.forCwd")(function* (cwd: string) {
-    const [discoveredCommands, discoveredSkills] = yield* Effect.all(
+    const [discoveredCommands, discoveredSkills, discoveredModels] = yield* Effect.all(
       [
         memo(
           commands,
@@ -256,14 +290,16 @@ export const makeOmpCommandCatalog = Effect.fn("makeOmpCommandCatalog")(function
             .pipe(Effect.flatMap(options.control.availableCommands), Effect.map(ompSlashCommands)),
         ),
         memo(skills, cwd, discoverSkills(cwd)),
+        discoverModels(cwd),
       ],
-      { concurrency: 2 },
+      { concurrency: 3 },
     );
     yield* publish(cwd);
     // A list a thread pushed while discovery ran is newer than what discovery found.
     return {
       slashCommands: commands.get(cwd)?.value ?? discoveredCommands,
       skills: skills.get(cwd)?.value ?? discoveredSkills,
+      ...(discoveredModels === undefined ? {} : { models: discoveredModels }),
     } satisfies OmpWorkspaceCatalog;
   });
 
@@ -308,6 +344,7 @@ export const makeOmpCommandCatalog = Effect.fn("makeOmpCommandCatalog")(function
 
   const invalidate = Effect.sync(() => {
     skills.clear();
+    models.clear();
     for (const [cwd, entry] of commands) if (!entry.pushed) commands.delete(cwd);
   });
 

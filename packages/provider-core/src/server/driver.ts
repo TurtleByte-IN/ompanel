@@ -68,7 +68,10 @@ export interface ProviderDriverMetadata {
 }
 
 export type ProviderWorkspaceSnapshot = ServerProvider &
-  Pick<ServerProviderWorkspaceSnapshot, "slashCommandsPending" | "optionDescriptors">;
+  Pick<ServerProviderWorkspaceSnapshot, "slashCommandsPending" | "optionDescriptors"> & {
+    /** The directory's own model list, for a driver whose models depend on the directory. */
+    readonly workspaceModels?: ServerProviderWorkspaceSnapshot["models"];
+  };
 
 export interface ProviderInstance {
   readonly instanceId: ProviderInstanceId;

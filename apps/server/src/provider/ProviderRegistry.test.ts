@@ -549,6 +549,49 @@ it.layer(
       );
     });
 
+    it("stores a workspace's own models and keeps them when a scan cannot list them", () => {
+      const model = (slug: string) => ({ slug, name: slug, isCustom: false, capabilities: null });
+      const provider = {
+        instanceId: ProviderInstanceId.make("omp"),
+        driver: ProviderDriverKind.make("omp"),
+        enabled: true,
+        installed: true,
+        status: "ready",
+        auth: { status: "authenticated" },
+        checkedAt: "2026-03-25T00:00:00.000Z",
+        version: "1.0.0",
+        models: [model("default"), model("lab/a"), model("lab/b")],
+        slashCommands: [],
+        skills: [],
+      } satisfies ServerProvider;
+      const scanned = ProviderRegistry.upsertProviderWorkspaceSnapshot(provider, "/project", {
+        ...provider,
+        workspaceModels: [model("default"), model("lab/a")],
+      });
+      assert.strictEqual(scanned.models, provider.models);
+      const decoded = decodeServerProvider(encodeServerProvider(scanned));
+      assert.deepStrictEqual(
+        decoded.workspaceSnapshots?.[0]?.models?.map((entry) => entry.slug),
+        ["default", "lab/a"],
+      );
+
+      const unlisted = ProviderRegistry.upsertProviderWorkspaceSnapshot(
+        scanned,
+        "/project",
+        provider,
+      );
+      assert.deepStrictEqual(
+        unlisted.workspaceSnapshots?.[0]?.models?.map((entry) => entry.slug),
+        ["default", "lab/a"],
+      );
+      const otherProject = ProviderRegistry.upsertProviderWorkspaceSnapshot(
+        unlisted,
+        "/other",
+        provider,
+      );
+      assert.strictEqual(Object.hasOwn(otherProject.workspaceSnapshots![1]!, "models"), false);
+    });
+
     it("preserves previously discovered provider models when a refresh returns none", () => {
       const previousProvider = {
         instanceId: ProviderInstanceId.make("cursor"),

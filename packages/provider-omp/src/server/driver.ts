@@ -45,7 +45,11 @@ import { makeOmpSettingsEngine } from "./settingsEngine.ts";
 import { makeOmpThreadSessions, makeOmpThreadSettingsHost } from "./threadSessions.ts";
 import { OMP_BUNDLED_SIDECAR_ENV } from "./sidecar.ts";
 import { makeOmpSidecarProvisioner } from "./sidecarInstall.ts";
-import { buildInitialOmpProviderSnapshot, ompProviderSnapshot } from "./status.ts";
+import {
+  buildInitialOmpProviderSnapshot,
+  ompProviderModels,
+  ompProviderSnapshot,
+} from "./status.ts";
 import { makeOmpTextGeneration } from "./textGeneration.ts";
 import { ompLockVersionLabel } from "./telemetry.ts";
 import { ompUsageReader, type OmpUsageReaderEnv } from "./usage.ts";
@@ -120,7 +124,12 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv, OmpUsageReader
           cwd,
         })),
       );
-    const catalog = yield* makeOmpCommandCatalog({ control, target: controlTarget });
+    // Commands, skills and models per directory: a project's own config scopes OMP's model list.
+    const catalog = yield* makeOmpCommandCatalog({
+      control,
+      target: controlTarget,
+      models: (listed) => ompProviderModels(effectiveConfig.customModels, listed),
+    });
     const checkProvider = Effect.gen(function* () {
       if (!effectiveConfig.enabled) return yield* buildInitialOmpProviderSnapshot(effectiveConfig);
       // Resolve (and re-hash) right before every probe; a resolved path is never reused.
@@ -157,8 +166,8 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv, OmpUsageReader
       initialSnapshot: (settings) =>
         buildInitialOmpProviderSnapshot(settings.provider).pipe(Effect.map(stampIdentity)),
       checkProvider,
-      // Each directory's `/` and `$` catalog rides on the snapshot, so a list a thread's server
-      // pushes reaches the composer without a rescan.
+      // Each directory's `/` and `$` catalog and model list ride on the snapshot, so a list a
+      // thread's server pushes reaches the composer without a rescan.
       enrichSnapshot: ({ getSnapshot, publishSnapshot }) =>
         catalog.workspaceSnapshots.pipe(
           Stream.runForEach((workspaceSnapshots) =>
@@ -253,9 +262,10 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv, OmpUsageReader
         !effectiveConfig.enabled
           ? snapshot.getSnapshot
           : Effect.all([snapshot.getSnapshot, catalog.forCwd(workspaceCwd)]).pipe(
-              Effect.map(([machineSnapshot, workspace]) => ({
+              Effect.map(([machineSnapshot, { models, ...workspace }]) => ({
                 ...machineSnapshot,
                 ...workspace,
+                ...(models === undefined ? {} : { workspaceModels: models }),
                 slashCommandsPending: false,
               })),
               Effect.mapError(
@@ -263,7 +273,7 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv, OmpUsageReader
                   new ProviderDriverError({
                     driver: DRIVER_KIND,
                     instanceId,
-                    detail: "Failed to list OMP commands and skills for the workspace.",
+                    detail: "Failed to list OMP commands, skills and models for the workspace.",
                     cause,
                   }),
               ),
