@@ -409,6 +409,26 @@ jobs:
           include-hidden-files: true
           if-no-files-found: ignore
 
+      # The live suite against the scripted model (no key), so its steps run on every change and
+      # not only when `OMP live` has a key. It reuses the web build `Test` just made. Its own
+      # Playwright run replaces the report and results, so the first run is uploaded above.
+      - name: Live suite (scripted model)
+        id: live
+        run: OMPANEL_E2E_OMP_BINARY="$HOME/omp-e2e/omp" OMPANEL_LIVE_MODEL=scripted vp run --filter @t3tools/web test:e2e:live:prebuilt
+
+      - name: Upload live suite screenshots, traces and report
+        if: always() && steps.live.outcome != 'skipped'
+        uses: actions/upload-artifact@v7
+        with:
+          name: omp-e2e-live
+          path: |
+            apps/web/.playwright/omp-live-artifacts/
+            apps/web/.playwright/results/
+            apps/web/.playwright/results.json
+            apps/web/playwright-report/
+          include-hidden-files: true
+          if-no-files-found: ignore
+
   # apps/server sets `fileParallelism: false`, so its test files run strictly
   # one at a time. Sharding spreads them over separate runners instead of
   # separate workers, so no two server test files ever share a machine and the
