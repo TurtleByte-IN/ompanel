@@ -13,13 +13,14 @@ const STALLED_REPLY = "Working on it, slowly.";
 /** A user message containing `run: <command>` makes the model call the shell tool with it. */
 const RUN_PREFIX = "run: ";
 /**
- * A user message with a line `tool: <name> <json-args>` makes the model call the offered tool
- * `<name>` with those arguments (`{}` when none): a T3 MCP tool OMP was given as a host tool.
- * Only a whole line counts (after the `<system-reminder>` OMP puts before a session's first
- * message), so other text that mentions a tool never triggers it.
+ * A line `tool: <name> <json-args>` makes the model call the offered tool `<name>` (a T3 MCP
+ * host tool: directly, or through its `xd://<name>` device). Only a whole line counts, after
+ * the `<system-reminder>` OMP puts before a session's first message.
  */
 const TOOL_LINE = /^tool: (.*)$/m;
 const SYSTEM_REMINDER = /<system-reminder>[\s\S]*?<\/system-reminder>/g;
+/** A device OMP documents in the system prompt (`- xd://<name> — summary`). */
+const XD_DEVICE = /xd:\/\/([A-Za-z0-9_-]+)/g;
 /** The reply when `tool:` names a tool OMP did not offer, or its arguments are not a JSON object. */
 export const TOOL_REFUSED_PREFIX = "scripted model cannot call ";
 /** `fanout: a, b` makes the model start one subagent per name with OMP's `task` tool. */
@@ -176,7 +177,7 @@ const namedToolReply = (
     : { calls: [{ tool: name, args: args as Record<string, unknown> }] };
 };
 
-const scriptedReply = (request: ChatRequest): Reply => {
+const scriptedReply = (request: ChatRequest, devices: ReadonlyArray<string>): Reply => {
   const messages = request.messages ?? [];
   const last = messages.at(-1);
   const offered = new Set((request.tools ?? []).map((tool) => tool.function?.name));
@@ -193,7 +194,7 @@ const scriptedReply = (request: ChatRequest): Reply => {
   if (json !== undefined) return { text: json };
   const userText = last?.role === "user" ? messageText(last.content) : "";
   const toolLine = TOOL_LINE.exec(userText.replace(SYSTEM_REMINDER, ""))?.[1];
-  if (toolLine !== undefined) return namedToolReply(toolLine, offered);
+  if (toolLine !== undefined) return namedToolReply(toolLine, offered, devices);
   const runAt = userText.indexOf(RUN_PREFIX);
   if (runAt !== -1) {
     const command =
@@ -347,7 +348,8 @@ export const startScriptedModel = async (agentDir: string): Promise<ScriptedMode
         return;
       }
       const chat = JSON.parse(Buffer.concat(body).toString("utf8")) as ChatRequest;
-      const reply = scriptedReply(chat);
+      const devices = mountedDevices(chat.messages ?? []);
+      const reply = scriptedReply(chat, devices);
       const last = chat.messages?.at(-1);
       calls.push({
         lastRole: last?.role ?? "",
@@ -355,6 +357,7 @@ export const startScriptedModel = async (agentDir: string): Promise<ScriptedMode
         tools: (chat.tools ?? []).flatMap((tool) =>
           tool.function?.name === undefined ? [] : [tool.function.name],
         ),
+        devices,
         userTexts: (chat.messages ?? []).flatMap((message) =>
           message.role === "user" ? [messageText(message.content)] : [],
         ),
