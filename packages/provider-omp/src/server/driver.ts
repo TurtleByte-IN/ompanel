@@ -243,7 +243,6 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv, OmpUsageReader
     );
     // Running threads, shared by the adapter (which registers them) and the settings engine.
     const threadSessions = makeOmpThreadSessions();
-    yield* Effect.logInfo("TEMP-Z02 omp instance built", { instanceId });
     // Threads map 1:1 to OMP's own session files, so terminal and Ompanel share them.
     const sessionsLocation = yield* resolveOmpSessionsLocation({
       environment: processEnv,
@@ -325,34 +324,12 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv, OmpUsageReader
         environment: processEnv,
         cwd: textGenerationCwd,
       }),
-      ompSettings: ((controller) => ({
-        ...controller,
-        write: (writeInput: Parameters<typeof controller.write>[0]) =>
-          threadSessions.list.pipe(
-            Effect.flatMap((open) =>
-              Effect.logInfo("TEMP-Z02 omp settings write", {
-                instanceId,
-                key: writeInput.key,
-                scope: writeInput.scope,
-                openThreads: open.length,
-              }),
-            ),
-            Effect.andThen(controller.write(writeInput)),
-            Effect.tap((result) =>
-              Effect.logInfo("TEMP-Z02 omp settings written", {
-                instanceId,
-                affected: result.restartRequired.length,
-              }),
-            ),
-          ),
-      }))(
-        makeOmpSettingsController({
-          engine: settingsEngine,
-          sessions: threadSessions,
-          target: controlTarget,
-          globalCwd: stateDirs.launcher,
-        }),
-      ),
+      ompSettings: makeOmpSettingsController({
+        engine: settingsEngine,
+        sessions: threadSessions,
+        target: controlTarget,
+        globalCwd: stateDirs.launcher,
+      }),
       ompAccounts: yield* makeOmpAccountsController({
         control,
         target: controlTarget,

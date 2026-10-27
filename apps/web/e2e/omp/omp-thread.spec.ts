@@ -278,7 +278,10 @@ test("restarts the session after a launch-only setting changes", async () => {
   const before = threadProcesses().map((entry) => entry.pid);
   expect(before).toHaveLength(1);
 
-  // OMP reads memory.backend only at startup: a global write marks the open thread.
+  // OMP reads memory.backend only at startup: a global write marks every open thread, this one
+  // and the fork, whose omp also still runs.
+  const open = stack.ompProcesses().length;
+  expect(open).toBeGreaterThan(1);
   await page.evaluate(() => window.location.assign("/settings/omp-memory"));
   const row = page.locator('[data-setting="memory.backend"]');
   await row.getByRole("textbox").fill("local");
@@ -286,9 +289,9 @@ test("restarts the session after a launch-only setting changes", async () => {
   await expect
     .poll(() => JSON.parse(stack.omp("config", "get", "memory.backend", "--json")).value)
     .toBe("local");
-  // The server marked the open thread: the write reports it before the thread page loads.
+  // The server marked them: the write reports them before the thread page loads.
   await expect(
-    page.getByText("1 open thread(s) pick up memory.backend after a restart"),
+    page.getByText(`${open} open thread(s) pick up memory.backend after a restart`),
   ).toBeVisible();
 
   await page.evaluate((url) => window.location.assign(url), threadUrl);
