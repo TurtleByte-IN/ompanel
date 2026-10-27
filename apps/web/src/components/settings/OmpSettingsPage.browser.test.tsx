@@ -567,6 +567,38 @@ describe("OMP settings pages", () => {
     expect(engine.project.has("retry.maxRetries")).toBe(false);
   });
 
+  it("keeps map settings read-only on a project, which only resets its own entries", async () => {
+    resetEngine();
+    engine.global.set("retry.fallbackChains", { default: ["anthropic/claude-sonnet-4-5"] });
+    engine.project.set("retry.fallbackChains", { web: ["web/exa"] });
+    const projectId = ProjectId.make("project-app");
+    await using screen = await render(
+      <OmpSettingsPageBody
+        environmentId={environmentId}
+        instanceId={instanceId}
+        pageId="routing"
+        projects={[{ id: projectId, title: "app", workspaceRoot: "/work/app" }]}
+      />,
+    );
+    const chains = screen.getByRole("textbox", { name: "retry.fallbackChains" });
+    await expect.element(chains).toBeEnabled();
+
+    await userEvent.click(screen.getByRole("combobox", { name: "OMP config layer" }));
+    await userEvent.click(screen.getByRole("option", { name: "Project: app" }));
+    await expect
+      .poll(() => row("retry.fallbackChains")?.textContent)
+      .toContain("OMP merges this map with the global one");
+    // OMP reports the merged map: written back, it would freeze every global entry here.
+    await expect.element(chains).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: "Reset" }));
+    expect(commands.reset).toHaveBeenCalledWith({
+      environmentId,
+      input: { instanceId, projectId, scope: "project", key: "retry.fallbackChains" },
+    });
+    expect(commands.write).not.toHaveBeenCalled();
+    expect(engine.project.has("retry.fallbackChains")).toBe(false);
+  });
+
   it("offers no layer switch without a project", async () => {
     resetEngine();
     await using _routing = await render(

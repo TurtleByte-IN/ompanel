@@ -154,7 +154,11 @@ project config) and writes `omp config set --scope global`. A project reads
 project and the source badge says Project where its `.omp/config.yml` sets a
 key; writes and Reset go to that file (`--scope project --cwd <workspaceRoot>`).
 Reset is offered only for keys the selected layer sets. A project change marks
-only threads inside that project restart required.
+only threads inside that project restart required. Map settings (`record` type,
+such as `modelRoles` or `tools.approval`) are read-only on a project: OMP
+deep-merges maps across layers and reports only the merged map, so writing it
+back would copy every global entry into the project and a removed entry would
+merge back in. Edit them on Global; a project's own entries go with Reset.
 
 The pages fit a 390px phone viewport (browser tests render each page in the settings column
 beside the collapsed nav rail). Mobile has Settings → OMP: every page's fields as read-only

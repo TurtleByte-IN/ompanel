@@ -223,6 +223,11 @@ export function OmpSettingsForm({
           {fields.map((field) => {
             // A path-scoped list is editable only through its global entries, never its resolved value.
             const globalEntries = field.source === "env" ? undefined : field.globalEntries;
+            // OMP deep-merges maps across layers and reports the merged one: written back to the
+            // project, every global entry would be frozen there and a removed one would merge
+            // back in. So a project edits a map only by Reset, which drops its own entries.
+            const mergedMap = scope === "project" && field.type === "record" && !field.readOnly;
+            const shown = mergedMap ? { ...field, readOnly: true } : field;
             return (
               <div key={field.key} className="flex flex-col gap-1.5" data-setting={field.key}>
                 <div className="flex flex-wrap items-center gap-2">
@@ -253,14 +258,19 @@ export function OmpSettingsForm({
                       onWrite={(value) => onWrite(field.key, value)}
                     />
                   ) : (
-                    ((field.credential ? undefined : controls?.[field.key])?.(field, (value) =>
-                      onWrite(field.key, value),
+                    ((shown.credential ? undefined : controls?.[shown.key])?.(shown, (value) =>
+                      onWrite(shown.key, value),
                     ) ?? (
-                      <FieldControl field={field} onWrite={(value) => onWrite(field.key, value)} />
+                      <FieldControl field={shown} onWrite={(value) => onWrite(shown.key, value)} />
                     ))
                   )}
                 </div>
-                {globalEntries !== undefined ? null : field.readOnly ? (
+                {globalEntries !== undefined ? null : mergedMap ? (
+                  <p className="text-muted-foreground text-xs">
+                    OMP merges this map with the global one, so edit it on the Global layer. Reset
+                    removes this project's own entries.
+                  </p>
+                ) : field.readOnly ? (
                   <p className="text-muted-foreground text-xs">
                     {field.source === "env"
                       ? "Set by an environment variable; change it where OMP is launched."
