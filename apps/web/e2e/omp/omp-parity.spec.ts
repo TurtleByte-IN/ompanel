@@ -10,7 +10,7 @@ import { expect, test } from "@playwright/test";
 import { QrCode } from "@t3tools/shared/qrCode";
 
 import { useOmpSuite } from "./ompSuite.ts";
-import { STREAMED_PARAGRAPHS, TOOL_REPLY_PREFIX } from "./scriptedModel.ts";
+import { STREAMED_PARAGRAPHS } from "./scriptedModel.ts";
 
 const ARTIFACTS =
   process.env.OMPANEL_E2E_ARTIFACTS_DIR === undefined
@@ -43,12 +43,14 @@ test("opens the Agents panel and lists fanned-out subagents", async () => {
 });
 
 test("shows T3's checkpoint summary under an OMP turn that changed a file", async () => {
-  const { assistantSays, page, screenshot, sendAndSettle, stack } = suite.current();
-  // README.md holds one committed line; the turn replaces it with two.
-  await sendAndSettle("run: printf 'parity one\\nparity two\\n' > README.md && echo wrote-readme");
-  await expect(assistantSays(`${TOOL_REPLY_PREFIX}wrote-readme`)).toBeVisible();
+  const { page, screenshot, sendAndSettle, stack } = suite.current();
+  // README.md holds one committed line; the turn replaces it with two. The command is short and
+  // the step reads the file, not the reply: the agent terminal echoes the typed command, and on a
+  // long shell prompt (CI's `user@host:/tmp/...$`) the echo wraps and a fragment of it reaches
+  // the tool output.
+  await sendAndSettle("run: printf 'one\\ntwo\\n' > README.md");
   expect(NodeFS.readFileSync(NodePath.join(stack.workspace, "README.md"), "utf8")).toBe(
-    "parity one\nparity two\n",
+    "one\ntwo\n",
   );
 
   const card = page.locator('[data-changed-files-state="tree"]').last();
