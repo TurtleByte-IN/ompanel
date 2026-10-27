@@ -97,8 +97,8 @@ link with its QR code and the `omp join` link, and lists who joined.
 **The links bypass T3 pairing.** Anyone holding one reaches the session through
 OMP's collab relay (`collab.relayUrl` in OMP's settings), outside T3's pairing,
 scopes and approvals. The menu item says so (`Share live (outside pairing)…`)
-and the dialog says it every time it opens. Share live exists only in the web
-and desktop thread menu; the mobile app has no Share live entry, and OMP's own
+and the dialog says it every time it opens. Share live exists in the web and
+desktop thread menu and in the mobile OMP sheet ([Mobile](#mobile)); OMP's own
 `/collab` command is TUI-only, so a composer prompt cannot open a room.
 
 The links are capabilities, so Ompanel never records them. They travel from
@@ -131,6 +131,31 @@ its parent's line, a fork indents its branches and shows the fork icon, the
 active path is highlighted and the leaf is marked `current`. A thread whose
 session is not running says so; send a message to start it.
 
+## Mobile
+
+On mobile an OMP thread's header has an **OMP** button (sparkles) that opens
+the OMP sheet; it is absent on other providers' threads. The sheet lists Goal
+(opens the goal sheet, [composer.md](composer.md#goal-mode)), Export HTML,
+Share as gist, Share live, Stop sharing live and Branch tree, and uses the same
+server RPCs as web:
+
+- Export HTML writes the page to the app's cache (`html-exports/`) and opens the
+  system share sheet, so it can be saved to Files or sent; failures show an
+  alert.
+- Share as gist shows the same warning and asks before uploading, then the
+  share link with a Copy button and the gist address, or the failure message.
+- Share live shows the "This link bypasses T3 pairing" warning, with web's
+  text, before a room starts and while it is open. Pick View only or View and
+  prompt, then Start sharing; an open room shows the browser and `omp join`
+  links with Copy buttons, who joined, and Stop sharing. It refreshes every 5
+  seconds while open. Mobile has no QR code.
+- Stop sharing live ends the room and says whether one was running.
+- Branch tree draws the same rows (`ompBranchTreeRows` in
+  `packages/provider-omp/src/branchTree.ts`, shared with web): forks indent,
+  the active path is highlighted and the leaf is marked `current`.
+
+The views are `apps/mobile/src/features/threads/OmpThreadMenu.tsx`.
+
 ## Server API
 
 | RPC                             | Scope                   |
@@ -147,4 +172,4 @@ links. Errors are `OmpThreadMenuOperationError` with a `reason`:
 `not_running`, `no_session`, `needs_newer_omp`, `gh_unavailable`, `timeout`,
 `omp_failed`, `instance_not_found` or `unsupported`. The provider side is
 `packages/provider-omp/src/server/threadMenuController.ts`; the dialogs are
-`apps/web/src/components/chat/OmpThreadMenu.tsx`.
+`apps/web/src/components/chat/OmpThreadMenu.tsx` (mobile: [Mobile](#mobile)).

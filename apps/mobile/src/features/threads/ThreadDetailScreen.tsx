@@ -772,6 +772,13 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
         kind: "goal",
         label: goal.title,
         accessibilityLabel: `${goal.title}: ${goal.objective}`,
+        onPress: () => {
+          Keyboard.dismiss();
+          navigation.navigate("ThreadGoal", {
+            environmentId: props.environmentId,
+            threadId: props.selectedThread.id,
+          });
+        },
       };
     }
     return null;

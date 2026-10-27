@@ -21,6 +21,11 @@ import type {
   ProviderInstanceId,
   ScopedThreadRef,
 } from "@t3tools/contracts";
+import {
+  ompBranchCount,
+  ompBranchNodeLabel,
+  ompBranchTreeRows,
+} from "@t3tools/provider-omp/branchTree";
 import { Atom } from "effect/reactivity";
 import {
   BotIcon,
@@ -488,36 +493,6 @@ const NODE_ICONS = {
   compaction: ArchiveIcon,
 } as const satisfies Record<OmpBranchNode["kind"], unknown>;
 
-const NODE_FALLBACK_LABELS = {
-  user: "Message",
-  assistant: "Reply",
-  branch_summary: "Branch summary",
-  compaction: "Compaction",
-} as const satisfies Record<OmpBranchNode["kind"], string>;
-
-/** Depth-first rows with their depth; `nodes` are parents first, so one pass orders them. */
-function ompBranchTreeRows(
-  tree: OmpBranchTree,
-): ReadonlyArray<{ readonly node: OmpBranchNode; readonly depth: number; readonly fork: boolean }> {
-  const children = new Map<string | null, Array<OmpBranchNode>>();
-  for (const node of tree.nodes) {
-    const siblings = children.get(node.parentId) ?? [];
-    siblings.push(node);
-    children.set(node.parentId, siblings);
-  }
-  const rows: Array<{ node: OmpBranchNode; depth: number; fork: boolean }> = [];
-  const stack = (children.get(null) ?? []).toReversed().map((node) => ({ node, depth: 0 }));
-  while (stack.length > 0) {
-    const { node, depth } = stack.pop()!;
-    const below = children.get(node.entryId) ?? [];
-    rows.push({ node, depth, fork: below.length > 1 });
-    // A lone child continues its parent's line; only a fork indents.
-    const childDepth = below.length > 1 ? depth + 1 : depth;
-    for (const child of below.toReversed()) stack.push({ node: child, depth: childDepth });
-  }
-  return rows;
-}
-
 type TreeState =
   | { readonly status: "loading" }
   | { readonly status: "ready"; readonly tree: OmpBranchTree }
@@ -546,7 +521,7 @@ function OmpBranchTreeDialog({ dialog }: { readonly dialog: OmpThreadDialog }) {
 
   const active = new Set(state.status === "ready" ? state.tree.activePath : []);
   const rows = state.status === "ready" ? ompBranchTreeRows(state.tree) : [];
-  const forks = rows.filter((row) => row.fork).length;
+  const branches = ompBranchCount(rows);
 
   return (
     <Dialog open onOpenChange={(open) => (open ? undefined : closeDialog())}>
@@ -568,7 +543,7 @@ function OmpBranchTreeDialog({ dialog }: { readonly dialog: OmpThreadDialog }) {
           ) : (
             <ThreadDetailsSection
               headingId="omp-branch-tree-heading"
-              title={forks === 0 ? "One branch" : `${forks + 1} branches`}
+              title={branches === 1 ? "One branch" : `${branches} branches`}
               separated={false}
             >
               <ul
@@ -594,7 +569,7 @@ function OmpBranchTreeDialog({ dialog }: { readonly dialog: OmpThreadDialog }) {
                       <span
                         className={cn("min-w-0 flex-1 truncate", THREAD_DETAILS_PANEL_LABEL_CLASS)}
                       >
-                        {node.label ?? (node.preview || NODE_FALLBACK_LABELS[node.kind])}
+                        {ompBranchNodeLabel(node)}
                       </span>
                       {node.entryId === state.tree.leafId ? (
                         <span className="text-xs font-normal text-muted-foreground">current</span>
