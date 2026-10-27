@@ -141,6 +141,8 @@ export function upsertProviderWorkspaceSnapshot(
 ): ServerProvider {
   const previousSnapshot = provider.workspaceSnapshots?.find((snapshot) => snapshot.cwd === cwd);
   const optionDescriptors = scopedSnapshot.optionDescriptors ?? previousSnapshot?.optionDescriptors;
+  // A scan that could not list the directory's models keeps the ones listed before.
+  const models = scopedSnapshot.workspaceModels ?? previousSnapshot?.models;
   const workspaceSnapshot = {
     cwd,
     checkedAt: scopedSnapshot.checkedAt,
@@ -150,6 +152,7 @@ export function upsertProviderWorkspaceSnapshot(
     ...(scopedSnapshot.slashCommandsPending ? { slashCommandsPending: true } : {}),
     skills: scopedSnapshot.skills,
     ...(optionDescriptors === undefined ? {} : { optionDescriptors }),
+    ...(models === undefined ? {} : { models }),
   } satisfies NonNullable<ServerProvider["workspaceSnapshots"]>[number];
   return {
     ...provider,

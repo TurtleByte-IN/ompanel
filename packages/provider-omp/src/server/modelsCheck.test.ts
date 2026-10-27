@@ -1,8 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off - the real omp runs with a throwaway HOME.
 /**
- * The `models.yml` check against a real omp, when `T3_TEST_OMP_BINARY` names one (a local `omp`
- * or the OMP E2E build). It runs under a temporary HOME, so nothing of the user's OMP is read or
- * written.
+ * The `models.yml` check: OMP's refusals as `invalid`, with a stand-in control service; and against
+ * a real omp, when `T3_TEST_OMP_BINARY` names one (a local `omp` or the OMP E2E build), under a
+ * temporary HOME, so nothing of the user's OMP is read or written.
  */
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
@@ -13,7 +13,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 
-import { makeOmpControlService } from "./control.ts";
+import { makeOmpControlService, OmpControlError } from "./control.ts";
 import { checkOmpModelsConfig } from "./modelsCheck.ts";
 
 // `vp test` passes `T3_*` variables through to the workers.
@@ -27,6 +27,38 @@ const VALID = `providers:
     models:
       - id: lab-model
 `;
+
+const fakeTarget = { binaryPath: "/opt/omp", profile: "", environment: {}, cwd: "/tmp" };
+
+const checkWith = (error: OmpControlError) =>
+  checkOmpModelsConfig({
+    control: { modelsInAgentDir: () => Effect.fail(error) },
+    target: fakeTarget,
+    content: VALID,
+  }).pipe(Effect.result);
+
+describe("models.yml check", () => {
+  // OMP drops the whole file, marker provider included, and then has no model to start on.
+  it.effect.each(["exit", "unconfigured"] as const)(
+    "refuses a file when OMP stops before ready (%s)",
+    (reason) =>
+      Effect.gen(function* () {
+        const result = yield* checkWith(new OmpControlError({ operation: "models_check", reason }));
+        assert.strictEqual(result._tag, "Failure");
+        if (result._tag === "Failure") assert.strictEqual(result.failure.reason, "invalid");
+      }),
+  );
+
+  it.effect("reports a check OMP could not run as omp_failed", () =>
+    Effect.gen(function* () {
+      const result = yield* checkWith(
+        new OmpControlError({ operation: "models_check", reason: "spawn" }),
+      );
+      assert.strictEqual(result._tag, "Failure");
+      if (result._tag === "Failure") assert.strictEqual(result.failure.reason, "omp_failed");
+    }),
+  );
+});
 
 describe.runIf(binary !== undefined && HostProcess.Platform.defaultValue() !== "win32")(
   "models.yml check with a real omp",

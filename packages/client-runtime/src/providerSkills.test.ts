@@ -5,6 +5,7 @@ import {
   getProviderSkillsForSlashMenu,
   hasCompleteProviderWorkspaceSnapshot,
   resolveProviderSkillsForCwd,
+  resolveProviderModelsForCwd,
   resolveProviderSlashCommandsForCwd,
 } from "./providerSkills.ts";
 
@@ -121,5 +122,17 @@ describe("workspace provider snapshots", () => {
     expect(hasCompleteProviderWorkspaceSnapshot(provider, "/workspace/project-b")).toBe(false);
     expect(hasCompleteProviderWorkspaceSnapshot(undefined, "/workspace/project-a")).toBe(false);
     expect(hasCompleteProviderWorkspaceSnapshot(provider, null)).toBe(false);
+  });
+
+  it("uses a workspace's own model list where the provider lists one", () => {
+    const model = (slug: string) => ({ slug, name: slug, isCustom: false, capabilities: null });
+    const scoped = {
+      ...provider,
+      models: [model("default"), model("lab/a"), model("lab/b")],
+      workspaceSnapshots: [{ ...provider.workspaceSnapshots[0]!, models: [model("lab/a")] }],
+    } satisfies ServerProvider;
+    expect(resolveProviderModelsForCwd(scoped, "/workspace/project-a")).toEqual([model("lab/a")]);
+    expect(resolveProviderModelsForCwd(scoped, "/workspace/project-b")).toBe(scoped.models);
+    expect(resolveProviderModelsForCwd(provider, "/workspace/project-a")).toBe(provider.models);
   });
 });

@@ -33,7 +33,12 @@ import type {
   OmpUpdateCheck,
 } from "@t3tools/contracts";
 
-import { OmpConfigList, OmpConfigResetResult, OmpConfigSetResult } from "../configForm.ts";
+import {
+  OmpConfigLayerList,
+  OmpConfigList,
+  OmpConfigResetResult,
+  OmpConfigSetResult,
+} from "../configForm.ts";
 import { OmpCatalogModel } from "./modelTraits.ts";
 import { OmpAnsi } from "./ompAnsi.ts";
 
@@ -171,11 +176,13 @@ export type OmpControlOperation =
   | "logout_accounts"
   | "logout"
   | "config_list"
+  | "config_layer"
   | "config_set"
   | "config_reset"
   | "config_path"
   | "skill_list"
   | "available_commands"
+  | "available_models"
   | "models_check"
   | "agents_unpack"
   | "plugin_list"
@@ -199,11 +206,13 @@ export class OmpControlError extends Schema.TaggedError<OmpControlError>()("OmpC
     "logout_accounts",
     "logout",
     "config_list",
+    "config_layer",
     "config_set",
     "config_reset",
     "config_path",
     "skill_list",
     "available_commands",
+    "available_models",
     "models_check",
     "agents_unpack",
     "plugin_list",
@@ -360,6 +369,7 @@ export const OmpStatsReport = Schema.Struct({
 export type OmpStatsReport = typeof OmpStatsReport.Type;
 const decodeStatsReport = Schema.decodeEffect(Schema.fromJsonString(OmpStatsReport));
 const decodeConfigList = Schema.decodeEffect(Schema.fromJsonString(OmpConfigList));
+const decodeConfigLayerList = Schema.decodeEffect(Schema.fromJsonString(OmpConfigLayerList));
 const decodeConfigSetResult = Schema.decodeEffect(Schema.fromJsonString(OmpConfigSetResult));
 const decodeConfigResetResult = Schema.decodeEffect(Schema.fromJsonString(OmpConfigResetResult));
 const encodeJsonValue = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
@@ -588,6 +598,15 @@ export interface OmpControlService {
   /** `omp config list --json --cwd <target.cwd>` (10 s), uncached: every field with its source layer. */
   readonly configList: (target: OmpControlTarget) => Effect.Effect<OmpConfigList, OmpControlError>;
   /**
+   * `omp config list --scope <scope> --json --cwd <target.cwd>` (10 s), uncached: only the keys
+   * that layer sets, as written. An OMP before CLI contract 1.1.0 refuses `--scope` here and
+   * fails `exit`.
+   */
+  readonly configLayer: (
+    target: OmpControlTarget,
+    scope: OmpConfigScope,
+  ) => Effect.Effect<OmpConfigLayerList, OmpControlError>;
+  /**
    * `omp config set --scope <scope> --cwd <target.cwd> --json -- <key> <JSON value>` (10 s).
    * There is deliberately no `config get`: it prints credentials unmasked.
    */
@@ -618,6 +637,15 @@ export interface OmpControlService {
   readonly availableCommands: (
     target: OmpControlTarget,
   ) => Effect.Effect<ReadonlyArray<OmpAvailableSlashCommand>, OmpControlError>;
+  /**
+   * RPC `get_available_models` in a fresh control server in `target.cwd` (20 s, as the probe's),
+   * uncached: the models a session there may pick, after the directory's project config and
+   * path-scoped `enabledModels` / `disabledProviders`. A directory whose scope matches no model
+   * lists none.
+   */
+  readonly availableModels: (
+    target: OmpControlTarget,
+  ) => Effect.Effect<ReadonlyArray<OmpCatalogModel>, OmpControlError>;
   /**
    * RPC `get_available_models` (15 s) from a fresh control server whose agent directory is
    * `agentDir` (`PI_CODING_AGENT_DIR`; the profile is dropped, since a profile outranks it), run
@@ -870,7 +898,7 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
 
   /** Runs `omp [--profile p] config <args>` and decodes its JSON stdout. */
   const runConfig = <A>(
-    operation: "config_list" | "config_set" | "config_reset",
+    operation: "config_list" | "config_layer" | "config_set" | "config_reset",
     target: OmpControlTarget,
     args: ReadonlyArray<string>,
     decode: (stdout: string) => Effect.Effect<A, Schema.SchemaError>,
@@ -886,6 +914,18 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
           : Effect.fail(new OmpControlError({ operation, reason: "exit", exitCode: output.code })),
       ),
     );
+
+  const configLayer = Effect.fn("OmpControl.configLayer")(function* (
+    target: OmpControlTarget,
+    scope: OmpConfigScope,
+  ) {
+    return yield* runConfig(
+      "config_layer",
+      target,
+      ["list", "--scope", scope, "--json", "--cwd", target.cwd],
+      decodeConfigLayerList,
+    );
+  });
 
   const configList = Effect.fn("OmpControl.configList")(function* (target: OmpControlTarget) {
     return yield* runConfig(
@@ -1322,6 +1362,28 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
     return data.commands;
   });
 
+  const availableModels = Effect.fn("OmpControl.availableModels")(function* (
+    target: OmpControlTarget,
+  ) {
+    const data = yield* withDeadline(
+      "available_models",
+      "ready",
+      // A scope that matches no model stops OMP before `ready`; the placeholder start lists none.
+      openControlRpcSession("available_models", target).pipe(
+        Effect.flatMap((session) => session.request({ type: "get_available_models" })),
+        Effect.flatMap((response) =>
+          decodeCatalog(response).pipe(
+            Effect.mapError(
+              (cause) =>
+                new OmpControlError({ operation: "available_models", reason: "invalid", cause }),
+            ),
+          ),
+        ),
+      ),
+    );
+    return data.models;
+  });
+
   const modelsInAgentDir = Effect.fn("OmpControl.modelsInAgentDir")(function* (
     target: OmpControlTarget,
     agentDir: string,
@@ -1541,11 +1603,13 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
       ).pipe(Effect.catch(Effect.succeed)),
     invalidate,
     configList,
+    configLayer,
     configSet,
     configReset,
     configPath,
     skillList,
     availableCommands,
+    availableModels,
     modelsInAgentDir,
     agentsUnpack,
     pluginList,

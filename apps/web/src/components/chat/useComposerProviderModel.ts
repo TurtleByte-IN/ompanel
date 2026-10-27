@@ -33,6 +33,8 @@ export function useComposerProviderModel(
     readonly providerStatuses: ReadonlyArray<ServerProvider>;
     readonly settings: UnifiedSettings;
     readonly activeProjectId: ProjectId | null;
+    /** The thread's directory: picks each provider's model list there (OMP project scope). */
+    readonly cwd: string | null;
     readonly threadRef: ScopedThreadRef | DraftId;
     readonly threadModelSelection: ModelSelection | null | undefined;
     readonly projectModelSelection: ModelSelection | null | undefined;
@@ -43,6 +45,7 @@ export function useComposerProviderModel(
     providerStatuses,
     settings,
     activeProjectId,
+    cwd,
     threadRef,
     threadModelSelection,
     projectModelSelection,
@@ -54,7 +57,7 @@ export function useComposerProviderModel(
   const draftModelState = useComposerDraftModelState(threadRef);
   const providerInstanceEntries: ReadonlyArray<ProviderInstanceEntry> = sortProviderInstanceEntries(
     applyProviderInstanceSettings(
-      deriveProviderInstanceEntries(providerStatuses),
+      deriveProviderInstanceEntries(providerStatuses, cwd),
       settings,
       activeProjectId,
     ),

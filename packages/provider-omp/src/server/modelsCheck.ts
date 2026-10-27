@@ -63,9 +63,10 @@ export const checkOmpModelsConfig = Effect.fn("checkOmpModelsConfig")(function* 
   ).pipe(
     Effect.catchTags({
       OmpControlError: (error) =>
-        error.reason === "exit"
-          ? // With the marker's model OMP always has one to start with, unless it dropped the file.
-            Effect.fail(
+        // With the marker's model OMP always has one to start with, unless it dropped the file:
+        // then it stops before `ready`, saying it has no model (`unconfigured`) or just exiting.
+        error.reason === "exit" || error.reason === "unconfigured"
+          ? Effect.fail(
               invalid(
                 "OMP did not load this models.yml and stopped before it was ready, so the file was not saved. Run `omp models` in a terminal to see OMP's reason.",
               ),

@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildOmpSettingsForm, isOmpCredentialKey } from "./configForm.ts";
+import {
+  buildOmpSettingsForm,
+  isOmpCredentialKey,
+  ompScopedEntrySummary,
+  ompUnscopedEntries,
+  ompWithUnscopedEntries,
+} from "./configForm.ts";
 
 describe("isOmpCredentialKey", () => {
   it("marks every credential the pinned OMP registers, set or not", () => {
@@ -37,5 +43,42 @@ describe("isOmpCredentialKey", () => {
       ["searxng.basicPassword", true, false],
       ["searxng.basicUsername", false, true],
     ]);
+  });
+});
+
+describe("path-scoped arrays", () => {
+  const SCOPED = { pathPrefixes: ["/srv", "/opt"], providers: ["ollama"] };
+  const entries = ["anthropic", SCOPED, "openai"];
+
+  it("replaces the plain entries and keeps the scoped ones after them", () => {
+    expect(ompUnscopedEntries(entries)).toEqual(["anthropic", "openai"]);
+    expect(ompWithUnscopedEntries(entries, ["groq"])).toEqual(["groq", SCOPED]);
+    expect(ompWithUnscopedEntries(entries, [])).toEqual([SCOPED]);
+  });
+
+  it("summarizes a scoped entry as OMP reads it", () => {
+    expect(ompScopedEntrySummary(SCOPED)).toEqual({ paths: ["/srv", "/opt"], values: ["ollama"] });
+    expect(ompScopedEntrySummary({ path: "/a", models: ["x/y"], values: "x/z" })).toEqual({
+      paths: ["/a"],
+      values: ["x/z", "x/y"],
+    });
+    expect(ompScopedEntrySummary(["not", "an", "entry"])).toEqual({ paths: [], values: [] });
+  });
+
+  it("gives path-scoped fields the global layer's entries only when OMP listed that layer", () => {
+    const list = {
+      disabledProviders: { type: "array", description: "", source: "global", value: [] },
+      enabledModels: { type: "array", description: "", source: "default", value: [] },
+      cycleOrder: { type: "array", description: "", source: "global", value: ["a"] },
+    } as const;
+    const layer = {
+      disabledProviders: { type: "array", description: "", value: [SCOPED] },
+      cycleOrder: { type: "array", description: "", value: ["a"] },
+    } as const;
+    const withLayer = buildOmpSettingsForm(list, layer).fields;
+    expect(withLayer.map((field) => field.globalEntries)).toEqual([[SCOPED], [], undefined]);
+    expect(
+      buildOmpSettingsForm(list).fields.some((field) => field.globalEntries !== undefined),
+    ).toBe(false);
   });
 });

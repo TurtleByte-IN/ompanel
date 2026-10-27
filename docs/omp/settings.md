@@ -186,10 +186,16 @@ top-level `fallbackChains` is `retry.fallbackChains` in OMP.
 
 `enabledModels`, `enabledProviders` and `disabledProviders` accept path-scoped
 entries (`{path, models}` / `{paths, providers}`). `config list` returns them
-already resolved for its working directory, and the engine has no raw read, so
-writing the shown value back would delete every entry scoped to another
-folder. The pages show these three read-only (`OMP_PATH_SCOPED_KEYS`), with no
-Reset; edit them in OMP's config file.
+already resolved for its working directory, so writing the shown value back would
+delete every entry scoped to another folder. With an OMP that lists a layer as
+written (`omp config list --scope global --json`, CLI contract 1.1.0,
+oh-my-pi#60), the engine reads the global layer next to every `config list` and
+gives these fields `globalEntries`; the web pages then edit the global list's
+plain entries (one per line) and list the folder entries read-only. Every write
+appends the global layer's folder entries again, and Reset removes only the plain
+entries. Project-scope writes of these keys are refused (`path_scoped`). With the
+pinned OMP, which refuses `--scope` on `list`, the fields stay read-only, as on
+mobile.
 
 ### Memory, runtime, search and terminal prefs
 

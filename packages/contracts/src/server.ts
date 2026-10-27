@@ -127,6 +127,11 @@ export const ServerProviderWorkspaceSnapshot = Schema.Struct({
   slashCommandsPending: Schema.optional(Schema.Boolean),
   skills: Schema.Array(ServerProviderSkill),
   optionDescriptors: Schema.optional(Schema.Array(ProviderOptionDescriptor)),
+  /**
+   * The models the provider lists in this directory, when its list depends on the directory
+   * (OMP's project config and path-scoped `enabledModels`); otherwise the provider's `models`.
+   */
+  models: Schema.optional(Schema.Array(ServerProviderModel)),
 });
 export type ServerProviderWorkspaceSnapshot = typeof ServerProviderWorkspaceSnapshot.Type;
 

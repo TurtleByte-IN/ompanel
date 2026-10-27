@@ -17,6 +17,7 @@ import type {
   ThinkingLevel,
 } from "../contract/src/wire.generated.ts";
 import { OMP_CREDENTIAL_SETTING_KEYS, OMP_SETTING_KEYS } from "./ompSettingKeys.generated.ts";
+import { OMP_PATH_SCOPED_KEYS } from "./settingsPages.ts";
 
 /**
  * `omp config list|set|reset --json` output, from OMP's CLI JSON contract 1.0.0
@@ -33,6 +34,60 @@ export type OmpConfigEntry = typeof OmpConfigEntry.Type;
 
 export const OmpConfigList = Schema.Record(Schema.String, OmpConfigEntry);
 export type OmpConfigList = typeof OmpConfigList.Type;
+
+/**
+ * `omp config list --scope <scope> --json` (CLI contract 1.1.0, oh-my-pi#60): only the keys that
+ * layer sets, values as written, path-scoped `{ path, … }` entries unresolved.
+ */
+export const OmpConfigLayerList = Schema.Record(
+  Schema.String,
+  Schema.Struct({
+    type: OmpConfigType,
+    description: Schema.String,
+    value: Schema.optional(Schema.Unknown),
+    redacted: Schema.optional(Schema.Literal(true)),
+  }),
+);
+export type OmpConfigLayerList = typeof OmpConfigLayerList.Type;
+
+/** The plain entries of a path-scoped array: the ones that apply in every folder. */
+export const ompUnscopedEntries = (entries: ReadonlyArray<unknown>): ReadonlyArray<string> =>
+  entries.filter((entry): entry is string => typeof entry === "string");
+
+/**
+ * The global value with its plain entries replaced by `unscoped` and every `{ path, … }` entry
+ * kept, after them.
+ */
+export const ompWithUnscopedEntries = (
+  entries: ReadonlyArray<unknown>,
+  unscoped: ReadonlyArray<string>,
+): ReadonlyArray<unknown> => [...unscoped, ...entries.filter((entry) => typeof entry !== "string")];
+
+const stringsOf = (value: unknown): ReadonlyArray<string> =>
+  typeof value === "string"
+    ? [value]
+    : Array.isArray(value)
+      ? value.filter((item): item is string => typeof item === "string")
+      : [];
+
+/**
+ * A `{ path, … }` entry of a path-scoped array as OMP reads it (`resolvePathScopedStringArray` in
+ * `config/settings.ts`): the folder prefixes it applies under and the values it adds there.
+ */
+export const ompScopedEntrySummary = (
+  entry: unknown,
+): { readonly paths: ReadonlyArray<string>; readonly values: ReadonlyArray<string> } => {
+  if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
+    return { paths: [], values: [] };
+  }
+  const scoped = entry as Readonly<Record<string, unknown>>;
+  return {
+    paths: ["path", "paths", "pathPrefix", "pathPrefixes"].flatMap((name) =>
+      stringsOf(scoped[name]),
+    ),
+    values: ["values", "items", "models", "providers"].flatMap((name) => stringsOf(scoped[name])),
+  };
+};
 
 export const OmpConfigSetResult = Schema.Struct({
   key: Schema.String,
@@ -233,10 +288,18 @@ export const isOmpSecretReference = (value: unknown): value is string =>
   typeof value === "string" &&
   ((value.startsWith("!") && value.trim().length > 1) || ENV_VAR_NAME.test(value));
 
-/** One field per key, in OMP's settings-panel order. A credential's value is never carried. */
-export const buildOmpSettingsForm = (list: OmpConfigList): OmpSettingsForm => ({
+/**
+ * One field per key, in OMP's settings-panel order. A credential's value is never carried.
+ * `globalLayer` (absent with an OMP that cannot list it) gives path-scoped keys their
+ * `globalEntries`.
+ */
+export const buildOmpSettingsForm = (
+  list: OmpConfigList,
+  globalLayer?: OmpConfigLayerList,
+): OmpSettingsForm => ({
   fields: Object.entries(list).map(([key, entry]): OmpSettingsField => {
     const credential = entry.redacted === true || isOmpCredentialKey(key, entry.type);
+    const globalValue = globalLayer?.[key]?.value;
     return {
       key,
       group: key.split(".", 1)[0] ?? key,
@@ -249,6 +312,9 @@ export const buildOmpSettingsForm = (list: OmpConfigList): OmpSettingsForm => ({
       readOnly: entry.source === "env",
       launchScoped: Object.hasOwn(OMP_LAUNCH_SCOPED_KEYS, key),
       threadOverride: threadOverrideRoute(key),
+      ...(globalLayer !== undefined && OMP_PATH_SCOPED_KEYS.includes(key)
+        ? { globalEntries: Array.isArray(globalValue) ? globalValue : [] }
+        : {}),
     };
   }),
 });

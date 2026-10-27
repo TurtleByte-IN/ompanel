@@ -58,6 +58,13 @@ export const OmpSettingsField = Schema.Struct({
   /** A running thread reads it only at startup. */
   launchScoped: Schema.Boolean,
   threadOverride: OmpThreadOverrideRoute,
+  /**
+   * A path-scoped array (`enabledModels`, `enabledProviders`, `disabledProviders`): the global
+   * config's own entries as written, `{ path, … }` entries included (`[]` when it sets none).
+   * Present only when the running OMP reports them (`omp config list --scope global`, CLI contract
+   * 1.1.0); the global list is then editable, scoped entries kept as they are.
+   */
+  globalEntries: Schema.optionalKey(Schema.Array(Schema.Unknown)),
 });
 export type OmpSettingsField = typeof OmpSettingsField.Type;
 
@@ -133,6 +140,7 @@ export const OmpSettingsOperationErrorReason = Schema.Literals([
   "thread_not_open",
   "no_value",
   "invalid_overlay",
+  "path_scoped",
   "omp_failed",
   "thread_failed",
 ]);
