@@ -33,6 +33,7 @@ import {
   type OmpTurnOutcome,
   type OmpTurnRefresh,
 } from "./mapper.ts";
+import { ompProposalsResolvable } from "./proposals.ts";
 import {
   OmpSubagentTracker,
   ompSubagentControls,
@@ -132,6 +133,14 @@ export type OmpJournalEntry =
   | { readonly k: "expire"; readonly at: number; readonly nativeId: string }
   | { readonly k: "close"; readonly at: number; readonly targetId: string }
   | { readonly k: "closeAll"; readonly at: number }
+  /** The user resolved a staged proposal (`resolve_proposal`), or the session dropped them all. */
+  | {
+      readonly k: "proposal";
+      readonly at: number;
+      readonly toolCallId: string;
+      readonly state: "applied" | "discarded";
+    }
+  | { readonly k: "settleProposals"; readonly at: number }
   /** Events the adapter emitted from outside the state objects (an imported session's history). */
   | { readonly k: "events"; readonly events: unknown };
 
@@ -157,6 +166,8 @@ const ENTRY_KINDS: Record<OmpJournalEntry["k"], true> = {
   expire: true,
   close: true,
   closeAll: true,
+  proposal: true,
+  settleProposals: true,
   events: true,
 };
 
@@ -547,6 +558,23 @@ export class OmpJournaledMapper extends OmpThreadMapper {
       () => super.adoptSession(sessionId, now),
     );
   }
+  override resolveProposal(
+    toolCallId: string,
+    state: "applied" | "discarded",
+    now: DateTime.Utc,
+  ): Array<Event> {
+    return this.#recorder.run(
+      () => ({ k: "proposal", at: millis(now), toolCallId, state }),
+      () => super.resolveProposal(toolCallId, state, now),
+    );
+  }
+
+  override settleProposals(now: DateTime.Utc): Array<Event> {
+    return this.#recorder.run(
+      () => ({ k: "settleProposals", at: millis(now) }),
+      () => super.settleProposals(now),
+    );
+  }
 
   override bindThread(
     input: Parameters<OmpThreadMapper["bindThread"]>[0],
@@ -799,7 +827,11 @@ export function replayOmpJournal(entries: Iterable<OmpJournalEntry>): OmpJournal
         const providerSession = decodeProviderSession(entry.providerSession);
         const instanceId = ProviderInstanceId.make(entry.instanceId);
         state = {
-          mapper: new OmpThreadMapper({ instanceId, providerSession }),
+          mapper: new OmpThreadMapper({
+            instanceId,
+            providerSession,
+            proposalsResolvable: ompProposalsResolvable(entry.contractVersion),
+          }),
           subagents: new OmpSubagentTracker({
             instanceId,
             controls: ompSubagentControls(entry.contractVersion),
@@ -893,6 +925,12 @@ export function replayOmpJournal(entries: Iterable<OmpJournalEntry>): OmpJournal
           break;
         case "closeAll":
           push(uiRequests.closeAll(utc(entry.at)));
+          break;
+        case "proposal":
+          push(mapper.resolveProposal(entry.toolCallId, entry.state, utc(entry.at)));
+          break;
+        case "settleProposals":
+          push(mapper.settleProposals(utc(entry.at)));
           break;
         case "events":
           push(decodeEvents(entry.events));

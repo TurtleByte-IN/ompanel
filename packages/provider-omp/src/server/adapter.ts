@@ -64,6 +64,11 @@ import {
 } from "./journal.ts";
 import { ompApprovalModeFor } from "./launch.ts";
 import { isOmpExtensionStatusRequest, OMP_PROVIDER, type OmpTurnOutcome } from "./mapper.ts";
+import {
+  OMP_RESOLVE_PROPOSAL_TIMEOUT_MS,
+  ompProposalsResolvable,
+  requestResolveProposal,
+} from "./proposals.ts";
 import type { OmpSessionsLocation } from "./ompSessions.ts";
 import type { OmpRpcRequestError } from "./rpcProcess.ts";
 import type { OmpPidfiles } from "./pidfiles.ts";
@@ -481,6 +486,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
     const mapper = new OmpJournaledMapper(
       {
         instanceId: options.instanceId,
+        proposalsResolvable: ompProposalsResolvable(process.contractVersion),
         providerSession: {
           id: input.providerSessionId,
           driver: OMP_PROVIDER,
@@ -855,6 +861,8 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       // Dialogs still open close unanswered; OMP is gone or going.
       yield* Effect.forEach([...dialogTimers.keys()], stopDialogTimer, { discard: true });
       yield* emit(uiRequests.closeAll(yield* DateTime.now));
+      // So do staged edit previews: OMP keeps them in memory only.
+      yield* emit(mapper.settleProposals(yield* DateTime.now));
       yield* emit(mapper.setSessionStatus(status, lastError, yield* DateTime.now));
       yield* Queue.end(events);
     });
@@ -954,6 +962,20 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
         );
       }),
       isBusy: () => mapper.hasActiveTurn || sessionChanging,
+      // Accept or Reject on a card; the card follows once OMP answers, ordered with frames.
+      resolveProposal: Effect.fn("OmpAdapter.resolveProposal")(function* (request) {
+        const answer = yield* requestResolveProposal(process, request, {
+          timeoutMs: OMP_RESOLVE_PROPOSAL_TIMEOUT_MS,
+        });
+        yield* exclusive(
+          Effect.gen(function* () {
+            if (settled) return;
+            const state = answer.action === "apply" ? "applied" : "discarded";
+            yield* emit(mapper.resolveProposal(request.toolCallId, state, yield* DateTime.now));
+          }),
+        );
+        return answer;
+      }),
     });
     // Before the first turn, so its tools and directory handling are in place.
     yield* hostBridge.setup;

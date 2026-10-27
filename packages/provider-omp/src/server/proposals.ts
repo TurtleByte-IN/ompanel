@@ -21,6 +21,9 @@ export const OMP_RESOLVE_PROPOSAL_CONTRACT = "1.10.0";
 export const ompProposalsResolvable = (contractVersion: string): boolean =>
   contractAtLeast(contractVersion, OMP_RESOLVE_PROPOSAL_CONTRACT);
 
+/** `resolve_proposal` answers once the apply ran; an `ast_edit` over many files takes a while. */
+export const OMP_RESOLVE_PROPOSAL_TIMEOUT_MS = 30_000;
+
 export type OmpProposalAction = "apply" | "discard";
 
 /** The part of OMP's `ResolveProposalResult` Ompanel uses. */

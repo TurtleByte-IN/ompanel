@@ -103,6 +103,7 @@ describe("OMP settings controller", () => {
         process: { request: () => Effect.die("unused") },
         onRestartRequired: () => Effect.void,
         isBusy: () => false,
+        resolveProposal: () => Effect.die("not used"),
       });
       yield* controller.setThreadOverride({
         threadId: ThreadId.make("thread-a"),

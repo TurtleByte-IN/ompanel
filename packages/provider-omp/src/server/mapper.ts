@@ -184,8 +184,6 @@ interface ActiveTurn {
   noticeCount: number;
   /** The compaction card while OMP compacts, so its end updates the same item. */
   compaction: { readonly nativeItemId: string; readonly startedAt: DateTime.Utc } | null;
-  /** Staged `ast_edit` proposals, re-emitted once the agent resolves or rejects them. */
-  readonly proposals: Map<string, { readonly startedAt: DateTime.Utc; readonly body: ItemBody }>;
   /** After `agent_end`: the agent loop is done and only background work can wake it again. */
   agentEnded: boolean;
   /** The queue card while OMP holds messages for this turn, so each snapshot updates it. */
@@ -619,6 +617,11 @@ const BACKGROUND_COMMAND = /^\/(?:compact|handoff)(?:[\s:]|$)/;
 export interface OmpThreadMapperOptions {
   readonly instanceId: OrchestrationV2ProviderSession["providerInstanceId"];
   readonly providerSession: OrchestrationV2ProviderSession;
+  /**
+   * The sidecar takes `resolve_proposal` (contract 1.10.0): a staged `ast_edit` card offers
+   * Accept and Reject and stays `waiting` until it is resolved, so its run keeps listening.
+   */
+  readonly proposalsResolvable?: boolean;
 }
 
 export class OmpThreadMapper {
@@ -628,10 +631,58 @@ export class OmpThreadMapper {
   /** OMP's last queue snapshot; the queue belongs to the session and can outlive a turn. */
   #queue: OmpQueueSnapshot = EMPTY_QUEUE;
   readonly #instanceId: OmpThreadMapperOptions["instanceId"];
+  readonly #proposalsResolvable: boolean;
+  /**
+   * Staged `ast_edit` cards by tool call, oldest first, as last emitted: OMP keeps a preview
+   * across turns (and a Stop) until the agent or the user resolves it, or the session ends.
+   */
+  readonly #staged = new Map<string, OrchestrationV2TurnItem>();
 
   constructor(options: OmpThreadMapperOptions) {
     this.#instanceId = options.instanceId;
     this.#session = options.providerSession;
+    this.#proposalsResolvable = options.proposalsResolvable === true;
+  }
+
+  /** Whether tool call `toolCallId` staged a proposal that is still pending here. */
+  isProposalStaged(toolCallId: string): boolean {
+    return this.#staged.has(toolCallId);
+  }
+
+  /**
+   * The user resolved the proposal `toolCallId` staged (`resolve_proposal`), or the agent did:
+   * its card shows the outcome and no longer offers Accept and Reject.
+   */
+  resolveProposal(
+    toolCallId: string,
+    state: "applied" | "discarded",
+    now: DateTime.Utc,
+  ): Array<Event> {
+    const item = this.#staged.get(toolCallId);
+    if (item === undefined) return [];
+    this.#staged.delete(toolCallId);
+    const output = item.type === "dynamic_tool" ? asRecord(item.output) : undefined;
+    const card = readOmpToolCard(output);
+    if (output === undefined || card?.kind !== "proposed_edit") return [];
+    const { resolvable: _offered, ...settled } = card;
+    return [
+      {
+        type: "turn_item.updated",
+        driver: OMP_PROVIDER,
+        turnItem: {
+          ...item,
+          status: "completed",
+          updatedAt: now,
+          completedAt: now,
+          output: { ...output, [OMP_CARD_OUTPUT_KEY]: { ...settled, state } },
+        } as OrchestrationV2TurnItem,
+      },
+    ];
+  }
+
+  /** The session ended (closed, replaced or crashed): OMP dropped every staged preview. */
+  settleProposals(now: DateTime.Utc): Array<Event> {
+    return [...this.#staged.keys()].flatMap((id) => this.resolveProposal(id, "discarded", now));
   }
 
   get providerSession(): OrchestrationV2ProviderSession {
@@ -720,7 +771,8 @@ export class OmpThreadMapper {
 
   /** The bound thread now runs session `sessionId`: a rewind moved it onto a new session file. */
   adoptSession(sessionId: string, now: DateTime.Utc): Array<Event> {
-    return this.#sessionInfo(sessionId, undefined, now);
+    // OMP drops staged previews when it leaves a session (`branch`, `switch_session`).
+    return [...this.settleProposals(now), ...this.#sessionInfo(sessionId, undefined, now)];
   }
 
   /** Binds the app thread to the live OMP session described by `get_state`. */
@@ -863,7 +915,6 @@ export class OmpThreadMapper {
       promptId: null,
       noticeCount: 0,
       compaction: null,
-      proposals: new Map(),
       agentEnded: false,
       queueCard: null,
       stopping: false,
@@ -1796,35 +1847,43 @@ export class OmpThreadMapper {
     }
 
     const status: TurnItemStatus = completed ? (isError ? "failed" : "completed") : "running";
-    const card = ompToolCard({ toolName: call.toolName, args: call.args, result, isError });
+    let card = ompToolCard({ toolName: call.toolName, args: call.args, result, isError });
+    const proposal = card.type === "dynamic_tool" ? readOmpToolCard(card.output) : null;
+    const staging =
+      completed && proposal?.kind === "proposed_edit" && proposal.state === "proposed";
+    if (staging && this.#proposalsResolvable && card.type === "dynamic_tool") {
+      card = {
+        ...card,
+        output: {
+          ...asRecord(card.output),
+          [OMP_CARD_OUTPUT_KEY]: { ...proposal, resolvable: true },
+        },
+      };
+    }
+    // A resolvable proposal waits for Accept or Reject: its run keeps listening for the outcome.
+    const itemStatus: TurnItemStatus = staging && this.#proposalsResolvable ? "waiting" : status;
+    const item = this.#item(turn, toolCallId, itemStatus, call.startedAt, now, card);
     const events: Array<Event> = [
       this.#node(turn, toolCallId, "tool_call", status, call.startedAt, completed ? now : null),
-      this.#item(turn, toolCallId, status, call.startedAt, now, card),
+      item,
     ];
-    const proposal = card.type === "dynamic_tool" ? readOmpToolCard(card.output) : null;
-    if (completed && proposal?.kind === "proposed_edit") {
-      if (proposal.state === "proposed") {
-        turn.proposals.set(toolCallId, { startedAt: call.startedAt, body: card });
-      } else if (
-        card.type === "dynamic_tool" &&
-        (card.toolName === "xd://resolve" || card.toolName === "xd://reject")
-      ) {
-        // OMP applies or discards every staged proposal at once; their cards follow.
-        for (const [proposalId, staged] of turn.proposals) {
-          const output = asRecord(staged.body.type === "dynamic_tool" ? staged.body.output : null);
-          const stagedCard = readOmpToolCard(output);
-          if (output === undefined || stagedCard?.kind !== "proposed_edit") continue;
-          events.push(
-            this.#item(turn, proposalId, "completed", staged.startedAt, now, {
-              ...staged.body,
-              output: {
-                ...output,
-                [OMP_CARD_OUTPUT_KEY]: { ...stagedCard, state: proposal.state },
-              },
-            } as ItemBody),
-          );
-        }
-        turn.proposals.clear();
+    if (staging && item.type === "turn_item.updated") {
+      this.#staged.set(toolCallId, item.turnItem);
+    } else if (
+      completed &&
+      proposal?.kind === "proposed_edit" &&
+      proposal.state !== "proposed" &&
+      card.type === "dynamic_tool" &&
+      (card.toolName === "xd://resolve" || card.toolName === "xd://reject")
+    ) {
+      // OMP names the staging call (contract 1.10.0); older ones resolve the latest preview.
+      const inner = asRecord(
+        asRecord(asRecord(asRecord(result)?.["details"])?.["xdev"])?.["inner"],
+      );
+      const named = inner?.["toolCallId"];
+      const target = typeof named === "string" ? named : [...this.#staged.keys()].at(-1);
+      if (target !== undefined) {
+        events.push(...this.resolveProposal(target, proposal.state, now));
       }
     }
     return events;
