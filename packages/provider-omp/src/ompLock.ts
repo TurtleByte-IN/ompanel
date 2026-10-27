@@ -48,49 +48,16 @@ export interface OmpLock {
 
 export const OMP_LOCK: OmpLock = {
   repository: "TurtleByte-IN/oh-my-pi",
-  tag: "v18.12.6-ompanel.4",
-  commit: "8d699e7c1a953acda3097f7d99c5a66f8ad700dd",
+  tag: "v18.12.6-ompanel.6",
+  commit: "d73b2b3e4f6ee298a7494c02053d16640a207c71",
   version: "18.12.6",
   contract: {
-    version: "1.8.0",
-    schemaHash: "sha256:4ded2ddb80d417c1190a6ff3371fe5e6d702100deaae08f7d301e49e03e11087",
+    version: "1.10.0",
+    schemaHash: "sha256:d897f2aeeb735e5e81735118dbce5cc5083512323957242b44ebf5f6b95c69e2",
   },
   cliContract: {
-    version: "1.0.0",
-    schemaHash: "sha256:c69d63a87d5f91f918f9afb03f6aed8d637262e9c2f783e1524f62c1e6d14540",
+    version: "1.1.0",
+    schemaHash: "sha256:678ce0308cd99c3419c023beeedd8783c662436a3da185007def26a6b7ea6e6c",
   },
-  sidecars: {
-    "darwin-arm64": {
-      asset: "omp-darwin-arm64",
-      sha256: "1a244df0cc5a7a5cf256f1c5a384417a8abf14cdfea6cb3ea522b826e7cf2b1b",
-    },
-    "darwin-x64": {
-      asset: "omp-darwin-x64",
-      sha256: "f71add8ee5d61caddf2be367236bb0b122b85c3cffb9ce27b134feaa88d74384",
-    },
-    "linux-arm64": {
-      asset: "omp-linux-arm64",
-      sha256: "a269864ea53ad0d5dd01596e9f17d5e204b21f8873ef921f0ba4d82ecd185de7",
-    },
-    "linux-x64": {
-      asset: "omp-linux-x64",
-      sha256: "33eb1b74a6c5eb63663ba8054d2e0e9dc56b112bfabfcccffb8b659e921aa27b",
-    },
-    "linux-musl-arm64": {
-      asset: "omp-linux-musl-arm64",
-      sha256: "754ac5592249e0457eeb6a1a8916c78f995007fb7adc79364a20dc09016b00e4",
-    },
-    "linux-musl-x64": {
-      asset: "omp-linux-musl-x64",
-      sha256: "a345739b6af499111b3407cd2b41153a50c0a5dbfb9d5c7a5986d1f484073f48",
-    },
-    "win32-arm64": {
-      asset: "omp-windows-arm64.exe",
-      sha256: "460773179a9cc7b880490b23e4038c73597716ca4a8b748e2593b9a6ea2a83b0",
-    },
-    "win32-x64": {
-      asset: "omp-windows-x64.exe",
-      sha256: "d9fcfa0bfbb8c4d1a30151dcde3497708505e703926b5e01a70e6973da0d7773",
-    },
-  },
+  sidecars: {},
 };

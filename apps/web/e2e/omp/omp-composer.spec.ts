@@ -1,14 +1,17 @@
 // @effect-diagnostics nodeBuiltinImport:off - an end-to-end test writing artifacts.
 // Composer extras on an OMP thread (PHASES P-05): goal mode through the composer chip and the Goal
 // panel, magic-keyword chips, and the traits menu (boolean traits, role chip, Vibe Mode over
-// `set_vibe_mode`, and a vibe worker in the Agents panel). A real `omp` from the omp.lock tag and
-// the scripted model.
+// `set_vibe_mode`, and a vibe worker in the Agents panel), and a staged `ast_edit` card's Accept
+// and Reject (Z-05, RPC `resolve_proposal`). A real `omp` from the omp.lock tag and the scripted
+// model.
+import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import { expect, test } from "@playwright/test";
 
 import { useOmpSuite } from "./ompSuite.ts";
 import {
+  AST_EDIT_PREFIX,
   GOAL_DONE_MARKER,
   STREAMED_PARAGRAPHS,
   TOOL_REPLY_PREFIX,
@@ -197,4 +200,79 @@ test("a Vibe Mode worker is a row in the Agents panel, not a new thread", async 
   // The worker is not a delegated child thread: the sidebar holds as many threads as before.
   await expect(threads).toHaveCount(threadCount);
   await page.getByRole("button", { name: "Toggle agents panel" }).click();
+});
+
+test("a staged ast_edit card: Accept applies the proposal, Reject discards the next", async () => {
+  const { page, screenshot, send, stack } = suite.current();
+  await setVibeMode("Off");
+  const file = NodePath.join(stack.workspace, "z05-proposal.ts");
+  NodeFS.writeFileSync(file, "export const value = oldName(1);\n");
+  // The scripted model stages the rewrite, then hangs: the preview waits for the user mid-turn.
+  const callsBefore = stack.model.calls.length;
+  await send(`${AST_EDIT_PREFIX}oldName($A) => newName($A) in z05-proposal.ts`);
+  const stop = page.getByRole("button", { name: "Stop generation" });
+  // The model called `ast_edit` (or wrote its `xd://` device) and OMP sent it the staged preview:
+  // the model's next request follows the tool result.
+  await expect
+    .poll(
+      () =>
+        stack.model.calls.slice(callsBefore).findIndex((call) => "calls" in call.reply) !== -1 &&
+        stack.model.calls.slice(callsBefore).length >= 2,
+      { timeout: 60_000 },
+    )
+    .toBe(true);
+
+  // The latest proposal's card (an earlier one may be expanded too).
+  const card = page
+    .locator("[data-omp-card]")
+    .filter({ has: page.locator("[data-omp-proposal]") })
+    .last();
+  /** Expands the `ast_edit` tool row (in the running turn, or a finished turn's "Worked for"). */
+  const openProposal = async (state: "proposed" | "applied") => {
+    await expect(async () => {
+      const worked = page.getByRole("button", { name: /^Worked for / }).last();
+      if ((await worked.count()) > 0 && (await worked.getAttribute("aria-expanded")) !== "true") {
+        await worked.click();
+      }
+      const row = page.getByRole("button", { name: /ast_edit/ }).last();
+      if ((await row.getAttribute("aria-expanded")) !== "true") await row.click();
+      await expect(card.locator(`[data-omp-proposal=${state}]`)).toBeVisible({ timeout: 2_000 });
+    }).toPass({ timeout: 30_000 });
+  };
+  await openProposal("proposed");
+  await expect(card).toContainText("z05-proposal.ts");
+  // Staged: OMP has not touched the file.
+  expect(NodeFS.readFileSync(file, "utf8")).toBe("export const value = oldName(1);\n");
+  await expect(card).toContainText("Accept or reject it");
+  await screenshot("z05-proposal-staged");
+  await card.getByRole("button", { name: "Accept" }).click();
+  await expect(card.locator("[data-omp-proposal=applied]")).toBeVisible();
+  await expect(card.getByRole("button", { name: "Accept" })).toHaveCount(0);
+  await expect
+    .poll(() => NodeFS.readFileSync(file, "utf8"))
+    .toBe("export const value = newName(1);\n");
+  await screenshot("z05-proposal-applied");
+  await stop.click();
+  await expect(stop).toHaveCount(0);
+  // A reload replays the thread: the card still shows the outcome, with no buttons.
+  await page.reload();
+  await openProposal("applied");
+  await expect(card.getByRole("button", { name: "Accept" })).toHaveCount(0);
+  await screenshot("z05-proposal-after-reload");
+
+  // Reject discards the next proposal: the file keeps its text.
+  NodeFS.writeFileSync(file, "export const other = oldName(2);\n");
+  const rejectFrom = stack.model.calls.length;
+  await send(`${AST_EDIT_PREFIX}oldName($A) => newName($A) in z05-proposal.ts`);
+  await expect
+    .poll(() => stack.model.calls.slice(rejectFrom).length >= 2, { timeout: 60_000 })
+    .toBe(true);
+  await openProposal("proposed");
+  await card.getByRole("button", { name: "Reject" }).click();
+  await expect(card.locator("[data-omp-proposal=discarded]")).toBeVisible();
+  await expect(card.getByRole("button", { name: "Reject" })).toHaveCount(0);
+  await screenshot("z05-proposal-rejected");
+  await stop.click();
+  await expect(stop).toHaveCount(0);
+  expect(NodeFS.readFileSync(file, "utf8")).toBe("export const other = oldName(2);\n");
 });

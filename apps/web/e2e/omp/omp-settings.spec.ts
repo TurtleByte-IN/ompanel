@@ -296,6 +296,60 @@ test("writes a key to the workspace project's .omp/config.yml from the layer swi
   await expect.poll(() => ompConfigList()[key]).toEqual(globalBefore);
 });
 
+test("edits enabledModels' global entries on the Models page and keeps the folder-scoped one", async () => {
+  const { page, stack, screenshot } = suite.current();
+  const configFile = NodePath.join(stack.home, ".omp", "agent", "config.yml");
+  const configBefore = NodeFS.readFileSync(configFile, "utf8");
+  const folder = NodePath.join(stack.home, "elsewhere");
+  const scoped = { path: folder, models: ["fake/folder-model"] };
+  // OMP rewrites config.yml on every `config set`, so the entry goes in through OMP too.
+  stack.omp(
+    "config",
+    "set",
+    "--scope",
+    "global",
+    "--json",
+    "--",
+    "enabledModels",
+    JSON.stringify(["fake/fake-model", scoped]),
+  );
+  /** The global layer as written (`omp config list --scope global`, CLI contract 1.1.0). */
+  const globalEnabledModels = (): unknown =>
+    (
+      JSON.parse(stack.omp("config", "list", "--scope", "global", "--json")) as Record<
+        string,
+        { readonly value?: unknown }
+      >
+    )["enabledModels"]?.value;
+  expect(globalEnabledModels()).toEqual(["fake/fake-model", scoped]);
+  // Resolved in the workspace, the folder entry is gone: that is what a plain `config list` shows.
+  expect(ompConfigList()["enabledModels"]?.value).toEqual(["fake/fake-model"]);
+
+  await openPage(page, "/settings/omp-models");
+  const row = settingRow(page, "enabledModels");
+  await row.scrollIntoViewIfNeeded();
+  const field = row.getByRole("textbox", { name: "enabledModels" });
+  await expect(field).toBeEditable();
+  await expect(field).toHaveValue("fake/fake-model");
+  await expect(row.getByRole("list", { name: "enabledModels folder entries" })).toContainText(
+    `Only in ${folder}: fake/folder-model`,
+  );
+  await screenshot("04-enabled-models-before");
+  await field.fill("fake/fake-model\nfake/second-model");
+  await field.blur();
+  // The write replaced only the plain entries; the folder-scoped one is still in the global file.
+  await expect
+    .poll(globalEnabledModels)
+    .toEqual(["fake/fake-model", "fake/second-model", scoped]);
+  await expect(field).toHaveValue("fake/fake-model\nfake/second-model");
+  await expect(row.getByRole("list", { name: "enabledModels folder entries" })).toContainText(
+    `Only in ${folder}: fake/folder-model`,
+  );
+  await screenshot("04-enabled-models-written");
+  // Later steps run on the stack's own config.
+  NodeFS.writeFileSync(configFile, configBefore);
+});
+
 test("adds a custom provider on the OMP custom providers page", async () => {
   const { page, stack, screenshot } = suite.current();
   const provider = "g2-local";

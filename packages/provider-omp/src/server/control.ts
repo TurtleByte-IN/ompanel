@@ -1,8 +1,13 @@
+// @effect-diagnostics nodeBuiltinImport:off - the owner-only control overlay is written synchronously while the service is built, so the service needs no FileSystem and no session waits on it.
 /**
  * OmpControlService: every short-lived `omp` process Ompanel starts outside a thread runs here
  * under a hard deadline; on it the process group gets SIGTERM, then SIGKILL after
  * {@link OMP_CONTROL_KILL_GRACE_MS}, so a hung omp never outlives the call.
  */
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
 import {
   isCommandMissingCause,
   parseGenericCliVersion,
@@ -17,6 +22,7 @@ import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Redacted from "effect/Redacted";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -120,9 +126,10 @@ export const ompContractAtLeast = (version: string | undefined, minimum: string)
 };
 
 /**
- * A control process must not open a session, start MCP servers, run hooks or extensions: no
- * session file, no tools (which also disables MCP), no extensions, skills, rules, LSP or title
- * model. Login providers that extensions contribute are therefore not listed.
+ * A control process must not open a session, run hooks or extensions, or start MCP servers: no
+ * session file, no built-in tools, no extensions, skills, rules, LSP or title model. Login
+ * providers that extensions contribute are therefore not listed. `--no-tools` does not stop MCP
+ * discovery, so every control session also loads {@link OMP_CONTROL_OVERLAY}.
  */
 export const OMP_CONTROL_RPC_ARGS = [
   "--mode",
@@ -135,6 +142,13 @@ export const OMP_CONTROL_RPC_ARGS = [
   "--no-lsp",
   "--no-title",
 ] as const;
+
+/**
+ * The `--config` overlay every `omp --mode rpc` control session runs with. The process starts in
+ * the project's directory, and OMP loads a project's `.mcp.json` / `.omp/mcp.json` servers unless
+ * `mcp.enableProjectConfig` is off; a `--config` overlay outranks the project layer.
+ */
+export const OMP_CONTROL_OVERLAY = "mcp:\n  enableProjectConfig: false\n";
 
 /**
  * The lines `omp --mode rpc` writes to stderr before exiting 1 when no model resolves: no default
@@ -787,6 +801,29 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
   const killGraceMs = options.killGraceMs ?? OMP_CONTROL_KILL_GRACE_MS;
   const cacheTtlMs = options.cacheTtlMs ?? OMP_CONTROL_CACHE_TTL_MS;
 
+  // The control overlay is written once per service, into an owner-only temp directory the
+  // service scope removes. A failed write fails every control session instead of running one
+  // that would start the project's MCP servers.
+  const overlay = yield* Effect.acquireRelease(
+    Effect.try(() => {
+      const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "ompanel-omp-control-"));
+      const file = NodePath.join(dir, "control-overlay.yml");
+      try {
+        NodeFS.writeFileSync(file, OMP_CONTROL_OVERLAY, { mode: 0o600 });
+      } catch (cause) {
+        NodeFS.rmSync(dir, { recursive: true, force: true });
+        throw cause;
+      }
+      return file;
+    }).pipe(Effect.result),
+    (written) =>
+      Result.isSuccess(written)
+        ? Effect.sync(() =>
+            NodeFS.rmSync(NodePath.dirname(written.success), { recursive: true, force: true }),
+          )
+        : Effect.void,
+  );
+
   const command = (
     target: OmpControlTarget,
     args: ReadonlyArray<string>,
@@ -993,6 +1030,9 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
     extraArgs: ReadonlyArray<string> = [],
   ): Effect.fn.Return<RpcSession, OmpControlError, Scope.Scope> {
     const sessionScope = yield* Effect.scope;
+    if (Result.isFailure(overlay)) {
+      return yield* new OmpControlError({ operation, reason: "spawn", cause: overlay.failure });
+    }
     const outgoing = yield* Queue.unbounded<Uint8Array>();
     const child = yield* spawner
       .spawn(
@@ -1001,6 +1041,8 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
           [
             ...profileArgs(target.profile),
             ...OMP_CONTROL_RPC_ARGS,
+            "--config",
+            overlay.success,
             ...extraArgs,
             ...(target.launchArgs ?? []),
           ],

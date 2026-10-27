@@ -27,6 +27,12 @@ control server's command line, never a subcommand's. Text generation's
 overrides `--no-tools`, and `-e`, `--hook`, `--plugin-dir` or an extension's
 flag load code despite `--no-extensions`.
 
+Every control server (`omp --mode rpc`, started in the project's directory)
+also gets `--config <overlay>`, an owner-only temp file holding
+`mcp.enableProjectConfig: false` (`OMP_CONTROL_OVERLAY` in `control.ts`):
+`--no-tools` does not stop OMP from starting a project's `.mcp.json` or
+`.omp/mcp.json` servers, and a `--config` overlay outranks the project layer.
+
 The binary is resolved (and its sha256 checked, see [sidecar.md](./sidecar.md))
 right before each spawn. The process gets the server's environment plus the
 instance's environment overrides. An instance **Agent directory** sets

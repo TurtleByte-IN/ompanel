@@ -307,7 +307,13 @@ describe("OmpControlService.probe", () => {
       const [version, rpc] = omp.launches;
       assert.strictEqual(version?.command, "/opt/ompanel/omp");
       assert.deepStrictEqual(version?.args, ["--version"]);
-      assert.deepStrictEqual(rpc?.args, ["--profile", "work", ...OMP_CONTROL_RPC_ARGS]);
+      assert.deepStrictEqual(rpc?.args.slice(0, -1), [
+        "--profile",
+        "work",
+        ...OMP_CONTROL_RPC_ARGS,
+        "--config",
+      ]);
+      assert.match(rpc?.args.at(-1) ?? "", /control-overlay\.yml$/);
       assert.strictEqual(rpc?.options.cwd, "/workspace");
       assert.strictEqual(rpc?.options.extendEnv, false);
       for (const launch of omp.launches) {
@@ -409,6 +415,11 @@ describe("OmpControlService.probe", () => {
       const rpcLaunches = omp.launches.filter((launch) => launch.args.includes("rpc"));
       assert.lengthOf(rpcLaunches, 2);
       assert.isFalse(rpcLaunches[0]!.args.includes("--model"));
+      // Both servers share the service's one overlay file.
+      const [first, second] = rpcLaunches.map(
+        (launch) => launch.args[launch.args.indexOf("--config") + 1],
+      );
+      assert.strictEqual(second, first);
       assert.deepStrictEqual(rpcLaunches[1]!.args.slice(-2), [
         "--model",
         OMP_SETUP_PLACEHOLDER_MODEL,
@@ -917,7 +928,10 @@ describe("OmpControlService catalogs", () => {
         },
         { name: "deploy", source: "file" },
       ]);
-      assert.deepStrictEqual(omp.launches[0]?.args, [...OMP_CONTROL_RPC_ARGS]);
+      assert.deepStrictEqual(omp.launches[0]?.args.slice(0, -1), [
+        ...OMP_CONTROL_RPC_ARGS,
+        "--config",
+      ]);
       assert.strictEqual(omp.launches[0]?.options.cwd, "/workspace");
       assert.strictEqual(omp.stopped, 1);
     }),

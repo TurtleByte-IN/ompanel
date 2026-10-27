@@ -1,5 +1,5 @@
 {
-	"contractVersion": "1.8.0",
-	"schemaHash": "sha256:4ded2ddb80d417c1190a6ff3371fe5e6d702100deaae08f7d301e49e03e11087",
+	"contractVersion": "1.10.0",
+	"schemaHash": "sha256:d897f2aeeb735e5e81735118dbce5cc5083512323957242b44ebf5f6b95c69e2",
 	"schema": "rpc-wire.schema.json"
 }

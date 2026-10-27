@@ -25,6 +25,14 @@ const XD_DEVICE = /xd:\/\/([A-Za-z0-9_-]+)/g;
 export const TOOL_REFUSED_PREFIX = "scripted model cannot call ";
 /** `fanout: a, b` makes the model start one subagent per name with OMP's `task` tool. */
 const FANOUT_PREFIX = "fanout: ";
+/**
+ * `ast edit: <pattern> => <replacement> in <path>` makes the model call OMP's `ast_edit`, which
+ * stages the rewrite as a proposal (files not modified until it is resolved).
+ */
+export const AST_EDIT_PREFIX = "ast edit: ";
+/** How OMP's result for a staged `ast_edit` begins (files not modified yet). */
+const STAGED_PREVIEW = "Staged as a proposal";
+const AST_EDIT = /^(.+?) => (.*?) in (\S+)/;
 /** A subagent (offered OMP's `yield` tool) yields this as its result. */
 const SUBAGENT_RESULT = "subagent done";
 /**
@@ -186,6 +194,24 @@ const scriptedReply = (request: ChatRequest, devices: ReadonlyArray<string>): Re
   const messages = request.messages ?? [];
   const last = messages.at(-1);
   const offered = new Set((request.tools ?? []).map((tool) => tool.function?.name));
+  // A staged `ast_edit` preview waits for the user: the model hangs, so the turn stays open. OMP
+  // follows the preview with its resolve reminder, so the preview is the last tool result with
+  // neither an answer nor a new user message (other than OMP's reminders) after it.
+  const lastToolIndex = messages.findLastIndex((message) => message.role === "tool");
+  if (
+    lastToolIndex !== -1 &&
+    messageText(messages[lastToolIndex]?.content).includes(STAGED_PREVIEW) &&
+    !messages
+      .slice(lastToolIndex + 1)
+      .some(
+        (message) =>
+          message.role === "assistant" ||
+          (message.role === "user" &&
+            messageText(message.content).replace(SYSTEM_REMINDER, "").trim() !== ""),
+      )
+  ) {
+    return { text: STALLED_REPLY };
+  }
   if (last?.role === "tool") {
     const firstLine = messageText(last.content).trim().split("\n")[0] ?? "";
     return { text: `${TOOL_REPLY_PREFIX}${firstLine}` };
@@ -210,6 +236,29 @@ const scriptedReply = (request: ChatRequest, devices: ReadonlyArray<string>): Re
     // T3 replaces OMP's `bash` with its `terminal` host tool (docs/omp/host-tools.md).
     const tool = offered.has("terminal") ? "terminal" : "bash";
     return { calls: [{ tool, args: { command } }] };
+  }
+  // OMP may follow the user's message with its own (a reminder), so every user message since the
+  // model last answered counts.
+  const astEditText =
+    messages
+      .slice(messages.findLastIndex((message) => message.role === "assistant") + 1)
+      .filter((message) => message.role === "user")
+      .map((message) => messageText(message.content))
+      .find((text) => text.includes(AST_EDIT_PREFIX)) ?? "";
+  const astEditAt = astEditText.indexOf(AST_EDIT_PREFIX);
+  if (astEditAt !== -1) {
+    const [, pat = "", out = "", path = ""] =
+      AST_EDIT.exec(astEditText.slice(astEditAt + AST_EDIT_PREFIX.length).split("\n")[0] ?? "") ??
+      [];
+    const args = { ops: [{ pat, out }], paths: [path] };
+    // OMP mounts `ast_edit` under `xd://` (`tools.xdev`): then the call is a write to its device.
+    return offered.has("ast_edit")
+      ? { calls: [{ tool: "ast_edit", args }] }
+      : {
+          calls: [
+            { tool: "write", args: { path: "xd://ast_edit", content: JSON.stringify(args) } },
+          ],
+        };
   }
   if (userText.includes(GOAL_DONE_MARKER) && offered.has("goal")) {
     return { calls: [{ tool: "goal", args: { op: "complete" } }] };
