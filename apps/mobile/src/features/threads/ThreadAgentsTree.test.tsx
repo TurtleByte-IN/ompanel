@@ -385,4 +385,42 @@ describe("ThreadAgentsTree", () => {
       },
     ]);
   });
+
+  it("keeps each subagent's running control to itself", async () => {
+    const calls: Array<{ input: { subagentId: string } }> = [];
+    const pending = new Map<string, (result: unknown) => void>();
+    commands.controlSpy = (input) => {
+      const call = input as { input: { subagentId: string } };
+      calls.push(call);
+      const { promise, resolve } = Promise.withResolvers<unknown>();
+      pending.set(call.input.subagentId, resolve);
+      return promise;
+    };
+    act(() =>
+      root.render(
+        <ThreadAgentsTree
+          environmentId={"env" as never}
+          threadId={threadId}
+          subagents={SUBAGENTS}
+          initialSelectedId="explore"
+          onOpenThread={() => undefined}
+        />,
+      ),
+    );
+    await act(async () => control("Kill Explore the repo")!.click());
+    expect(control("Kill Explore the repo")!.textContent).toBe("Killing…");
+
+    // Another agent is free to act while the kill runs.
+    act(() => rows()[2]!.click());
+    expect(control("Revive review prompt")!.disabled).toBe(false);
+    await act(async () => control("Revive review prompt")!.click());
+    await act(async () => pending.get("review")!({ _tag: "Success" }));
+
+    // The review's success leaves the explore agent's kill running.
+    act(() => rows()[0]!.click());
+    expect(control("Kill Explore the repo")!.textContent).toBe("Killing…");
+    await act(async () => pending.get("explore")!({ _tag: "Success" }));
+    expect(control("Kill Explore the repo")!.textContent).toBe("Kill");
+    expect(calls.map((call) => call.input.subagentId)).toEqual(["explore", "review"]);
+  });
 });

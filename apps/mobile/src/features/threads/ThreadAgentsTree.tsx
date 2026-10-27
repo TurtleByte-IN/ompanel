@@ -377,32 +377,39 @@ export function ThreadAgentsTree(props: {
   const permitted = useAtomValue(
     orchestrationEnvironment.controlSubagent.permissionAtom(environmentId),
   );
-  // Busy and error belong to the subagent they were for; selecting another starts clean.
-  const [action, setAction] = useState<{
-    readonly subagentId: string;
-    readonly busy: SubagentControlType | null;
-    readonly error: string | null;
-  } | null>(null);
-  const current = action !== null && action.subagentId === selectedId ? action : null;
+  // Each subagent keeps its own running action and last failure: a kill still running on one
+  // agent neither blocks nor is overwritten by a control on another the user selected since.
+  const [actions, setActions] = useState<
+    ReadonlyMap<
+      string,
+      { readonly busy: SubagentControlType | null; readonly error: string | null }
+    >
+  >(new Map());
+  const setActionFor = (
+    subagentId: string,
+    value: { readonly busy: SubagentControlType | null; readonly error: string | null } | null,
+  ) =>
+    setActions((current) => {
+      const next = new Map(current);
+      if (value === null) next.delete(subagentId);
+      else next.set(subagentId, value);
+      return next;
+    });
+  const current = selectedId === null ? undefined : actions.get(selectedId);
   const onControl = async (next: OrchestrationV2SubagentControlAction): Promise<boolean> => {
     if (selected === null || current?.busy) return false;
     const subagentId = selected.id;
-    setAction({ subagentId, busy: next.type, error: null });
+    setActionFor(subagentId, { busy: next.type, error: null });
     const result = await control({
       environmentId,
       input: { threadId, subagentId, action: next },
     });
-    if (result._tag === "Success") {
-      setAction(null);
-      return true;
-    }
-    if (isAtomCommandInterrupted(result)) {
-      setAction(null);
-      return false;
+    if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
+      setActionFor(subagentId, null);
+      return result._tag === "Success";
     }
     const failure = squashAtomCommandFailure(result);
-    setAction({
-      subagentId,
+    setActionFor(subagentId, {
       busy: null,
       error: failure instanceof Error ? failure.message : `Could not ${next.type} this agent.`,
     });

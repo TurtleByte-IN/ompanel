@@ -1,4 +1,9 @@
-import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
+import {
+  StackActions,
+  useNavigation,
+  usePreventRemove,
+  type StaticScreenProps,
+} from "@react-navigation/native";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useState, type ReactNode } from "react";
 import { Platform, ScrollView, View } from "react-native";
@@ -31,9 +36,15 @@ function OmpSheetFrame(props: {
   readonly title: string;
   readonly screenId: string;
   readonly onBack: () => void;
+  /** False while a request whose result the sheet shows runs. */
+  readonly dismissible: boolean;
   readonly children: ReactNode;
 }) {
   const { layout } = useAdaptiveWorkspaceLayout();
+  // Swiping the sheet down is the one dismissal the screen's removal guard cannot stop.
+  const dismissOptions = (
+    <NativeStackScreenOptions options={{ gestureEnabled: props.dismissible }} />
+  );
   const insets = useSafeAreaInsets();
   const content = (
     <ScrollView
@@ -52,6 +63,7 @@ function OmpSheetFrame(props: {
     // Plain formSheets lack stack headers; host one in a nested native stack.
     return (
       <View collapsable={false} className="flex-1 bg-sheet">
+        {dismissOptions}
         <ScreenStack style={{ flex: 1 }}>
           <NativeScreen
             activityState={2}
@@ -80,6 +92,7 @@ function OmpSheetFrame(props: {
   }
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
+      {dismissOptions}
       <NativeStackScreenOptions options={{ sheetCornerRadius: 28 }} />
       <AndroidSheetHeader title={props.title} onBack={props.onBack} />
       <ScreenContent insetHorizontal={layout.usesSplitView}>{content}</ScreenContent>
@@ -101,14 +114,25 @@ export function ThreadOmpSheet({ route }: StaticScreenProps<OmpSheetTarget>) {
   const navigation = useNavigation();
   const instanceId = useOmpThreadInstanceId(target);
   const [view, setView] = useState<OmpThreadView>("menu");
+  // A gist upload or a live room starting or stopping shows its result (the share link) only
+  // here: while one runs, no back button, hardware back or swipe may close the view.
+  const [sharing, setSharing] = useState(false);
+  usePreventRemove(sharing, () => undefined);
   const backToMenu = () => setView("menu");
   const panelProps =
-    instanceId === null ? null : ({ ...target, instanceId, onDone: backToMenu } as const);
+    instanceId === null
+      ? null
+      : ({ ...target, instanceId, onDone: backToMenu, onBusyChange: setSharing } as const);
   return (
     <OmpSheetFrame
       title={OMP_THREAD_VIEW_TITLES[view]}
       screenId="thread-omp-sheet-native"
-      onBack={() => (view === "menu" ? navigation.goBack() : backToMenu())}
+      dismissible={!sharing}
+      onBack={() => {
+        if (sharing) return;
+        if (view === "menu") navigation.goBack();
+        else backToMenu();
+      }}
     >
       {panelProps === null ? (
         <NotOmpThread />
@@ -140,6 +164,7 @@ export function ThreadGoalSheet({ route }: StaticScreenProps<OmpSheetTarget>) {
     <OmpSheetFrame
       title="Goal"
       screenId="thread-goal-sheet-native"
+      dismissible
       onBack={() => navigation.goBack()}
     >
       {instanceId === null ? (

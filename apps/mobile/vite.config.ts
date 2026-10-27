@@ -27,6 +27,7 @@ const reactTests = [
   "src/features/usage/OmpUsageSection.test.tsx",
   "src/features/threads/ThreadGoalPanel.test.tsx",
   "src/features/threads/OmpThreadMenu.test.tsx",
+  "src/features/threads/ThreadOmpSheet.test.tsx",
 ];
 
 export default defineConfig({

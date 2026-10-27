@@ -1,4 +1,6 @@
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
+import { presentProviderGoal } from "@t3tools/client-runtime/state/thread-execution";
+import type { OrchestrationV2ProviderGoal } from "@t3tools/contracts";
 
 export interface FloatingStatusAction {
   readonly label: string;
@@ -35,7 +37,8 @@ export type FloatingWorkingStatus =
       readonly kind: "goal";
       readonly label: string;
       readonly accessibilityLabel: string;
-      readonly onPress: () => void;
+      /** Opens the goal sheet; absent where it cannot act (the thread is not on OMP). */
+      readonly onPress?: () => void;
     }
   | { readonly kind: "preparing"; readonly label: string }
   | {
@@ -44,6 +47,24 @@ export type FloatingWorkingStatus =
       readonly label: string;
       readonly onPress: () => void;
     };
+
+/**
+ * The idle thread's goal pill. Only OMP threads get the goal sheet (its actions are OMP `/goal`
+ * commands), so other providers' goals show as a plain label.
+ */
+export function goalFloatingStatus(input: {
+  readonly goal: OrchestrationV2ProviderGoal;
+  readonly isOmpThread: boolean;
+  readonly onOpenGoal: () => void;
+}): FloatingWorkingStatus {
+  const goal = presentProviderGoal(input.goal, false);
+  return {
+    kind: "goal",
+    label: goal.title,
+    accessibilityLabel: `${goal.title}: ${goal.objective}`,
+    ...(input.isOmpThread ? { onPress: input.onOpenGoal } : {}),
+  };
+}
 
 export function connectionFloatingStatus(input: {
   readonly connectionError: string | null;

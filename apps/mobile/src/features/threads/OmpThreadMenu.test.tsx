@@ -223,7 +223,10 @@ describe("OmpShareGistPanel", () => {
         truncated: true,
       }),
     );
-    await mount(<OmpShareGistPanel {...TARGET} onDone={vi.fn()} />);
+    const busy: boolean[] = [];
+    await mount(
+      <OmpShareGistPanel {...TARGET} onDone={vi.fn()} onBusyChange={(next) => busy.push(next)} />,
+    );
     expect(container.textContent).toContain(
       "Anyone with the link can read the whole conversation, tool output included.",
     );
@@ -237,11 +240,13 @@ describe("OmpShareGistPanel", () => {
     expect(container.textContent).toContain("Gist: https://gist.github.com/x");
     expect(container.textContent).toContain("Large content was trimmed");
     expect(button("Done")).not.toBeNull();
+    // The sheet is held open only while the upload runs.
+    expect(busy).toEqual([true, false]);
   });
 
   it("shows why the gist failed and lets the user retry", async () => {
     answer("gist", () => failure("gh is not signed in; nothing was uploaded."));
-    await mount(<OmpShareGistPanel {...TARGET} onDone={vi.fn()} />);
+    await mount(<OmpShareGistPanel {...TARGET} onDone={vi.fn()} onBusyChange={vi.fn()} />);
     await press("Share as gist");
     expect(container.querySelector('[role="alert"]')?.textContent).toBe(
       "gh is not signed in; nothing was uploaded.",
@@ -269,7 +274,10 @@ describe("OmpShareLivePanel", () => {
   it("warns before sharing and starts with the chosen access", async () => {
     answer("status", () => success({ active: false, participants: [] }));
     answer("start", () => success(ACTIVE_ROOM));
-    await mount(<OmpShareLivePanel {...TARGET} onDone={vi.fn()} />);
+    const busy: boolean[] = [];
+    await mount(
+      <OmpShareLivePanel {...TARGET} onDone={vi.fn()} onBusyChange={(next) => busy.push(next)} />,
+    );
     expect(container.textContent).toContain(WARNING_TITLE);
     expect(container.textContent).toContain(WARNING_BODY);
     expect(button("View only")?.getAttribute("aria-checked")).toBe("true");
@@ -287,12 +295,13 @@ describe("OmpShareLivePanel", () => {
     );
     expect(button("Copy omp join link")?.getAttribute("data-copy")).toBe("omp://join/abc");
     expect(container.textContent).toContain("Guests can watch and prompt. 1 guest: Ada.");
+    expect(busy).toEqual([true, false]);
   });
 
   it("stops an active share", async () => {
     answer("status", () => success(ACTIVE_ROOM));
     answer("stop", () => success({ stopped: true }));
-    await mount(<OmpShareLivePanel {...TARGET} onDone={vi.fn()} />);
+    await mount(<OmpShareLivePanel {...TARGET} onDone={vi.fn()} onBusyChange={vi.fn()} />);
     expect(container.textContent).toContain(WARNING_TITLE);
     await press("Stop sharing");
     expect(mocks.calls.some((call) => call.command === "stop")).toBe(true);
@@ -302,7 +311,7 @@ describe("OmpShareLivePanel", () => {
   it("refreshes the room every five seconds while open", async () => {
     vi.useFakeTimers();
     answer("status", () => success({ active: false, participants: [] }));
-    await mount(<OmpShareLivePanel {...TARGET} onDone={vi.fn()} />);
+    await mount(<OmpShareLivePanel {...TARGET} onDone={vi.fn()} onBusyChange={vi.fn()} />);
     const reads = () => mocks.calls.filter((call) => call.command === "status").length;
     expect(reads()).toBe(1);
     await act(async () => {
@@ -319,7 +328,7 @@ describe("OmpShareLivePanel", () => {
 
   it("shows why the room could not be read", async () => {
     answer("status", () => failure("The thread's OMP session is not running."));
-    await mount(<OmpShareLivePanel {...TARGET} onDone={vi.fn()} />);
+    await mount(<OmpShareLivePanel {...TARGET} onDone={vi.fn()} onBusyChange={vi.fn()} />);
     expect(container.querySelector('[role="alert"]:not(div)')?.textContent).toBe(
       "The thread's OMP session is not running.",
     );

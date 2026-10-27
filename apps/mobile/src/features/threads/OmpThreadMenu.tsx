@@ -105,6 +105,12 @@ export interface OmpThreadTargetProps {
   readonly instanceId: ProviderInstanceId;
 }
 
+/** A sharing view: `onBusyChange` holds the sheet open while a request whose result it shows runs. */
+export type OmpSharePanelProps = OmpThreadTargetProps & {
+  readonly onDone: () => void;
+  readonly onBusyChange: (busy: boolean) => void;
+};
+
 /** The OMP menu's rows; `busy` is the action still running, whose row waits. */
 export function OmpThreadMenuView(props: {
   readonly busy: OmpThreadMenuAction | null;
@@ -259,7 +265,7 @@ type GistState =
   | { readonly status: "failed"; readonly message: string };
 
 /** Share as gist: confirm what is uploaded, upload, then the link to copy. */
-export function OmpShareGistPanel(props: OmpThreadTargetProps & { readonly onDone: () => void }) {
+export function OmpShareGistPanel(props: OmpSharePanelProps) {
   const shareGist = useAtomCommand(serverEnvironment.shareOmpThreadGist, {
     reportFailure: false,
   });
@@ -267,10 +273,12 @@ export function OmpShareGistPanel(props: OmpThreadTargetProps & { readonly onDon
 
   const share = async () => {
     setState({ status: "sharing" });
+    props.onBusyChange(true);
     const result = await shareGist({
       environmentId: props.environmentId,
       input: { instanceId: props.instanceId, threadId: props.threadId },
     });
+    props.onBusyChange(false);
     if (result._tag === "Success") {
       setState({ status: "shared", result: result.value });
       return;
@@ -342,7 +350,7 @@ const ACCESS_CHOICES: ReadonlyArray<{ readonly value: OmpCollabAccess; readonly 
 ];
 
 /** Share live: the bypass-pairing warning, the access choice, then links and guests. */
-export function OmpShareLivePanel(props: OmpThreadTargetProps & { readonly onDone: () => void }) {
+export function OmpShareLivePanel(props: OmpSharePanelProps) {
   const { environmentId, instanceId, threadId } = props;
   const readRoom = useAtomCommand(serverEnvironment.getOmpThreadCollab, { reportFailure: false });
   const startRoom = useAtomCommand(serverEnvironment.startOmpThreadCollab, {
@@ -398,14 +406,18 @@ export function OmpShareLivePanel(props: OmpThreadTargetProps & { readonly onDon
   const start = async () => {
     const before = room ?? NO_ROOM;
     setState({ status: "busy", room: before });
+    props.onBusyChange(true);
     const result = await startRoom({ environmentId, input: { instanceId, threadId, access } });
+    props.onBusyChange(false);
     settle(before, result, result._tag === "Success" ? result.value : before);
   };
 
   const stop = async () => {
     const before = room ?? NO_ROOM;
     setState({ status: "busy", room: before });
+    props.onBusyChange(true);
     const result = await stopRoom({ environmentId, input: { instanceId, threadId } });
+    props.onBusyChange(false);
     settle(before, result, NO_ROOM);
   };
 
