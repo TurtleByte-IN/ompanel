@@ -9,8 +9,8 @@ the project.
 
 Select the project, then turn on **Trust project agent config**:
 
-- Web and desktop: **Settings → General → Projects & threads**.
-- Mobile: **Settings → Server settings → Agent behavior**.
+- Web and desktop: **Settings → Threads → Project agent config**.
+- Mobile: **Settings → Threads → Project agent config**.
 
 The toggle shows only when a project is selected. Trust is off by default for every project, new
 or existing, and is set per project only.

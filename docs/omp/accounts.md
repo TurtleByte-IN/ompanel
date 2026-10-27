@@ -8,7 +8,7 @@ Accounts is the last step of [onboarding](onboarding.md). It also works on a fre
 when OMP refuses to start for want of a model, the control process is started again with a
 placeholder model.
 
-On mobile, Settings → Provider accounts shows the same panel for each OMP instance: provider
+On mobile, Settings → Providers shows the same panel for each OMP instance: provider
 list, OAuth "Open sign-in page", prompt cards (masked when `secret`), masked API-key entry and
 sign-out. The phone opens OMP's own `url`, not `launchUrl`: that short link redirects through the
 server's loopback address, which only the server's machine can reach.

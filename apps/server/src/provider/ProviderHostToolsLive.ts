@@ -740,17 +740,32 @@ export const layer = Layer.effect(
     const binding = yield* ProviderHostToolsBinding;
     const bound = Deferred.await(binding);
     return ProviderHostTools.of({
-      runTerminalCommand: (input) =>
-        Effect.flatMap(bound, (tools) => tools.runTerminalCommand(input)),
-      createThreadWorktree: (input) =>
-        Effect.flatMap(bound, (tools) => tools.createThreadWorktree(input)),
-      bindThreadWorktree: (input) =>
-        Effect.flatMap(bound, (tools) => tools.bindThreadWorktree(input)),
-      resolveThreadWorkspace: (input) =>
-        Effect.flatMap(bound, (tools) => tools.resolveThreadWorkspace(input)),
-      moveThreadWorkspace: (input) =>
-        Effect.flatMap(bound, (tools) => tools.moveThreadWorkspace(input)),
-      connectMcp: (session) => Effect.flatMap(bound, (tools) => tools.connectMcp(session)),
+      runTerminalCommand: Effect.fn("ProviderHostTools.runTerminalCommand")(function* (input) {
+        const tools = yield* bound;
+        return yield* tools.runTerminalCommand(input);
+      }),
+      createThreadWorktree: Effect.fn("ProviderHostTools.createThreadWorktree")(function* (input) {
+        const tools = yield* bound;
+        return yield* tools.createThreadWorktree(input);
+      }),
+      bindThreadWorktree: Effect.fn("ProviderHostTools.bindThreadWorktree")(function* (input) {
+        const tools = yield* bound;
+        return yield* tools.bindThreadWorktree(input);
+      }),
+      resolveThreadWorkspace: Effect.fn("ProviderHostTools.resolveThreadWorkspace")(
+        function* (input) {
+          const tools = yield* bound;
+          return yield* tools.resolveThreadWorkspace(input);
+        },
+      ),
+      moveThreadWorkspace: Effect.fn("ProviderHostTools.moveThreadWorkspace")(function* (input) {
+        const tools = yield* bound;
+        return yield* tools.moveThreadWorkspace(input);
+      }),
+      connectMcp: Effect.fn("ProviderHostTools.connectMcp")(function* (session) {
+        const tools = yield* bound;
+        return yield* tools.connectMcp(session);
+      }),
     });
   }),
 ).pipe(Layer.provide(layerBinding));

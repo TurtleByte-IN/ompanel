@@ -127,15 +127,17 @@ export const makeFakeOmpState = Effect.acquireRelease(
 export type FakeOmpState = Effect.Success<typeof makeFakeOmpState>;
 
 /** Polls `check` with wall time until it holds or `timeoutMs` passes. */
-export const waitUntil = (check: () => boolean, timeoutMs = 10_000) =>
-  Effect.gen(function* () {
-    const deadline = (yield* Clock.currentTimeMillis) + timeoutMs;
-    while (!check()) {
-      if ((yield* Clock.currentTimeMillis) > deadline) return false;
-      yield* Effect.sleep("20 millis");
-    }
-    return true;
-  });
+export const waitUntil = Effect.fn("waitUntil")(function* (
+  check: () => boolean,
+  timeoutMs = 10_000,
+) {
+  const deadline = (yield* Clock.currentTimeMillis) + timeoutMs;
+  while (!check()) {
+    if ((yield* Clock.currentTimeMillis) > deadline) return false;
+    yield* Effect.sleep("20 millis");
+  }
+  return true;
+});
 
 export const allDead = (pids: ReadonlyArray<number>) => pids.every((pid) => !isProcessAlive(pid));
 

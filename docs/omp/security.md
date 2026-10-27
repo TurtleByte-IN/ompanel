@@ -38,8 +38,9 @@ it pinned. An older OMP reports none of these, so the check is skipped there.
 A repository's own agent config can widen what the agent does: `.omp/config.yml` approval
 rules can auto-approve bash in Supervised, and project MCP servers, extensions and hooks
 run its code (#151). Ompanel treats that config as third-party code (PRD §9). The server
-setting **Trust project agent config** (`trustProjectAgentConfig`, Settings → General →
-Projects & threads, project-scoped; on mobile under Server controls → Agent behavior) is off by default for every project, new or existing.
+setting **Trust project agent config** (`trustProjectAgentConfig`, Settings → Threads →
+Project agent config, project-scoped; the same page on mobile) is off by default for every
+project, new or existing.
 
 - Untrusted: the thread's overlay sets `workspace.trusted: false`. OMP then ignores the
   project's `tools.approval`, `bash.patterns` and `extensions`, and loads no project MCP

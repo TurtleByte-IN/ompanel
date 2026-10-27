@@ -271,6 +271,16 @@ const waitUntilGone = Effect.fn("OmpProcessTree.waitUntilGone")(function* (
   return !isOmpTreeAlive(pid, platform);
 });
 
+/** Signals the process group `pid` heads; false when it cannot be signalled (already gone). */
+function trySignalProcessGroup(pid: number, signal: NodeJS.Signals): boolean {
+  try {
+    signalProcessGroup(pid, signal);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Kills the tree `pid` heads: POSIX signals its process group (SIGTERM, then SIGKILL after the
  * grace), Windows runs `taskkill /T /F` on it. Only for processes this server did not spawn
@@ -284,16 +294,8 @@ export const killOmpProcessTree = Effect.fn("killOmpProcessTree")(function* (
     yield* runForText(windowsSystemBinary("taskkill.exe"), ["/PID", String(pid), "/T", "/F"]);
     return yield* waitUntilGone(pid, platform, OMP_TREE_KILL_GRACE);
   }
-  try {
-    signalProcessGroup(pid, "SIGTERM");
-  } catch {
-    return !isOmpTreeAlive(pid, platform);
-  }
+  if (!trySignalProcessGroup(pid, "SIGTERM")) return !isOmpTreeAlive(pid, platform);
   if (yield* waitUntilGone(pid, platform, OMP_TREE_KILL_GRACE)) return true;
-  try {
-    signalProcessGroup(pid, "SIGKILL");
-  } catch {
-    return !isOmpTreeAlive(pid, platform);
-  }
+  if (!trySignalProcessGroup(pid, "SIGKILL")) return !isOmpTreeAlive(pid, platform);
   return yield* waitUntilGone(pid, platform, OMP_TREE_KILL_GRACE);
 });

@@ -443,6 +443,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
     it.live("sends an API key inside the login command, never as a prompt", () =>
       withFakeOmp((omp, control) =>
         Effect.gen(function* () {
+          // @effect-diagnostics-next-line effectSucceedWithVoid:off - A UI response is undefined, not void.
           const { requests, handler } = recordingHandler(() => Effect.succeed(undefined));
           yield* control.login(
             omp.target({ rpc: { commands: { login: [{ respond: { providerId: "xai" } }] } } }),
@@ -474,6 +475,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
             .login(
               omp.target({ rpc: { ready: { ...PINNED_READY, contractVersion: "1.5.0" } } }),
               "xai",
+              // @effect-diagnostics-next-line effectSucceedWithVoid:off - A UI response is undefined, not void.
               () => Effect.succeed(undefined),
               { input: Redacted.make("xai-test-key") },
             )
@@ -488,6 +490,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
     it.live("reports a login the user cancels at the key prompt", () =>
       withFakeOmp((omp, control) =>
         Effect.gen(function* () {
+          // @effect-diagnostics-next-line effectSucceedWithVoid:off - A UI response is undefined, not void.
           const { handler } = recordingHandler(() => Effect.succeed(undefined));
           const error = yield* control
             .login(
@@ -585,6 +588,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
                 rpc: { commands: { login: [{ fail: "Unknown login provider: nope" }] } },
               }),
               "nope",
+              // @effect-diagnostics-next-line effectSucceedWithVoid:off - A UI response is undefined, not void.
               () => Effect.succeed(undefined),
             )
             .pipe(Effect.flip);
@@ -598,6 +602,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
                 rpc: { commands: { login: [{ fail: "xAI rejected key xai-test-key (401)" }] } },
               }),
               "xai",
+              // @effect-diagnostics-next-line effectSucceedWithVoid:off - A UI response is undefined, not void.
               () => Effect.succeed(undefined),
               { input: Redacted.make("xai-test-key"), secretInput: true },
             )
@@ -617,6 +622,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
             .login(
               omp.target({ rpc: { commands: { login: [{ emit: OAUTH_OPEN_URL }, { exit: 1 }] } } }),
               "anthropic",
+              // @effect-diagnostics-next-line effectSucceedWithVoid:off - A UI response is undefined, not void.
               () => Effect.succeed(undefined),
             )
             .pipe(Effect.flip);

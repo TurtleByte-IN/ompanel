@@ -139,6 +139,7 @@ export const makeOmpAccountsController = Effect.fn("makeOmpAccountsController")(
             cancelled: true,
           } satisfies ExtensionUiResponse);
         default:
+          // @effect-diagnostics-next-line effectSucceedWithVoid:off - The UI response is undefined, not void.
           return Effect.succeed(undefined);
       }
     };

@@ -20,7 +20,6 @@ export const ompPluginTargetAllowed = (target: string): boolean =>
   target.trim() === target &&
   !target.startsWith("-") &&
   !target.startsWith("~") &&
-  // oxlint-disable-next-line no-control-regex -- control characters are what is refused.
   !/[\u0000-\u001f\u007f]/.test(target);
 
 const OmpPluginTarget = Schema.String.check(

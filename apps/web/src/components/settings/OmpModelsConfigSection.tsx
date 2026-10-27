@@ -230,6 +230,7 @@ function ProviderCard({
         ) : (
           provider.models.map((model, index) => (
             <ModelRow
+              // oxlint-disable-next-line react/no-array-index-key -- model ids can repeat while being edited
               key={`${index}:${model.id}`}
               provider={id}
               model={model}

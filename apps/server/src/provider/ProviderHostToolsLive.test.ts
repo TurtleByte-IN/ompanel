@@ -31,7 +31,6 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import { TestClock } from "effect/testing";
 
@@ -210,9 +209,10 @@ const makeHarness = Effect.fn(function* (options: HarnessOptions = {}) {
         }),
         Layer.mock(ProjectService.ProjectService)({
           getById: () =>
-            Effect.succeed(
-              Option.some({ ...project, workspaceRoot: options.workspaceRoot ?? workspaceRoot }),
-            ),
+            Effect.succeedSome({
+              ...project,
+              workspaceRoot: options.workspaceRoot ?? workspaceRoot,
+            }),
         }),
         options.gitWorkflow === undefined
           ? Layer.mock(GitWorkflowService.GitWorkflowService)({

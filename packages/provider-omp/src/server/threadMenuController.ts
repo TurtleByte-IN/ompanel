@@ -34,7 +34,7 @@ import {
 import type { OmpRpcRequestError } from "./rpcProcess.ts";
 import { readOmpBranchTree } from "./sessionBranches.ts";
 import type { OmpSidecarError } from "./sidecar.ts";
-import type { OmpThreadSession, OmpThreadSessions } from "./threadSessions.ts";
+import type { OmpThreadSessions } from "./threadSessions.ts";
 
 /** The first RPC contract with `collab_start`, `collab_stop` and `collab_status`. */
 export const OMP_COLLAB_CONTRACT = "1.7.0";

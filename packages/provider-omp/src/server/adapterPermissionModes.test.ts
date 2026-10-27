@@ -41,6 +41,7 @@ const posixOnly = describe.skipIf(platform === "win32");
 
 const INSTANCE_ID = ProviderInstanceId.make("omp-work");
 const THREAD_ID = ThreadId.make("thread/modes");
+const isProtocolError = Schema.is(ProviderAdapter.ProviderAdapterProtocolError);
 /** What OMP answers when the session was started with `--auto-approve` (`rpc-mode.ts`). */
 const AUTO_APPROVE_LOCK =
   "Approval mode is locked to yolo: the session was started with --auto-approve/--yolo.";
@@ -272,8 +273,8 @@ posixOnly("OmpAdapter permission modes", () => {
       const error = yield* turn("approval-required").pipe(Effect.flip);
       assert.strictEqual(error._tag, "ProviderAdapterTurnStartError");
       const cause = error._tag === "ProviderAdapterTurnStartError" ? error.cause : undefined;
-      assert.isTrue(Schema.is(ProviderAdapter.ProviderAdapterProtocolError)(cause));
-      if (Schema.is(ProviderAdapter.ProviderAdapterProtocolError)(cause)) {
+      assert.isTrue(isProtocolError(cause));
+      if (isProtocolError(cause)) {
         assert.strictEqual(cause.reason, "permission_mode_refused");
         assert.include(cause.detail, "locked to yolo");
       }
@@ -334,7 +335,7 @@ posixOnly("OmpAdapter permission modes", () => {
 const refusal = (error: { readonly _tag: string; readonly cause?: unknown }) => {
   assert.strictEqual(error._tag, "ProviderAdapterTurnStartError");
   const cause = error.cause;
-  assert.isTrue(Schema.is(ProviderAdapter.ProviderAdapterProtocolError)(cause));
+  assert.isTrue(isProtocolError(cause));
   return cause as ProviderAdapter.ProviderAdapterProtocolError;
 };
 
