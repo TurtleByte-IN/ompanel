@@ -120,6 +120,10 @@ jobs:
       - name: Check vendored OMP RPC contract
         run: vp run --filter @t3tools/provider-omp contract:check
 
+      # Relative links and #anchors in README.md and docs/ must resolve.
+      - name: Check documentation links
+        run: node scripts/check-doc-links.ts
+
       - name: Check
         run: vp check
 

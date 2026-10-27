@@ -3,9 +3,13 @@
 ## Using Ompanel
 
 - [Install Ompanel](./user/install.md)
+- [Welcome wizard](./user/welcome-wizard.md)
 - [Messages and context](./user/composer.md)
 - [Working with threads](./user/thread-sidebar.md)
+- [Agents panel](./user/agents-panel.md)
+- [Notifications](./user/notifications.md)
 - [Permission modes](./user/permission-modes.md)
+- [Workspace trust and approvals](./user/workspace-trust.md)
 - [Terminal history](./user/terminal.md)
 - [Source control](./user/source-control.md)
 - [Project settings](./user/project-settings.md)
@@ -18,13 +22,16 @@
 - [Devices](./user/devices.md)
 - [Usage and limits](./user/usage.md)
 - [Product usage data](./user/telemetry.md)
+- [Mobile app](./user/mobile.md)
+- [Mobile notifications](./user/mobile-notifications.md)
 - [Remote access](./user/remote-access.md)
 - [Guest links](./user/guest-links.md)
 - [Ompanel Connect troubleshooting](./user/t3-connect-troubleshooting.md)
 - [Outside agents (MCP)](./user/outside-agents.md)
 - [Running in the background](./user/background-service.md)
 - [Updating Ompanel](./user/updating.md)
-- Provider guides: [OMP](./user/providers-omp.md) · [Codex](./user/providers-codex.md) · [Claude](./user/providers-claude.md) · [OpenCode](./user/providers-opencode.md) · [Antigravity](./user/providers-antigravity.md) · [Pi](./user/providers-pi.md) · [Muse Code](./user/providers-muse.md)
+- OMP: [Provider guide](./user/providers-omp.md) · [Setup](./user/omp-setup.md) · [Accounts](./user/omp-accounts.md) · [Settings](./user/omp-settings.md) · [Plugins and skills](./user/omp-plugins.md) · [Composer](./user/omp-composer.md) · [Tool and turn cards](./user/omp-cards.md) · [Thread menu](./user/omp-thread-menu.md)
+- Other provider guides: [Codex](./user/providers-codex.md) · [Claude](./user/providers-claude.md) · [OpenCode](./user/providers-opencode.md) · [Antigravity](./user/providers-antigravity.md) · [Pi](./user/providers-pi.md) · [Muse Code](./user/providers-muse.md)
 
 ---
 
@@ -37,6 +44,7 @@ Internal notes preserve architectural decisions, constraints, and implementation
 source alone does not explain. Most code changes do not need an internal documentation update. Follow the
 [documentation rules](../AGENTS.md#documentation) before adding one.
 
+- [OMP maintainer notes](./omp/README.md): architecture, provider internals, settings mapping, fork merges, contract bumps
 - [Architecture overview](./internals/overview.md)
 - [Glossary](./internals/glossary.md)
 - [Connection runtime](./internals/connection-runtime.md)

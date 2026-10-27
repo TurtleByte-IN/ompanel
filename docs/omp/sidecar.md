@@ -6,6 +6,7 @@ pin is recorded:
 
 | Field         | Meaning                                                                                  |
 | ------------- | ---------------------------------------------------------------------------------------- |
+| `repository`  | The fork, `TurtleByte-IN/oh-my-pi`. Contract check and download both fetch from it.      |
 | `tag`         | Fork release tag, `v<upstream-version>-ompanel.<n>`.                                     |
 | `commit`      | Commit the tag points at. The contract check fails if the tag moves.                     |
 | `version`     | Version `omp --version` reports for that release.                                        |
@@ -49,10 +50,14 @@ CI runs it in the `Lint` job of `ci.yml`.
    `contract/` with the tag's files, regenerates
    `src/ompSettingKeys.generated.ts`, and then runs the check.
 3. Copy each platform's sha256 from the release's `SHA256SUMS.txt`
-   (`gh release view <tag> -R TurtleByte-IN/oh-my-pi`) into `sidecars`.
-   Leave out platforms the release has no asset for.
+   (`gh release view <tag> -R TurtleByte-IN/oh-my-pi`) into `sidecars`, in
+   both `omp.lock` and `src/ompLock.ts`. Leave out platforms the release has no
+   asset for.
 4. Re-record the replay fixtures at the new tag (see
    [testing.md](testing.md#recording)); the replay suite fails until you do.
+
+The whole procedure, from the contract bump in the fork to what to re-check in
+Ompanel, is in [contract-bump.md](contract-bump.md).
 
 ## Finding the sidecar
 
@@ -149,14 +154,23 @@ Every short-lived `omp` process Ompanel starts outside a thread goes through
 `OmpControlService` (`packages/provider-omp/src/server/control.ts`). Each has a
 hard deadline from spawn to exit:
 
-| Operation                                              | Limit |
-| ------------------------------------------------------ | ----- |
-| `omp --version`                                        | 4 s   |
-| Status RPC server: `ready` + `get_login_providers`     | 10 s  |
-| `omp usage --json`                                     | 10 s  |
-| RPC `login` session                                    | 60 s  |
-| `omp skill list <dir> --json`                          | 10 s  |
-| Command RPC server: `ready` + `get_available_commands` | 10 s  |
+| Operation (`OMP_CONTROL_TIMEOUTS_MS` key)                                                        | Limit |
+| ------------------------------------------------------------------------------------------------ | ----- |
+| `omp --version` (`version`)                                                                      | 4 s   |
+| Status RPC server: `ready` + `get_login_providers`; `get_logout_accounts`, `logout` (`ready`)    | 20 s  |
+| `omp usage --json` (`usage`)                                                                     | 10 s  |
+| `omp stats --json` (`stats`)                                                                     | 60 s  |
+| RPC `login` session (`login`)                                                                    | 60 s  |
+| `omp config list\|set\|reset --json`, `omp config path` (`config`)                               | 10 s  |
+| `omp skill list <dir> --json`; command RPC server `ready` + `get_available_commands` (`catalog`) | 10 s  |
+| `models.yml` check server (`modelsCheck`)                                                        | 15 s  |
+| `omp agents unpack --user --json` (`agents`)                                                     | 10 s  |
+| `omp plugin list --json`, `plugin marketplace list`, `plugin discover` (`plugins`)               | 15 s  |
+| `omp plugin install\|uninstall\|enable\|disable`, `marketplace add\|remove` (`pluginCommand`)    | 180 s |
+| `omp update --check` (`update`)                                                                  | 20 s  |
+| `omp --export <session> <out.html>` (`export`)                                                   | 60 s  |
+| `gh auth status` (`ghAuth`)                                                                      | 10 s  |
+| `omp share --gist` (`share`)                                                                     | 120 s |
 
 On a deadline the process group gets SIGTERM and, 1 s later, SIGKILL, so a
 hung omp and its children never outlive the call. Probe and usage results are
@@ -176,7 +190,8 @@ therefore not listed, and neither are extension, custom or MCP prompt commands
 
 An enabled OMP instance runs `omp --version`, then starts an RPC control
 process, reads its first frame, which must be `ready`, and sends
-`get_login_providers`. The process is stopped right after. The check runs in
+`get_login_providers` and `get_available_models`. The process is stopped right
+after. The check runs in
 the background: the provider list shows "Checking the OMP sidecar..." until it
 finishes and never waits for it. The result reaches every connected client even
 when it lands while the client is connecting or while another provider's status
@@ -185,12 +200,17 @@ order, and a client subscribes to changes before it reads the list (issue #150).
 
 The instance is ready only when `ready.contractVersion` equals
 `contract.version` in `omp.lock`; a sidecar that reports another version, or
-none, is shown as an error.
+none, is shown as an error. An OMP that refuses to start its RPC server for
+want of a model is shown as a warning that sends the user to
+[onboarding](onboarding.md), not as an error.
 
-`get_login_providers` lists OAuth providers only (`LoginProvider {id, name,
-available, authenticated}`). The status card shows the signed-in ones as
-authenticated; with none signed in, auth stays "unknown", because API keys and
-environment credentials are not visible there.
+`get_login_providers` returns `LoginProvider {id, name, available,
+authenticated}`, plus `apiKey`, `source` and `envVar` from contract 1.6.0. The
+status card shows the signed-in ones as authenticated; with none signed in,
+auth stays "unknown", because not every credential source is listed.
+`get_available_models` fills the composer's model list
+([models.md](models.md#model-catalog)); when OMP refuses it, the composer
+offers OMP's default model only.
 
 ## Text generation
 

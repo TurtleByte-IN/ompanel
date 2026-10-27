@@ -115,14 +115,16 @@ are `OmpSettingsOperationError` and never carry `omp` output.
 ## Settings pages
 
 Settings → OMP Models & Roles, Routing, Thinking, Advisor & Agents, Sampling,
-Approvals & Tools, Memory, Context, Modes, Runtime, Search, Discovery, Plugins,
-Skills and Terminal prefs each show a slice of
+Approvals & Tools, Memory, Context, Modes, Runtime, Search, Discovery, MCP,
+Customization, Plugins, Skills and Terminal prefs each show a slice of
 the engine's form for the primary environment's OMP instance (a picker appears
 when it runs several). The pages write the global layer and add no write path
 of their own; env-set keys stay read-only and credentials reset-only. The key
 lists live in `OMP_SETTINGS_PAGES` (`packages/provider-omp/src/settingsPages.ts`);
 a key ending in `.` takes the whole group. A test checks every listed key
-against the pinned registry.
+against the pinned registry. Custom providers has no keys: it edits
+`models.yml` only (below). [settings-mapping.md](settings-mapping.md) lists,
+per page, the keys, files, server methods and `omp` commands it uses.
 
 The pages fit a 390px phone viewport (browser tests render each page in the settings column
 beside the collapsed nav rail). Mobile has Settings → OMP: every page's fields as read-only
@@ -154,6 +156,8 @@ web and desktop. Session import in particular creates a thread and is not offere
 | Runtime           | `eval.*` (incl. `eval.py`, `eval.js`), `providers.tinyModelDevice`, `providers.tinyModelDtype`, plus a read-only PTY row                                                                                     |
 | Search            | `web_search.enabled`, `modelRoles` (`web` role only), `retry.fallbackChains` (`web` chain only), `providers.webSearchTimeoutSeconds`, `exa.*`, `searxng.*`                                                   |
 | Discovery         | `enabledProviders` / `disabledProviders` (read-only), `skills.enabled`, `skills.enable*` sources, `commands.enableClaudeUser/Project`, `mcp.enableProjectConfig`, `contextFiles.extra`                       |
+| MCP               | `mcp.*`, plus the MCP server list below                                                                                                                                                                      |
+| Customization     | `ttsr.*`, `skills.customDirectories`, `skills.ignoredSkills`, `skills.includeSkills`, plus the agent-directory files below                                                                                   |
 | Plugins           | `extensions`, `disabledExtensions`, `extensionHandlers.*`, `marketplace.*`, plus the plugin list, marketplaces and update check below                                                                        |
 | Skills            | `skills.registryUrl`, plus the resolved skill list below                                                                                                                                                     |
 | Terminal prefs    | `startup.*`, `theme.*`, `statusLine.*`, `tui.*`, `terminal.*`, all read-only and marked terminal-only, plus a `keybindings.yml` note                                                                         |
