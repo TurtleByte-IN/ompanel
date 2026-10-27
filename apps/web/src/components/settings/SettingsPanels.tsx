@@ -1615,6 +1615,7 @@ export function GeneralSettingsPanel() {
       </SettingsSection>
 
       <SettingsSection id="projects-and-threads" title="Projects & threads">
+        <TrustProjectAgentConfigSetting />
         <SettingsRow
           serverScoped
           settingKeys={["newWorktreesStartFromOrigin"]}
@@ -1955,5 +1956,45 @@ export function GeneralSettingsPanel() {
 
       <LegacyFeaturesSection />
     </SettingsPageContainer>
+  );
+}
+
+/**
+ * Per project only: a project without its own value is untrusted, and the global scope offers no
+ * server-wide trust. Says plainly when the server's OMP does not enforce it (contract < 1.9.0).
+ */
+function TrustProjectAgentConfigSetting() {
+  const { scope, targets, connectedEnvironments } = useSettingsScope();
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  if (scope.kind !== "project" && scope.kind !== "checkout") return null;
+  const enforced =
+    targets.length > 0 &&
+    targets.every(
+      (target) =>
+        connectedEnvironments.find((entry) => entry.environmentId === target.environmentId)
+          ?.serverConfig?.environment.capabilities.ompWorkspaceTrust === true,
+    );
+  return (
+    <SettingsRow
+      serverScoped
+      settingKeys={["trustProjectAgentConfig"]}
+      {...searchableSetting("trust-project-agent-config")}
+      description={
+        enforced
+          ? "Lets OMP use this project's own agent config: its approval rules, MCP servers, extensions and hooks. Off until you turn it on, so a cloned repository cannot auto-approve commands or start servers. A running thread restarts its agent on its next message."
+          : "Not enforced by this server's OMP version: OMP still uses this project's own approval rules, MCP servers, extensions and hooks whatever you choose here. It takes effect once the server runs an OMP with RPC contract 1.9.0 or later."
+      }
+      control={
+        <ScopedSwitch
+          settingKeys={["trustProjectAgentConfig"]}
+          checked={settings.trustProjectAgentConfig}
+          onCheckedChange={(checked) =>
+            updateSettings({ trustProjectAgentConfig: Boolean(checked) })
+          }
+          aria-label="Trust project agent config"
+        />
+      }
+    />
   );
 }

@@ -10,7 +10,7 @@ import * as Path from "effect/Path";
 import * as Semaphore from "effect/Semaphore";
 import type * as Scope from "effect/Scope";
 
-import { OMP_GUARDED_TOOL_KEYS, type OmpThreadRpcCommand } from "../configForm.ts";
+import { OMP_GUARDED_KEYS, type OmpThreadRpcCommand } from "../configForm.ts";
 import { OMP_EMPTY_OVERLAY, ompThreadOverlayPath } from "./launch.ts";
 import type { OmpRpcProcess } from "./rpcProcess.ts";
 import {
@@ -147,7 +147,7 @@ export const writeOmpThreadOverlay = Effect.fn("writeOmpThreadOverlay")(function
           () => Effect.succeed(OMP_EMPTY_OVERLAY),
         ),
       );
-      for (const key of OMP_GUARDED_TOOL_KEYS) {
+      for (const key of OMP_GUARDED_KEYS) {
         const kept = ompOverlayValue(current, key);
         if (ompOverlayValue(next, key) !== kept) next = yield* ompOverlayWith(next, key, kept);
       }

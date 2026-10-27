@@ -64,6 +64,10 @@ const PROVIDER_FAILURE_REASONS: Record<ProviderAdapterFailureReason, string> = {
     "this OMP command can act outside the thread's approvals, so Ompanel does not send it",
   tool_guard_unapplied:
     "browser and computer use could not be switched off for the thread's permission mode",
+  workspace_trust_unapplied:
+    "the agent could not be kept from this untrusted project's own agent config",
+  workspace_trust_changed:
+    "this project's trust changed since the agent started; it restarts to apply it, so send the message again",
 };
 
 /**

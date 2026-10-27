@@ -56,6 +56,11 @@ export const ProviderAdapterV2RuntimePolicy = Schema.Struct({
   approvalPolicy: Schema.optional(Schema.Unknown),
   sandboxPolicy: Schema.optional(Schema.Unknown),
   reasoningEffort: Schema.optional(Schema.String),
+  /**
+   * Whether the thread's project is trusted to configure the agent itself (approval rules, MCP
+   * servers, extensions, hooks): server setting `trustProjectAgentConfig`. Absent: untrusted.
+   */
+  workspaceTrusted: Schema.optional(Schema.Boolean),
 });
 export type ProviderAdapterV2RuntimePolicy = typeof ProviderAdapterV2RuntimePolicy.Type;
 
@@ -366,6 +371,8 @@ const ProviderAdapterFailureReason = Schema.Literals([
   "share_command_refused",
   "builtin_command_refused",
   "tool_guard_unapplied",
+  "workspace_trust_unapplied",
+  "workspace_trust_changed",
 ]);
 export type ProviderAdapterFailureReason = typeof ProviderAdapterFailureReason.Type;
 

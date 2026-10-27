@@ -262,6 +262,7 @@ function storeResponse(command) {
         sessionFile: store.current.file,
         messageCount: store.current.messages.length,
         ...(store.current.title === null ? {} : { sessionName: store.current.title }),
+        ...guardState(),
       });
     case "new_session":
       store.newSession();
@@ -447,6 +448,31 @@ const collabSupported = (() => {
   const [major, minor] = contract.split(".").map(Number);
   return major === 1 && minor >= 7;
 })();
+
+/**
+ * Contract 1.9.0: `get_state` reports the guard OMP resolved from the `--config` overlay
+ * (defaults: browser on, computer off, trusted). FAKE_OMP_GUARD_STALE=1 plays an OMP whose
+ * watcher never applied the overlay: it keeps reporting the defaults.
+ */
+function guardState() {
+  const [major, minor] = contract.split(".").map(Number);
+  if (major !== 1 || minor < 9) return {};
+  const argv = process.argv.slice(2);
+  const at = argv.indexOf("--config");
+  let overlay = {};
+  if (env.FAKE_OMP_GUARD_STALE !== "1" && at !== -1 && NodeFS.existsSync(argv[at + 1])) {
+    const text = NodeFS.readFileSync(argv[at + 1], "utf8")
+      .split("\n")
+      .filter((line) => !line.startsWith("#"))
+      .join("\n");
+    overlay = text.trim() === "" ? {} : JSON.parse(text);
+  }
+  return {
+    browserEnabled: overlay.browser?.enabled ?? true,
+    computerEnabled: overlay.computer?.enabled ?? false,
+    workspaceTrusted: overlay.workspace?.trusted ?? true,
+  };
+}
 const collabToken = env.FAKE_OMP_COLLAB_TOKEN ?? "fake-collab-token";
 let collabRoom = null;
 function collabStatus() {
@@ -594,7 +620,7 @@ process.stdin.on("data", (text) => {
           type: "response",
           command: "get_state",
           success: true,
-          data: { sessionId, sessionFile: `/fake/sessions/${sessionId}.jsonl` },
+          data: { sessionId, sessionFile: `/fake/sessions/${sessionId}.jsonl`, ...guardState() },
         });
         break;
       case "collab_start":

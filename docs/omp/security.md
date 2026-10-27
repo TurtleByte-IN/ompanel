@@ -27,13 +27,43 @@ changes the two guard keys: a settings-engine write based on an older read keeps
 values on disk. The adapter re-reads the overlay and re-asserts the guard before every
 turn, with no cache.
 
-OMP's overlay watcher applies a change within its debounce. Ompanel does not yet
-confirm that OMP applied it: if the watcher failed to start or a reload was
-rejected, a thread that left Full access keeps the preludes until its `omp`
-restarts. During that window `eval` asks for approval under the new mode unless
-global or project config sets `tools.approval.eval: allow`. Reading the preludes'
-state back from OMP before each prompt needs an OMP change (oh-my-pi#58) and
-lands with workspace trust (#151).
+OMP's overlay watcher applies a change within its debounce. On an OMP with RPC
+contract 1.9.0 or later, the adapter then reads `get_state` (`browserEnabled`,
+`computerEnabled`, `workspaceTrusted`) before every prompt, for up to 3 s, and fails the
+turn (`tool_guard_unapplied` or `workspace_trust_unapplied`) unless OMP reports every value
+it pinned. An older OMP reports none of these, so the check is skipped there.
+
+## Workspace trust
+
+A repository's own agent config can widen what the agent does: `.omp/config.yml` approval
+rules can auto-approve bash in Supervised, and project MCP servers, extensions and hooks
+run its code (#151). Ompanel treats that config as third-party code (PRD §9). The server
+setting **Trust project agent config** (`trustProjectAgentConfig`, Settings → General →
+Projects & threads, project-scoped; on mobile under Server controls → Agent behavior) is off by default for every project, new or existing.
+
+- Untrusted: the thread's overlay sets `workspace.trusted: false`. OMP then ignores the
+  project's `tools.approval`, `bash.patterns` and `extensions`, and loads no project MCP
+  servers, extensions or hooks. A project cannot trust itself.
+- Trusted: the key is removed, so OMP's default (or the user's global config) applies.
+- Outside `yolo`, OMP always asks before a write to agent configuration (`.omp/`, `.pi/`,
+  `.mcp.json`, `.claude/settings*.json`), so an auto-approved edit cannot widen later
+  approvals (oh-my-pi#58).
+- Project MCP servers and extensions load when `omp` starts. If a project's trust changed
+  since its thread's `omp` started, the next turn fails with `workspace_trust_changed`,
+  the overlay already holds the new value, and `omp` restarts; sending again uses it.
+- Trust is per project only: there is no server-wide value, a project without its own
+  value is untrusted, and the toggle shows only when a project is selected (web and mobile).
+- The key is written only to an OMP with contract 1.9.0 or later; an older OMP would
+  reject an overlay with an unknown key. On such an OMP the setting is not enforced: the
+  server reports it (`ompWorkspaceTrust` capability), web and mobile say "Not enforced by
+  this server's OMP version", and opening an untrusted thread logs a warning with the
+  contract versions (no paths). Until `omp.lock` pins such a release, that is the state.
+- Ompanel's thread overlay is a loaded `--config` file, so outside Full access OMP asks
+  before any write to it, whatever the mode or a remembered grant
+  (oh-my-pi `d1dd9c852`: `config/settings.ts:762` registers loaded overlays,
+  `config/agent-config-paths.ts:114` matches them; tests `workspace-trust.test.ts`
+  "recognizes … loaded overlays" and "always asks outside yolo"). In Full access the agent
+  may write it, and the adapter re-pins and re-confirms the guard before the next turn.
 
 ## OMP builtins from the composer
 

@@ -575,6 +575,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["new worktrees start remote origin latest fetched branch local"],
   },
   {
+    id: "trust-project-agent-config",
+    title: "Trust project agent config",
+    to: "/settings/general",
+    scope: "project-defaults",
+    searchTerms: [
+      "workspace trust untrusted repository omp approval rules mcp servers extensions hooks security",
+    ],
+  },
+  {
     id: "add-project-starts-in",
     title: "Add project starts in",
     to: "/settings/general",

@@ -14,6 +14,7 @@ import * as Schema from "effect/Schema";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProjectStore from "./ProjectStore.ts";
+import * as ServerSettings from "../serverSettings.ts";
 
 export class RuntimePolicyResolveError extends Schema.TaggedError<RuntimePolicyResolveError>()(
   "RuntimePolicyResolveError",
@@ -79,6 +80,7 @@ export const layerFromProjectStore: Layer.Layer<
   Effect.gen(function* () {
     const projects = yield* ProjectStore.ProjectStoreV2;
     const providerInstances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
+    const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
     return RuntimePolicyV2.of({
       resolve: Effect.fn("RuntimePolicyV2.resolve")(function* (input) {
         const instance = yield* providerInstances.getInstance(input.modelSelection.instanceId);
@@ -111,10 +113,23 @@ export const layerFromProjectStore: Layer.Layer<
               }),
             ),
           ));
+        // Unreadable settings leave the project untrusted (PRD §9).
+        const workspaceTrusted = Option.isNone(serverSettings)
+          ? false
+          : yield* serverSettings.value.getSettings.pipe(
+              // Per project only: a server-wide value is never read.
+              Effect.map(
+                (settings) =>
+                  settings.projectSettingsOverrides[input.thread.projectId]
+                    ?.trustProjectAgentConfig === true,
+              ),
+              Effect.orElseSucceed(() => false),
+            );
         return ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
           runtimeMode: providerRuntimeMode(input.thread.runtimeMode, supportedRuntimeModes),
           interactionMode: input.thread.interactionMode,
           cwd,
+          workspaceTrusted,
         });
       }),
     });
