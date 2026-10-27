@@ -13,7 +13,7 @@ export interface OmpBranchTreeRow {
 }
 
 /** What a node shows when it has neither a label nor a preview. */
-export const OMP_BRANCH_NODE_FALLBACK_LABELS = {
+const OMP_BRANCH_NODE_FALLBACK_LABELS = {
   user: "Message",
   assistant: "Reply",
   branch_summary: "Branch summary",
