@@ -74,6 +74,8 @@ export interface OmpStack {
    * A no-op unless the stack started with `freshOmpHome`.
    */
   readonly completeOmpSetup: () => void;
+  /** Adds a value the run handled (a Share live link) to the secrets scan `stop` runs. */
+  readonly registerSecret: (label: string, value: string) => void;
   /** The server's output, pairing token redacted. */
   readonly serverLog: () => string;
   /**
@@ -335,6 +337,7 @@ export const startOmpStack = async (options: OmpStackOptions = {}): Promise<OmpS
       return args === undefined ? [] : [{ pid: entry.pid, threadId: entry.threadId, args }];
     });
 
+  const registered: Array<{ readonly label: string; readonly value: string }> = [];
   return {
     pairingUrl,
     workspace,
@@ -348,6 +351,9 @@ export const startOmpStack = async (options: OmpStackOptions = {}): Promise<OmpS
     signIn,
     relay,
     completeOmpSetup,
+    registerSecret: (label, value) => {
+      registered.push({ label, value });
+    },
     serverLog: () =>
       secrets.reduce(
         (text, secret) => text.replaceAll(secret, "<redacted>"),
@@ -375,6 +381,7 @@ export const startOmpStack = async (options: OmpStackOptions = {}): Promise<OmpS
           },
           ...secrets.map((value, index) => ({ label: `secretEnvironment[${index}]`, value })),
           ...(vendor?.exchanged() ?? []).map((value) => ({ label: "OAuth code", value })),
+          ...registered,
         ],
         serverLog: logPath,
         // Logs and traces, OMP's thread state, OMP's own sessions and logs, and the workspace

@@ -280,8 +280,9 @@ the last message: `run: <command>` calls the shell tool, a tool result gets
 for, and anything else gets two streamed paragraphs. OMP's `collab.relayUrl`
 is a loopback relay (`e2e/omp/collabRelay.ts`, cut down from the fork's
 `packages/collab-web/scripts/local-relay.ts`), so Share live opens and stops a
-real room without the internet. Nothing reads the developer's `~/.omp` or
-Ompanel home, and no API key is used.
+real room without the internet. That step runs untraced and without
+screenshots, and its two links join the teardown secrets scan. Nothing reads
+the developer's `~/.omp` or Ompanel home, and no API key is used.
 
 Run it locally (the Node version in `package.json` `engines`, `bun`, and a
 Rust toolchain for the fork's native addon on the first build):
