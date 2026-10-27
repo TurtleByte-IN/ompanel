@@ -37,6 +37,7 @@ guides are in [docs/user](../README.md#using-ompanel), starting with the
 
 - [Following upstream: both forks](./fork-and-merge.md)
 - [Bumping the contract and moving the pin](./contract-bump.md)
+- [Releases, installer and sidecar verification](./release.md)
 - [CI on the fork](./ci.md)
 - [Testing the OMP provider](./testing.md)
 - [Branding](./branding.md)
