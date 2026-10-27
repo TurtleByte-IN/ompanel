@@ -45,6 +45,7 @@ const KEPT_PROVIDERS = [
   ["claudeAgent", "claudeAgent"],
   ["cursor", "cursor"],
   ["grok", "grok"],
+  ["fx", "fx"],
   ["opencode", "opencode"],
   ["antigravity", "antigravity"],
   ["pi", "pi"],
