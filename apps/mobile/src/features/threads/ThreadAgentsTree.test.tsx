@@ -179,7 +179,8 @@ function render(
   );
 }
 
-const rows = () => Array.from(container.querySelectorAll("button:not([data-control])"));
+const rows = () =>
+  Array.from(container.querySelectorAll<HTMLButtonElement>("button:not([data-control])"));
 const control = (name: string) =>
   container.querySelector<HTMLButtonElement>(`button[data-control][aria-label="${name}"]`);
 
@@ -270,6 +271,7 @@ describe("AgentsTreeView", () => {
           ]}
           selectedId={null}
           transcript={{ entries: [], error: null, loading: false }}
+          controls={NO_CONTROLS}
           onSelect={() => undefined}
           onOpenThread={(id) => opened.push(id)}
         />,
