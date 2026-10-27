@@ -982,6 +982,16 @@ jobs:
             echo 'EOF'
           } >> "$GITHUB_OUTPUT"
 
+      # The hashes of the bytes this job built and uploads, kept apart from the
+      # release so publish_release can check the draft still holds exactly them.
+      - name: Record built asset checksums
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-checksums
+          path: release-assets/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 7
+
       # A preview release gets a warning instead of generated notes. Generated
       # notes would list every commit since the previous preview, which is
       # unmerged branch history no one should read as a changelog, and would
@@ -1035,6 +1045,61 @@ jobs:
           fail_on_unmatched_files: true
           token: ${{ github.token }}
 
+  # Drafts are readable only with a token that can write contents, so this
+  # job alone holds one. It copies the draft's bytes into workflow artifacts,
+  # which the verify legs read without any repository write access.
+  stage_draft:
+    name: Stage draft release for verification
+    needs: [preflight, release]
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_ID: ${{ needs.release.outputs.release_id }}
+    steps:
+      - name: Download the draft release
+        run: |
+          set -euo pipefail
+          mkdir -p draft darwin-arm64 win32-x64
+          gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" --jq '"\(.tag_name) draft=\(.draft) prerelease=\(.prerelease)"'
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?per_page=100" --jq '.[] | "\(.id) \(.name)"' |
+            while read -r id name; do
+              gh api -H "Accept: application/octet-stream" "repos/$GITHUB_REPOSITORY/releases/assets/$id" > "draft/$name"
+            done
+          cp draft/SHA256SUMS draft/*-arm64.dmg draft/ompanel-*-darwin-arm64.tar.gz darwin-arm64/
+          cp draft/SHA256SUMS draft/*-x64.exe draft/ompanel-*-win32-x64.zip win32-x64/
+          ls -l draft
+
+      - name: Upload every draft asset
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-draft-linux-x64
+          path: draft/*
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+      - name: Upload the macOS arm64 draft assets
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-draft-darwin-arm64
+          path: darwin-arm64/*
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+      - name: Upload the Windows x64 draft assets
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-draft-win32-x64
+          path: win32-x64/*
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
   # Installs the draft release the way users will get it, on each OS
   # (docs/omp/release.md#verification), before anyone can download it. Every
   # downloaded asset must match SHA256SUMS; the one-line installer from the
@@ -1042,16 +1107,14 @@ jobs:
   # draft has no public download URL), whose server must download the pinned
   # OMP sidecar on first use; and the installed desktop app must start and turn
   # OMP ready on the sidecar it bundles. Linux also checks that every
-  # platform's assets are there.
+  # platform's assets are there. Read-only: the draft's bytes come from
+  # stage_draft's artifacts, so the binaries run here can write nothing.
   verify_release:
     name: Verify draft release ${{ matrix.label }}
-    needs: [preflight, release]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' }}
-    # Draft releases are visible only to tokens that can write contents. The
-    # token is handed to the download step alone, and checkout does not keep it,
-    # so the binaries this job runs never see it.
+    needs: [preflight, stage_draft]
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.stage_draft.result == 'success' }}
     permissions:
-      contents: write
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -1059,15 +1122,12 @@ jobs:
           - label: Linux x64
             runner: ubuntu-24.04
             artifact: linux-x64
-            assets: "*"
           - label: macOS arm64
             runner: macos-26
             artifact: darwin-arm64
-            assets: "SHA256SUMS *-arm64.dmg ompanel-*-darwin-arm64.tar.gz"
           - label: Windows x64
             runner: windows-2025
             artifact: win32-x64
-            assets: "SHA256SUMS *-x64.exe ompanel-*-win32-x64.zip"
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     defaults:
@@ -1076,7 +1136,6 @@ jobs:
     env:
       TAG: ${{ needs.preflight.outputs.tag }}
       VERSION: ${{ needs.preflight.outputs.version }}
-      RELEASE_ID: ${{ needs.release.outputs.release_id }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -1089,7 +1148,7 @@ jobs:
           sparse-checkout-cone-mode: false
 
       # persist-credentials: false would make checkout's cleanup walk the
-      # orphaned .repos gitlinks and fail, so drop the stored token here.
+      # orphaned .repos gitlinks and fail, so drop the stored (read-only) token here.
       - name: Forget the checkout token
         run: git config --local --unset-all http.https://github.com/.extraheader || true
 
@@ -1098,26 +1157,16 @@ jobs:
         with:
           task-cache-read-token: ${{ secrets.T3_TASK_CACHE_READ_TOKEN }}
 
-      - name: Download the draft release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          ASSETS: ${{ matrix.assets }}
+      - name: Download the staged draft release
+        uses: actions/download-artifact@v8
+        with:
+          name: release-draft-${{ matrix.artifact }}
+          path: ${{ runner.temp }}/release
+
+      - name: List the draft assets
         run: |
-          set -euo pipefail -f
-          release_dir="$RUNNER_TEMP/release"
-          echo "RELEASE_DIR=$release_dir" >> "$GITHUB_ENV"
-          mkdir -p "$release_dir"
-          gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" --jq '"\(.tag_name) draft=\(.draft) prerelease=\(.prerelease)"'
-          gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?per_page=100" --jq '.[] | "\(.id) \(.name)"' |
-            while read -r id name; do
-              for pattern in $ASSETS; do
-                if [[ "$name" == $pattern ]]; then
-                  gh api -H "Accept: application/octet-stream" "repos/$GITHUB_REPOSITORY/releases/assets/$id" > "$release_dir/$name"
-                  break
-                fi
-              done
-            done
-          ls -l "$release_dir"
+          echo "RELEASE_DIR=$RUNNER_TEMP/release" >> "$GITHUB_ENV"
+          ls -l "$RUNNER_TEMP/release"
 
       - name: Verify downloads against SHA256SUMS
         working-directory: ${{ runner.temp }}/release
@@ -1299,25 +1348,59 @@ jobs:
     needs: [preflight, release, verify_release]
     if: ${{ !failure() && !cancelled() && needs.release.result == 'success' && needs.verify_release.result == 'success' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 30
     permissions:
       contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_ID: ${{ needs.release.outputs.release_id }}
+      TAG: ${{ needs.preflight.outputs.tag }}
     steps:
+      - name: Download the built asset checksums
+        uses: actions/download-artifact@v8
+        with:
+          name: release-checksums
+          path: recorded
+
+      # Re-hash every asset as the draft holds it now, against the hashes the
+      # release job recorded before uploading: an asset swapped, added or
+      # removed after verification stops the release here.
+      - name: Check the draft still holds the built bytes
+        run: |
+          set -euo pipefail
+          recorded=recorded/SHA256SUMS
+          seen=0
+          while read -r id name; do
+            actual="$(gh api -H "Accept: application/octet-stream" "repos/$GITHUB_REPOSITORY/releases/assets/$id" | sha256sum | cut -d' ' -f1)"
+            if [[ "$name" == SHA256SUMS ]]; then
+              expected="$(sha256sum "$recorded" | cut -d' ' -f1)"
+            else
+              expected="$(awk -v n="$name" '$2 == n || $2 == "*" n { print $1 }' "$recorded")"
+              seen=$((seen + 1))
+            fi
+            if [[ -z "$expected" || "$actual" != "$expected" ]]; then
+              echo "::error::draft asset $name has sha256 $actual; the build recorded '${expected:-nothing}'"
+              exit 1
+            fi
+            echo "ok  $name"
+          done < <(gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?per_page=100" --jq '.[] | "\(.id) \(.name)"')
+          listed="$(wc -l < "$recorded")"
+          if (( seen != listed )); then
+            echo "::error::the draft holds $seen assets besides SHA256SUMS; the build recorded $listed"
+            exit 1
+          fi
+
       - name: Publish the verified draft
         env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_ID: ${{ needs.release.outputs.release_id }}
-          TAG: ${{ needs.preflight.outputs.tag }}
           MAKE_LATEST: ${{ needs.preflight.outputs.make_latest }}
         run: |
           set -euo pipefail
           gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
             -F draft=false -f make_latest="$MAKE_LATEST" \
             --jq '"\(.tag_name) draft=\(.draft) prerelease=\(.prerelease) \(.html_url)"'
-          # The public URL the installers use now serves the verified checksums.
+          # The public URL the installers use now serves the recorded checksums.
           curl -fsSL --retry 5 --retry-all-errors "https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/SHA256SUMS" -o public-sums
-          gh api -H "Accept: application/octet-stream" "repos/$GITHUB_REPOSITORY/releases/assets/$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets" --jq '.[] | select(.name == "SHA256SUMS") | .id')" > draft-sums
-          cmp public-sums draft-sums
+          cmp public-sums recorded/SHA256SUMS
 
   # The `ompanel` npm package is a launcher that downloads this version's CLI
   # archive from the GitHub Release, so it publishes only once that release

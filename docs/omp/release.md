@@ -55,9 +55,9 @@ npm publishing exist only there, and every run that reaches it waits for a revie
 Watch the run with `gh run watch -R TurtleByte-IN/ompanel`. It takes about half an hour (the first
 candidate took 27 minutes): the release reruns lint, typecheck and the test suites, builds six
 desktop targets and five CLI archives, uploads them as a draft release, verifies the draft, then
-publishes it. A run that signs stops twice for approval (the desktop builds, then npm): approve it
-under the run's "Review deployments", or with
-`gh api -X POST repos/TurtleByte-IN/ompanel/actions/runs/<run>/pending_deployments -F 'environment_ids[]=<id>' -f state=approved -f comment=…`.
+publishes it. A run that signs stops twice for approval (the desktop builds, then npm). A reviewer
+other than the person who cut the tag approves it under the run's "Review deployments"; see
+[Signing](#signing) for why that is not enforced yet (B-010).
 
 Scheduled nightlies are off on the fork because each one is a full release run that competes with
 pull request CI for runners. Set the repository variable `OMPANEL_NIGHTLY_RELEASES` to `true` to
@@ -71,11 +71,15 @@ serve the web app, and download the pinned OMP sidecar with the sha256 in `omp.l
 archives run this on a Windows runner of their own architecture.
 
 The `release` job then uploads everything as a draft release, which nobody outside the
-repository can see or download. `verify_release` installs the draft the way users will get it,
-on Linux x64, macOS arm64 and Windows x64:
+repository can see or download, and keeps the hashes of the bytes it uploaded as the
+`release-checksums` workflow artifact. Reading a draft needs a token that can write contents, so
+one job, `stage_draft`, copies the draft's assets into workflow artifacts. `verify_release` then
+runs with read-only permissions, so the binaries it launches can change nothing in the
+repository, and installs the draft the way users will get it, on Linux x64, macOS arm64 and
+Windows x64:
 
-1. Downloads the assets from the draft and checks each one against `SHA256SUMS`. The Linux job
-   downloads everything and also fails if any platform's assets are missing.
+1. Takes the draft's assets from `stage_draft` and checks each one against `SHA256SUMS`. The
+   Linux job gets every asset and also fails if any platform's assets are missing.
 2. Runs the one-line installer from the release commit
    (`raw.githubusercontent.com/TurtleByte-IN/ompanel/<tag>/scripts/install.sh`, or
    `install.ps1`) with `OMPANEL_VERSION` set, in a throwaway `OMPANEL_HOME`, and runs
@@ -89,10 +93,12 @@ on Linux x64, macOS arm64 and Windows x64:
    launches the installed executable, and passes only when the backend answers, the main window
    opens, and OMP turns ready on the bundled sidecar without downloading one.
 
-Only when all three pass does `publish_release` make the draft public (and, for a plain `vX.Y.Z`,
-the latest release), then checks that the public `SHA256SUMS` URL serves the verified file. npm,
-the hosted web app, the version bump and announcements all wait for it. A failed check leaves an
-unpublished draft: fix the cause, delete the draft, and cut the next tag.
+Only when all three pass does `publish_release` run. It downloads every asset of the draft again,
+hashes it, and compares it with `release-checksums`: an asset swapped, added or removed since the
+build stops the release. Then it makes the draft public (and, for a plain `vX.Y.Z`, the latest
+release) and checks that the public `SHA256SUMS` URL serves the recorded file. npm, the hosted web
+app, the version bump and announcements all wait for it. A failed check leaves an unpublished
+draft: fix the cause, delete the draft, and cut the next tag.
 
 Screenshots and logs are uploaded as `release-verify-<target>`.
 
@@ -128,14 +134,20 @@ ships, unsigned.
 Store every signing secret below as an **environment secret of `release`** (Settings →
 Environments → `release`), never as a repository secret. That environment:
 
-- requires a reviewer before any job that uses it starts; the reviewer is `Quelaan1`, the
-  repository admin account the release tooling runs as. Add maintainers there as reviewers.
+- requires a reviewer before any job that uses it starts. Today the only reviewer is `Quelaan1`,
+  the repository admin account the release tooling runs as.
 - accepts deployments only from `v*` tags and `main`.
 - is used by the six desktop build jobs when the build may sign, and by `publish_cli`.
 
 A run from an unreviewed commit therefore never sees a signing key, and a run that would sign
 waits for a human. The npm trusted publisher for `ompanel` should name `release.yml` and the
 `release` environment, so npm refuses an OIDC token from anywhere else.
+
+**Blocker B-010: do not add any signing secret yet.** With one reviewer and "Prevent self-review"
+off, the account that pushes a tag can approve its own run, so the approval adds no second pair of
+eyes. Before the first signing secret goes into `release`, a second human must be added as a
+required reviewer and "Prevent self-review" turned on (Settings → Environments → `release`), so
+nobody can sign a build they cut themselves.
 
 **macOS** (B-001): signed and notarized only when all of these exist; with any of the first five
 missing the app is unsigned, and with those five but not the last two the build fails.
