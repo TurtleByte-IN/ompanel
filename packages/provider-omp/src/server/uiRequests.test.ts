@@ -652,7 +652,7 @@ describe("OmpThreadMapper UI frames", () => {
     assert.strictEqual(busy.requestPlacement("ui-3", THREAD_ID).ordinal, placement.ordinal + 1);
   });
 
-  it("shows open_url and set_editor_text as notifications and ignores TUI styling", () => {
+  it("shows open_url and set_editor_text as notifications; status, widget and title make no card", () => {
     const { mapper: m } = started();
     const frames = [
       {
@@ -697,5 +697,146 @@ describe("OmpThreadMapper UI frames", () => {
         ["OMP suggested a message", "/review src", "updated"],
       ],
     );
+  });
+
+  const statusOf = (events: ReadonlyArray<Event>) =>
+    ofType(events, "provider_thread.updated").map(
+      (event) => event.providerThread.nativeMetadata?.extensionStatus,
+    );
+  const frame = (fields: Record<string, unknown>) => ({
+    type: "extension_ui_request",
+    id: "ui",
+    ...fields,
+  });
+
+  it("keeps extension status lines and widgets on the provider thread, out of a turn too", () => {
+    const m = mapper();
+    // No thread bound yet: nothing to update.
+    assert.deepStrictEqual(
+      m.applyExtensionStatus(frame({ method: "setStatus", statusKey: "git", statusText: "x" }), T0),
+      [],
+    );
+    m.bindThread(
+      { threadId: THREAD_ID, state: { sessionId: "session-a", sessionFile: "/s/a.jsonl" } },
+      T0,
+    );
+    // The pinned OMP clears its autoresearch widget at startup and turn end: no entry, no event.
+    const clear = m.handleFrame(frame({ method: "setWidget", widgetKey: "autoresearch" }), T1);
+    assert.deepStrictEqual([clear.events, clear.dropped], [[], null]);
+    const status = m.handleFrame(
+      frame({
+        method: "setStatus",
+        statusKey: "git",
+        statusText: "\u001b[32mmain\u001b[0m\u0007 ✓",
+      }),
+      T1,
+    );
+    assert.strictEqual(status.dropped, null);
+    assert.deepStrictEqual(statusOf(status.events), [
+      [{ key: "git", kind: "status", lines: ["main ✓"] }],
+    ]);
+    const widget = m.handleFrame(
+      frame({
+        method: "setWidget",
+        widgetKey: "tests",
+        widgetLines: ["", "\u001b[1m12 passed\u001b[22m", "\t1 failed  ", ""],
+        widgetPlacement: "belowEditor",
+      }),
+      T1,
+    );
+    assert.deepStrictEqual(statusOf(widget.events), [
+      [
+        { key: "git", kind: "status", lines: ["main ✓"] },
+        {
+          key: "tests",
+          kind: "widget",
+          lines: ["12 passed", " 1 failed"],
+          placement: "belowEditor",
+        },
+      ],
+    ]);
+    // The same frame again changes nothing; a new text replaces the entry in place.
+    assert.deepStrictEqual(
+      m.handleFrame(frame({ method: "setStatus", statusKey: "git", statusText: "main ✓" }), T1)
+        .events,
+      [],
+    );
+    const replaced = m.handleFrame(
+      frame({ method: "setStatus", statusKey: "git", statusText: "dev" }),
+      T1,
+    );
+    assert.deepStrictEqual(
+      statusOf(replaced.events)[0]?.map((entry) => entry.lines),
+      [["dev"], ["12 passed", " 1 failed"]],
+    );
+    // A status and a widget may share a key; absent or blank text removes only its own entry.
+    m.handleFrame(frame({ method: "setWidget", widgetKey: "git", widgetLines: ["ahead 2"] }), T1);
+    const removed = m.handleFrame(frame({ method: "setStatus", statusKey: "git" }), T1);
+    assert.deepStrictEqual(
+      statusOf(removed.events)[0]?.map((entry) => [entry.key, entry.kind]),
+      [
+        ["tests", "widget"],
+        ["git", "widget"],
+      ],
+    );
+    m.handleFrame(frame({ method: "setWidget", widgetKey: "tests", widgetLines: ["  "] }), T1);
+    const last = m.handleFrame(frame({ method: "setWidget", widgetKey: "git" }), T1);
+    assert.deepStrictEqual(statusOf(last.events), [undefined]);
+    // setTitle stays OMP's own.
+    assert.deepStrictEqual(
+      m.handleFrame(frame({ method: "setTitle", title: "omp" }), T1).events,
+      [],
+    );
+  });
+
+  it("updates extension status during a turn and clears it when a new process binds", () => {
+    const { mapper: m, providerThread } = started();
+    const set = m.handleFrame(
+      frame({ method: "setStatus", statusKey: "review", statusText: "Loading open PRs…" }),
+      T1,
+    );
+    const [updated] = ofType(set.events, "provider_thread.updated");
+    assert.strictEqual(updated?.providerThread.status, "active");
+    assert.deepStrictEqual(updated?.providerThread.nativeMetadata?.extensionStatus, [
+      { key: "review", kind: "status", lines: ["Loading open PRs…"] },
+    ]);
+    const rebound = mapper().bindThread(
+      {
+        threadId: THREAD_ID,
+        state: { sessionId: "session-a", sessionFile: "/s/a.jsonl", sessionName: "Named" },
+        existing: updated!.providerThread,
+      },
+      T1,
+    );
+    assert.strictEqual(rebound.providerThread.id, providerThread.id);
+    assert.deepStrictEqual(rebound.providerThread.nativeMetadata, { title: "Named" });
+  });
+
+  it("caps extension status entries, lines and line length", () => {
+    const m = mapper();
+    m.bindThread(
+      { threadId: THREAD_ID, state: { sessionId: "session-a", sessionFile: "/s/a.jsonl" } },
+      T0,
+    );
+    let events: Array<Event> = [];
+    for (let i = 0; i < 20; i++) {
+      events = m.applyExtensionStatus(
+        frame({
+          method: "setWidget",
+          widgetKey: `w${i}`,
+          widgetLines: Array.from({ length: 30 }, () => "x".repeat(500)),
+        }),
+        T1,
+      );
+    }
+    assert.deepStrictEqual(events, []);
+    const entries = m.applyExtensionStatus(
+      frame({ method: "setWidget", widgetKey: "w0", widgetLines: ["y"] }),
+      T1,
+    );
+    const [list] = statusOf(entries);
+    assert.strictEqual(list?.length, 16);
+    assert.deepStrictEqual(list?.[0]?.lines, ["y"]);
+    assert.deepStrictEqual([list?.[1]?.lines.length, list?.[1]?.lines[0]?.length], [10, 240]);
   });
 });

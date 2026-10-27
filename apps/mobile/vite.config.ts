@@ -19,6 +19,7 @@ const reactTests = [
   "src/features/threads/OmpRuntimeRequestCards.test.tsx",
   "src/features/threads/ThreadAgentsTree.test.tsx",
   "src/features/threads/WorkLogOutputImages.test.tsx",
+  "src/features/threads/ThreadCompactionDivider.test.tsx",
   "src/features/settings/OmpAccountsSection.test.tsx",
   "src/features/settings/SettingsOmpRouteScreen.test.tsx",
   "src/features/settings/OmpPluginsSummary.test.tsx",

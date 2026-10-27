@@ -63,7 +63,7 @@ import {
   readOmpJournalTail,
 } from "./journal.ts";
 import { ompApprovalModeFor } from "./launch.ts";
-import { OMP_PROVIDER, type OmpTurnOutcome } from "./mapper.ts";
+import { isOmpExtensionStatusRequest, OMP_PROVIDER, type OmpTurnOutcome } from "./mapper.ts";
 import type { OmpSessionsLocation } from "./ompSessions.ts";
 import type { OmpRpcRequestError } from "./rpcProcess.ts";
 import type { OmpPidfiles } from "./pidfiles.ts";
@@ -810,6 +810,11 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       // Goal mode is session state, not turn output: it changes inside and between turns.
       if (frame.type === "goal_updated") {
         yield* emit(mapper.applyGoal(frame.goal ?? null, yield* DateTime.now));
+        return;
+      }
+      // So are extension status lines and widgets: the strip updates with no turn, at once.
+      if (isOmpExtensionStatusRequest(frame)) {
+        yield* emit(mapper.applyExtensionStatus(frame, yield* DateTime.now));
         return;
       }
       if (yield* hostBridge.handleFrame(frame)) return;

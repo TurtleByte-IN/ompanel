@@ -436,6 +436,50 @@ describe("orchestration V2 contracts", () => {
     expect(runtimeThread.contextUsage).toBeNull();
     expect(runtimeThread.nativeMetadata).toBeNull();
   });
+
+  it("round-trips extension status lines and widgets in provider-thread native metadata", () => {
+    const json = {
+      id: "provider-thread-3",
+      driver: "omp",
+      providerInstanceId: "omp",
+      providerSessionId: null,
+      appThreadId: "thread-3",
+      ownerNodeId: null,
+      nativeThreadRef: null,
+      nativeConversationHeadRef: null,
+      status: "idle",
+      firstRunOrdinal: null,
+      lastRunOrdinal: null,
+      handoffIds: [],
+      forkedFrom: null,
+      nativeMetadata: {
+        extensionStatus: [
+          { key: "git", kind: "status", lines: ["main"] },
+          {
+            key: "tests",
+            kind: "widget",
+            lines: ["12 passed", "1 failed"],
+            placement: "belowEditor",
+          },
+        ],
+      },
+      createdAt: "2026-04-20T00:00:00.000Z",
+      updatedAt: "2026-04-20T00:00:00.000Z",
+    };
+    const providerThread = decodeOrchestrationV2ProviderThreadJson(json);
+    expect(providerThread.nativeMetadata?.extensionStatus).toEqual(
+      json.nativeMetadata.extensionStatus,
+    );
+    expect(encodeOrchestrationV2ProviderThreadJson(providerThread).nativeMetadata).toEqual(
+      json.nativeMetadata,
+    );
+    expect(() =>
+      decodeOrchestrationV2ProviderThreadJson({
+        ...json,
+        nativeMetadata: { extensionStatus: [{ key: "x", kind: "footer", lines: [] }] },
+      }),
+    ).toThrow();
+  });
 });
 
 describe("thread open stats", () => {

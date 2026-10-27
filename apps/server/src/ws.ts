@@ -2877,6 +2877,21 @@ export const layerWsRpc = (
             Effect.andThen(ompThreadMenuController(input.instanceId)),
             Effect.flatMap((menu) => menu.branchTree(input.threadId)),
           ),
+        [WS_METHODS.serverResolveOmpProposal]: (input) =>
+          Effect.annotateCurrentSpan({
+            "provider.instance_id": input.instanceId,
+            "thread.id": input.threadId,
+            "omp.proposal_action": input.action,
+          }).pipe(
+            Effect.andThen(ompThreadMenuController(input.instanceId)),
+            Effect.flatMap((menu) =>
+              menu.resolveProposal({
+                threadId: input.threadId,
+                toolCallId: input.toolCallId,
+                action: input.action,
+              }),
+            ),
+          ),
         // File contents stay off spans; only which file is touched is recorded.
         [WS_METHODS.serverListOmpAgentFiles]: (input) =>
           Effect.annotateCurrentSpan({ "provider.instance_id": input.instanceId }).pipe(

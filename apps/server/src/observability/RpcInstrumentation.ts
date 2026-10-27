@@ -93,6 +93,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.serverStopOmpThreadCollab]: "provider",
   [WS_METHODS.serverGetOmpThreadCollab]: "provider",
   [WS_METHODS.serverGetOmpThreadBranchTree]: "provider",
+  [WS_METHODS.serverResolveOmpProposal]: "provider",
   [WS_METHODS.serverListOmpAgentFiles]: "provider",
   [WS_METHODS.serverReadOmpAgentFile]: "provider",
   [WS_METHODS.serverWriteOmpAgentFile]: "provider",

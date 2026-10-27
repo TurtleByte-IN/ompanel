@@ -14,7 +14,7 @@ import {
   enrichedSkillInstructionsPath,
   enrichedSkillReference,
 } from "../../lib/enrichedLinkPresentation";
-import { ThreadContextDivider } from "./thread-context-divider";
+import { ThreadCompactionDivider, ThreadContextDivider } from "./thread-context-divider";
 import { ThreadHandoffDivider, ThreadHandoffRow } from "./thread-handoff-row";
 import { GuestBubbleTint, GuestMessageName } from "./guestMessageStyle";
 import { ThreadGuestPendingMessage, useThreadGuestShare } from "./ThreadGuestShareBar";
@@ -1239,13 +1239,6 @@ function ThreadAutomationMessageRow(props: {
   );
 }
 
-/** Leads with why Ompanel compacted, when it did so without being asked. */
-function compactionLabel(label: string, title: string | undefined) {
-  return title !== undefined && label.startsWith("Context compacted")
-    ? title + label.slice("Context compacted".length)
-    : label;
-}
-
 function renderFeedEntry(
   info: { item: ThreadFeedRow; index: number },
   props: Pick<
@@ -1434,30 +1427,12 @@ function renderFeedEntry(
   }
 
   if (entry.type === "activity-group" && isContextCompactionActivityGroup(entry)) {
-    const label = entry.activities[0]!.summary;
-    const item = entry.activities[0]!.projectedItem.item;
-    const active =
-      props.unsettledTurnId !== null &&
-      entry.runId === props.unsettledTurnId &&
-      item.status === "running";
-    const labels = props.compactionLabelsByEntryId.get(entry.id);
-    const failure =
-      item.type === "compaction" && item.status === "failed" ? item.summary?.trim() : undefined;
     return (
-      <ThreadContextDivider
-        label={
-          failure
-            ? `${label} · ${failure}`
-            : active && labels
-              ? labels.compacting
-              : compactionLabel(label, labels?.title)
-        }
-        icon={
-          item.status === "failed" ? "exclamationmark.circle" : "arrow.down.right.and.arrow.up.left"
-        }
+      <ThreadCompactionDivider
+        entry={entry}
+        unsettledTurnId={props.unsettledTurnId}
+        labels={props.compactionLabelsByEntryId.get(entry.id)}
         iconColor={iconSubtleColor}
-        active={active}
-        failed={item.status === "failed"}
       />
     );
   }

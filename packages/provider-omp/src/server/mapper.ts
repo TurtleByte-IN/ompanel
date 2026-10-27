@@ -11,10 +11,12 @@ import {
   type OrchestrationV2AppThread,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2PlanStep,
+  type OrchestrationV2ProviderExtensionStatus,
   type OrchestrationV2ProviderFailure,
   type OrchestrationV2ProviderRef,
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
+  type OrchestrationV2ProviderThreadNativeMetadata,
   type OrchestrationV2ProviderTurn,
   type OrchestrationV2ProviderTurnTokenUsage,
   type OrchestrationV2TurnItem,
@@ -249,6 +251,89 @@ const stringField = (value: unknown, key: string): string | undefined => {
   const field = asRecord(value)?.[key];
   return typeof field === "string" ? field : undefined;
 };
+
+/** Caps on the status strip: OMP forwards whatever an extension asks it to show. */
+const EXTENSION_STATUS_MAX_ENTRIES = 16;
+const EXTENSION_STATUS_MAX_LINES = 10;
+const EXTENSION_STATUS_MAX_LINE_LENGTH = 240;
+const EXTENSION_STATUS_MAX_KEY_LENGTH = 80;
+
+/** `setStatus` / `setWidget`: an extension's keyed status line or widget, set or cleared. */
+export const isOmpExtensionStatusRequest = (frame: { readonly type: string }): boolean => {
+  const method = (frame as Record<string, unknown>)["method"];
+  return (
+    frame.type === "extension_ui_request" && (method === "setStatus" || method === "setWidget")
+  );
+};
+
+/**
+ * Plain lines of status text OMP styled for its TUI: ANSI sequences and control characters
+ * dropped, blank lines at either end trimmed, each line and the count capped.
+ */
+function extensionStatusLines(texts: ReadonlyArray<string>): Array<string> {
+  const lines = texts
+    .flatMap((text) => text.split(/\r?\n/))
+    .map((line) =>
+      OmpAnsi.strip(line)
+        .replaceAll("\t", " ")
+        // oxlint-disable-next-line no-control-regex -- strips control characters.
+        .replace(/[\u0000-\u001f\u007f-\u009f]/g, "")
+        .trimEnd()
+        .slice(0, EXTENSION_STATUS_MAX_LINE_LENGTH),
+    );
+  const first = lines.findIndex((line) => line.trim().length > 0);
+  if (first === -1) return [];
+  const last = lines.findLastIndex((line) => line.trim().length > 0);
+  return lines.slice(first, last + 1).slice(0, EXTENSION_STATUS_MAX_LINES);
+}
+
+/**
+ * The status entries after `frame`: set or replaced by key and kind (keeping the order first
+ * set), removed when the text or lines are absent or blank. `null` when `frame` is no
+ * `setStatus` / `setWidget` request with a key.
+ */
+function ompExtensionStatus(
+  current: ReadonlyArray<OrchestrationV2ProviderExtensionStatus>,
+  frame: { readonly type: string },
+): ReadonlyArray<OrchestrationV2ProviderExtensionStatus> | null {
+  if (!isOmpExtensionStatusRequest(frame)) return null;
+  const f = frame as Record<string, unknown>;
+  const kind = f["method"] === "setStatus" ? "status" : "widget";
+  const key = stringField(f, kind === "status" ? "statusKey" : "widgetKey")
+    ?.trim()
+    .slice(0, EXTENSION_STATUS_MAX_KEY_LENGTH);
+  if (key === undefined || key.length === 0) return null;
+  const widgetLines = f["widgetLines"];
+  const lines = extensionStatusLines(
+    kind === "status"
+      ? [stringField(f, "statusText") ?? ""]
+      : Array.isArray(widgetLines)
+        ? widgetLines.filter((line): line is string => typeof line === "string")
+        : [],
+  );
+  const index = current.findIndex((entry) => entry.key === key && entry.kind === kind);
+  if (lines.length === 0) {
+    return index === -1 ? current : current.filter((_, i) => i !== index);
+  }
+  const placement = kind === "widget" ? f["widgetPlacement"] : undefined;
+  const entry: OrchestrationV2ProviderExtensionStatus = {
+    key,
+    kind,
+    lines,
+    ...(placement === "aboveEditor" || placement === "belowEditor" ? { placement } : {}),
+  };
+  if (index !== -1) return current.map((existing, i) => (i === index ? entry : existing));
+  return current.length >= EXTENSION_STATUS_MAX_ENTRIES ? current : [...current, entry];
+}
+
+/** `metadata` without its extension status entries. */
+function withoutExtensionStatus(
+  metadata: OrchestrationV2ProviderThreadNativeMetadata | null,
+): OrchestrationV2ProviderThreadNativeMetadata | null {
+  if (metadata === null || metadata.extensionStatus === undefined) return metadata;
+  const { extensionStatus: _cleared, ...rest } = metadata;
+  return rest;
+}
 
 const count = (value: unknown): number =>
   typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 0;
@@ -649,10 +734,12 @@ export class OmpThreadMapper {
   ): { readonly providerThread: OrchestrationV2ProviderThread; readonly events: Array<Event> } {
     const { state, existing } = input;
     const sessionTitle = state.sessionName?.trim();
+    // A new OMP process starts with no extension status; whatever the last one showed is gone.
+    const carried = withoutExtensionStatus(existing?.nativeMetadata ?? null);
     const nativeMetadata =
       sessionTitle === undefined || sessionTitle.length === 0
-        ? (existing?.nativeMetadata ?? null)
-        : { ...existing?.nativeMetadata, title: sessionTitle };
+        ? carried
+        : { ...carried, title: sessionTitle };
     const contextUsage = this.#contextSnapshot(state.contextUsage, undefined, existing);
     const providerThread: OrchestrationV2ProviderThread =
       existing !== undefined
@@ -709,6 +796,33 @@ export class OmpThreadMapper {
     const next = ompProviderGoal(goal);
     if (JSON.stringify(next) === JSON.stringify(thread.providerThread.goal ?? null)) return [];
     thread.providerThread = { ...thread.providerThread, goal: next, updatedAt: now };
+    return [
+      {
+        type: "provider_thread.updated",
+        driver: OMP_PROVIDER,
+        providerThread: thread.providerThread,
+      },
+    ];
+  }
+
+  /**
+   * An extension set or cleared a status line (`setStatus`) or widget (`setWidget`). Both are
+   * session state, not turn output: the thread's status strip shows them whether or not a turn
+   * runs. A frame that changes nothing emits nothing.
+   */
+  applyExtensionStatus(frame: { readonly type: string }, now: DateTime.Utc): Array<Event> {
+    const thread = this.#thread;
+    if (thread === null) return [];
+    const metadata = thread.providerThread.nativeMetadata ?? null;
+    const current = metadata?.extensionStatus ?? [];
+    const next = ompExtensionStatus(current, frame);
+    if (next === null || JSON.stringify(next) === JSON.stringify(current)) return [];
+    const rest = withoutExtensionStatus(metadata) ?? {};
+    thread.providerThread = {
+      ...thread.providerThread,
+      nativeMetadata: next.length > 0 ? { ...rest, extensionStatus: next } : rest,
+      updatedAt: now,
+    };
     return [
       {
         type: "provider_thread.updated",
@@ -1072,8 +1186,12 @@ export class OmpThreadMapper {
             );
           }
         }
-        // `setStatus`, `setWidget` and `setTitle` style OMP's own TUI (footer, widgets, terminal
-        // title); T has no such surface and keeps its own thread title. Dialogs are the adapter's.
+        // Extension status lines and widgets feed the thread's status strip, in or out of a turn
+        // (the adapter routes them to `applyExtensionStatus` before any run buffering).
+        if (isOmpExtensionStatusRequest(frame))
+          events.push(...this.applyExtensionStatus(frame, now));
+        // `setTitle` sets OMP's terminal title; T keeps its own thread title. Dialogs are the
+        // adapter's.
         break;
       case "rpc_frame_error":
         // OMP dropped an event too large for the transport; only the fact is kept.

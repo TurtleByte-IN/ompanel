@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 
-import { ThreadId } from "./baseSchemas.ts";
+import { ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
 /**
@@ -95,12 +95,36 @@ export const OmpBranchTree = Schema.Struct({
 });
 export type OmpBranchTree = typeof OmpBranchTree.Type;
 
+export const OmpProposalAction = Schema.Literals(["apply", "discard"]);
+export type OmpProposalAction = typeof OmpProposalAction.Type;
+
+/** Accept or Reject on a staged `ast_edit` card (PRD FR-18b): OMP's `resolve_proposal`. */
+export const OmpResolveProposalInput = Schema.Struct({
+  instanceId: ProviderInstanceId,
+  threadId: ThreadId,
+  /** The `ast_edit` tool call that staged the proposal: the card's native item id. */
+  toolCallId: TrimmedNonEmptyString,
+  action: OmpProposalAction,
+});
+export type OmpResolveProposalInput = typeof OmpResolveProposalInput.Type;
+
+export const OmpResolveProposalResult = Schema.Struct({
+  state: Schema.Literals(["applied", "discarded"]),
+  /** The files changed since the preview, so fewer or other replacements landed. */
+  stale: Schema.Boolean,
+  /** OMP's result text, e.g. `Applied 2 replacements in 1 file.` */
+  text: Schema.String,
+});
+export type OmpResolveProposalResult = typeof OmpResolveProposalResult.Type;
+
 export const OmpThreadMenuOperationErrorReason = Schema.Literals([
   "instance_not_found",
   "unsupported",
   "thread_not_found",
   /** The action needs the thread's OMP session running, and it is not. */
   "not_running",
+  /** The proposal is no longer staged: the agent or another click resolved it first. */
+  "not_pending",
   /** The thread has no OMP session file yet (nothing was sent). */
   "no_session",
   /** The pinned OMP sidecar predates the RPC the action needs. */

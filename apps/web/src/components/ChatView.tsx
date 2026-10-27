@@ -303,6 +303,7 @@ import { useRightPanelSurfaceClose } from "../hooks/useRightPanelSurfaceClose";
 import { useAgentOpenedPreviews } from "./preview/useAgentOpenedPreviews";
 import type { ComposerBannerStackItem } from "./chat/ComposerBannerStack";
 import { ComposerSurface } from "./chat/ComposerSurface";
+import { OmpStatusStrip } from "./chat/OmpStatusStrip";
 import { resolveThreadSyncPhase } from "../threadSync";
 import {
   hasAvailableCompactionProvider,
@@ -3513,6 +3514,9 @@ export default function ChatView(props: ChatViewProps) {
                         : undefined
                     }
                   >
+                    <OmpStatusStrip
+                      entries={activeProviderThread?.nativeMetadata?.extensionStatus}
+                    />
                     <ComposerSurface.Shell
                       contextStrip={showComposerContextStrip || showComposerModelStrip}
                     >
