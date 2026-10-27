@@ -4,6 +4,7 @@ import {
   ProviderInstanceId,
   ThreadId,
   type OrchestrationV2Subagent,
+  type OrchestrationV2SubagentControlAction,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { act, type ReactNode } from "react";
@@ -37,14 +38,64 @@ vi.mock("react-native", () => ({
       {props.children}
     </button>
   ),
+  TextInput: (props: {
+    readonly accessibilityLabel: string;
+    readonly value: string;
+    readonly onChangeText: (value: string) => void;
+  }) => (
+    <textarea
+      aria-label={props.accessibilityLabel}
+      value={props.value}
+      onChange={(event) => props.onChangeText(event.target.value)}
+    />
+  ),
+}));
+vi.mock("../../components/ui/Button", () => ({
+  Button: (props: {
+    label: string;
+    accessibilityLabel?: string;
+    disabled?: boolean;
+    onPress: () => void;
+  }) => (
+    <button
+      type="button"
+      data-control
+      aria-label={props.accessibilityLabel ?? props.label}
+      disabled={props.disabled}
+      onClick={props.onPress}
+    >
+      {props.label}
+    </button>
+  ),
 }));
 vi.mock("../../components/ui/AppText", () => ({
   AppText: ({ children }: { children?: ReactNode }) => <span>{children}</span>,
 }));
-vi.mock("../../state/orchestration", () => ({ orchestrationEnvironment: {} }));
-vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
+const commands = vi.hoisted(() => ({
+  control: { permissionAtom: () => "control-permission" },
+  read: {},
+  // The transcript read never settles, so only the control call is observed.
+  readSpy: () => new Promise<never>(() => undefined),
+  controlSpy: (_input: unknown): Promise<unknown> => Promise.resolve({ _tag: "Success" }),
+}));
+vi.mock("@effect/atom-react", () => ({ useAtomValue: () => true }));
+vi.mock("../../state/orchestration", () => ({
+  orchestrationEnvironment: {
+    controlSubagent: commands.control,
+    readSubagentTranscript: commands.read,
+  },
+}));
+vi.mock("../../state/use-atom-command", () => ({
+  useAtomCommand: (command: unknown) =>
+    command === commands.control ? commands.controlSpy : commands.readSpy,
+}));
 
-import { AgentsTreeView, type SubagentTranscriptView } from "./ThreadAgentsTree";
+import {
+  AgentsTreeView,
+  ThreadAgentsTree,
+  type SubagentControlsView,
+  type SubagentTranscriptView,
+} from "./ThreadAgentsTree";
 
 const threadId = ThreadId.make("thread");
 const CONTROLS = { transcript: true, steer: true, kill: true, revive: true };
@@ -100,17 +151,27 @@ const SUBAGENTS = [
   subagent("review", "root", 3_000, { status: "failed" }),
 ];
 
+const NO_CONTROLS: SubagentControlsView = {
+  permitted: false,
+  busy: null,
+  error: null,
+  onControl: async () => false,
+};
+
 function render(
   selectedId: string | null,
   transcript: SubagentTranscriptView = { entries: [], error: null, loading: false },
   handlers: { onSelect?: (id: string) => void; onOpenThread?: (id: ThreadId) => void } = {},
+  controls: SubagentControlsView = NO_CONTROLS,
+  subagents: ReadonlyArray<OrchestrationV2Subagent> = SUBAGENTS,
 ) {
   act(() =>
     root.render(
       <AgentsTreeView
-        subagents={SUBAGENTS}
+        subagents={subagents}
         selectedId={selectedId}
         transcript={transcript}
+        controls={controls}
         onSelect={handlers.onSelect ?? (() => undefined)}
         onOpenThread={handlers.onOpenThread ?? (() => undefined)}
       />,
@@ -118,7 +179,38 @@ function render(
   );
 }
 
-const rows = () => Array.from(container.querySelectorAll("button"));
+const rows = () => Array.from(container.querySelectorAll("button:not([data-control])"));
+const control = (name: string) =>
+  container.querySelector<HTMLButtonElement>(`button[data-control][aria-label="${name}"]`);
+
+/** Types into a React-controlled textarea the way a user does. */
+function type(label: string, value: string) {
+  const input = container.querySelector<HTMLTextAreaElement>(`textarea[aria-label="${label}"]`)!;
+  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+  act(() => {
+    setter.call(input, value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+
+function recordingControls(
+  overrides: Partial<SubagentControlsView> = {},
+  succeed = true,
+): { controls: SubagentControlsView; actions: OrchestrationV2SubagentControlAction[] } {
+  const actions: OrchestrationV2SubagentControlAction[] = [];
+  return {
+    actions,
+    controls: {
+      ...NO_CONTROLS,
+      permitted: true,
+      onControl: async (action) => {
+        actions.push(action);
+        return succeed;
+      },
+      ...overrides,
+    },
+  };
+}
 
 describe("AgentsTreeView", () => {
   it("lists the subagent tree in order with status, nesting and usage", () => {
@@ -185,5 +277,110 @@ describe("AgentsTreeView", () => {
     );
     act(() => rows()[0]!.click());
     expect(opened).toEqual(["child-thread"]);
+  });
+});
+
+describe("AgentsTreeView controls", () => {
+  it("steers a running subagent with the typed message and clears it after", async () => {
+    const { controls, actions } = recordingControls();
+    render("explore", undefined, {}, controls);
+    expect(control("Send to Explore the repo")!.disabled).toBe(true);
+    type("Message to Explore the repo", "  Focus on src/  ");
+    expect(control("Send to Explore the repo")!.disabled).toBe(false);
+    await act(async () => control("Send to Explore the repo")!.click());
+    expect(actions).toEqual([{ type: "steer", message: "Focus on src/" }]);
+    expect(
+      container.querySelector<HTMLTextAreaElement>(
+        'textarea[aria-label="Message to Explore the repo"]',
+      )!.value,
+    ).toBe("");
+  });
+
+  it("kills a running subagent", async () => {
+    const { controls, actions } = recordingControls();
+    render("explore", undefined, {}, controls);
+    await act(async () => control("Kill Explore the repo")!.click());
+    expect(actions).toEqual([{ type: "kill" }]);
+    // Revive is for stopped agents only.
+    expect(control("Revive Explore the repo")).toBeNull();
+  });
+
+  it("revives a stopped subagent, with or without a message", async () => {
+    const { controls, actions } = recordingControls();
+    render("review", undefined, {}, controls);
+    expect(control("Kill review prompt")).toBeNull();
+    expect(container.querySelector('textarea[aria-label="Message to review prompt"]')).toBeNull();
+    await act(async () => control("Revive review prompt")!.click());
+    type("Message to revive review prompt with", "Try again with tests");
+    await act(async () => control("Revive review prompt")!.click());
+    expect(actions).toEqual([
+      { type: "revive" },
+      { type: "revive", message: "Try again with tests" },
+    ]);
+  });
+
+  it("keeps the message and shows the failure when a control fails", async () => {
+    const { controls } = recordingControls(
+      { error: "This subagent's provider session is not running." },
+      false,
+    );
+    render("explore", undefined, {}, controls);
+    type("Message to Explore the repo", "Stop");
+    await act(async () => control("Send to Explore the repo")!.click());
+    expect(
+      container.querySelector<HTMLTextAreaElement>(
+        'textarea[aria-label="Message to Explore the repo"]',
+      )!.value,
+    ).toBe("Stop");
+    expect(container.textContent).toContain("This subagent's provider session is not running.");
+  });
+
+  it("disables every control while one runs", () => {
+    const { controls } = recordingControls({ busy: "kill" });
+    render("explore", undefined, {}, controls);
+    expect(control("Kill Explore the repo")!.textContent).toBe("Killing…");
+    expect(control("Kill Explore the repo")!.disabled).toBe(true);
+    expect(control("Send to Explore the repo")!.disabled).toBe(true);
+  });
+
+  it("shows no controls without permission or when the provider offers none", () => {
+    render("explore", undefined, {}, NO_CONTROLS);
+    expect(container.querySelector("[data-control]")).toBeNull();
+    const { controls } = recordingControls();
+    render("explore", undefined, {}, controls, [
+      subagent("explore", "root", 1_000, {
+        title: "Explore the repo",
+        controls: { transcript: true, steer: false, kill: false, revive: false },
+      }),
+    ]);
+    expect(container.querySelector("[data-control]")).toBeNull();
+  });
+});
+
+describe("ThreadAgentsTree", () => {
+  it("sends the control for the selected subagent of this thread", async () => {
+    const calls: unknown[] = [];
+    commands.controlSpy = (input) => {
+      calls.push(input);
+      return Promise.resolve({ _tag: "Success" });
+    };
+    act(() =>
+      root.render(
+        <ThreadAgentsTree
+          environmentId={"env" as never}
+          threadId={threadId}
+          subagents={SUBAGENTS}
+          initialSelectedId="explore"
+          onOpenThread={() => undefined}
+        />,
+      ),
+    );
+    await act(async () => control("Kill Explore the repo")!.click());
+    expect(calls).toEqual([
+      {
+        environmentId: "env",
+        input: { threadId, subagentId: "explore", action: { type: "kill" } },
+      },
+    ]);
   });
 });
