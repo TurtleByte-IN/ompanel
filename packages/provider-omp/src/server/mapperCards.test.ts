@@ -320,6 +320,32 @@ describe("OMP cards", () => {
     assert.isFalse(mapper.isProposalStaged(id));
   });
 
+  it.each([
+    ["a click during the agent's apply", "apply", "applied"],
+    ["a click that timed out, then the agent's reject", "discard", "discarded"],
+  ] as const)("proposed edit: %s settles the card from the agent's result", (_, action, state) => {
+    const { toolEnd, mapper } = startedTurn({ proposalsResolvable: true });
+    const item = stage(toolEnd)[0];
+    const id = String(item?.nativeItemRef?.nativeId ?? "");
+    const withdrawn = mapper
+      .withdrawProposalOffer(id, at(40))
+      .flatMap((event) => (event.type === "turn_item.updated" ? [event.turnItem] : []));
+    assert.strictEqual(withdrawn[0]?.status, "waiting");
+    assert.notProperty(cardOf(withdrawn), "resolvable");
+    assert.isTrue(mapper.isProposalStaged(id));
+    const result = agentResolve(id);
+    result.details.xdev.inner.action = action;
+    const resolved = toolEnd(
+      `write`,
+      { path: `xd://${action === "apply" ? "resolve" : "reject"}` },
+      result,
+    );
+    assert.strictEqual(resolved[1]?.id, item?.id);
+    const card = cardOf(resolved.slice(1));
+    assert.strictEqual(card.kind === "proposed_edit" && card.state, state);
+    assert.isFalse(mapper.isProposalStaged(id));
+  });
+
   it("proposed edit on the pinned contract: no Accept/Reject, the card completes", () => {
     const { toolEnd } = startedTurn();
     const staged = stage(toolEnd);

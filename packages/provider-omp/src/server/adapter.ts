@@ -65,6 +65,7 @@ import {
 import { ompApprovalModeFor } from "./launch.ts";
 import { isOmpExtensionStatusRequest, OMP_PROVIDER, type OmpTurnOutcome } from "./mapper.ts";
 import {
+  isOmpProposalGone,
   isOmpProposalNotPending,
   OMP_RESOLVE_PROPOSAL_TIMEOUT_MS,
   ompProposalsResolvable,
@@ -970,14 +971,18 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
         const answer = yield* requestResolveProposal(process, request, {
           timeoutMs: OMP_RESOLVE_PROPOSAL_TIMEOUT_MS,
         }).pipe(
-          // Gone (another resolve won) or unanswered (it may have applied): the card stops offering.
+          // Gone: the card stops offering and leaves the staged list. Held by another resolve, or
+          // unanswered: it stops offering but stays staged, so the agent's result settles it.
           Effect.tapError((error) =>
             isOmpProposalNotPending(error) || error._tag === "OmpRpcTimeoutError"
               ? exclusive(
                   Effect.gen(function* () {
                     if (settled) return;
+                    const now = yield* DateTime.now;
                     yield* emit(
-                      mapper.resolveProposal(request.toolCallId, "proposed", yield* DateTime.now),
+                      isOmpProposalGone(error)
+                        ? mapper.resolveProposal(request.toolCallId, "proposed", now)
+                        : mapper.withdrawProposalOffer(request.toolCallId, now),
                     );
                   }),
                 )

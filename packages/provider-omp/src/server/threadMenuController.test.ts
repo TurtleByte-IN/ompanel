@@ -683,12 +683,32 @@ posixOnly("Accept and Reject on a staged ast_edit card (FR-18b)", () => {
       }),
   );
 
-  it.live("a click the agent beat is not pending: the card keeps its state, without buttons", () =>
+  it.live(
+    "a click the agent is already resolving: no buttons, still staged, same after reload",
+    () =>
+      Effect.gen(function* () {
+        const { outcome, live, replayed } = yield* run(OMP_RESOLVE_PROPOSAL_CONTRACT, {
+          fail: "Proposal is already being resolved.",
+        });
+        assert.isTrue(Result.isFailure(outcome));
+        if (Result.isFailure(outcome)) assert.strictEqual(outcome.failure.reason, "not_pending");
+        const withdrawn = live.find(
+          (entry) => entry.card.state === "proposed" && !("resolvable" in entry.card),
+        );
+        // Still waiting for the agent's result; only the session's end discards it.
+        assert.strictEqual(withdrawn?.status, "waiting");
+        assert.deepStrictEqual(
+          replayed.find((entry) => !("resolvable" in entry.card)),
+          withdrawn,
+        );
+      }),
+  );
+
+  it.live("a click OMP has no preview for: the card leaves the staged list", () =>
     Effect.gen(function* () {
       const { outcome, live } = yield* run(OMP_RESOLVE_PROPOSAL_CONTRACT, {
-        fail: "Proposal was already resolved.",
+        fail: "No staged proposal from tool call call-ast-1 is pending.",
       });
-      assert.isTrue(Result.isFailure(outcome));
       if (Result.isFailure(outcome)) assert.strictEqual(outcome.failure.reason, "not_pending");
       const last = live.at(-1);
       assert.strictEqual(last?.status, "completed");

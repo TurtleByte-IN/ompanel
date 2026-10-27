@@ -39,6 +39,10 @@ const decodeAnswer = Schema.decodeUnknownEffect(ResolveProposalAnswer);
 /** OMP's refusals when the preview is gone or another resolve holds it (docs/rpc.md, 1.10.0). */
 const NOT_PENDING = /^No staged proposal\b|already being resolved|was already resolved/;
 
+/** OMP holds no preview for the tool call any more ("No staged proposal"): nothing will settle it. */
+export const isOmpProposalGone = (error: OmpRpcRequestError): boolean =>
+  error._tag === "OmpRpcCommandError" && /^No staged proposal\b/.test(error.detail);
+
 /** OMP refused because the proposal is no longer staged: the agent or another click resolved it. */
 export const isOmpProposalNotPending = (error: OmpRpcRequestError): boolean =>
   error._tag === "OmpRpcCommandError" && NOT_PENDING.test(error.detail);

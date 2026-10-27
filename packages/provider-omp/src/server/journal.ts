@@ -142,6 +142,8 @@ export type OmpJournalEntry =
       readonly state: OmpProposalState;
     }
   | { readonly k: "settleProposals"; readonly at: number }
+  /** A click OMP did not settle: the card stops offering but stays staged. */
+  | { readonly k: "withdraw"; readonly at: number; readonly toolCallId: string }
   /** The session ended and its extension status lines went with it. */
   | { readonly k: "clearStatus"; readonly at: number }
   /** Events the adapter emitted from outside the state objects (an imported session's history). */
@@ -171,6 +173,7 @@ const ENTRY_KINDS: Record<OmpJournalEntry["k"], true> = {
   closeAll: true,
   proposal: true,
   settleProposals: true,
+  withdraw: true,
   clearStatus: true,
   events: true,
 };
@@ -580,6 +583,13 @@ export class OmpJournaledMapper extends OmpThreadMapper {
     );
   }
 
+  override withdrawProposalOffer(toolCallId: string, now: DateTime.Utc): Array<Event> {
+    return this.#recorder.run(
+      () => ({ k: "withdraw", at: millis(now), toolCallId }),
+      () => super.withdrawProposalOffer(toolCallId, now),
+    );
+  }
+
   override settleProposals(now: DateTime.Utc): Array<Event> {
     return this.#recorder.run(
       () => ({ k: "settleProposals", at: millis(now) }),
@@ -939,6 +949,9 @@ export function replayOmpJournal(entries: Iterable<OmpJournalEntry>): OmpJournal
           break;
         case "proposal":
           push(mapper.resolveProposal(entry.toolCallId, entry.state, utc(entry.at)));
+          break;
+        case "withdraw":
+          push(mapper.withdrawProposalOffer(entry.toolCallId, utc(entry.at)));
           break;
         case "settleProposals":
           push(mapper.settleProposals(utc(entry.at)));

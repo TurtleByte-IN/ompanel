@@ -651,12 +651,9 @@ export class OmpThreadMapper {
   }
 
   /**
-   * `state` "proposed" withdraws the offer only: OMP no longer holds the preview for this click
-   * (another resolve won, or the answer never came), so the card keeps its state, without buttons.
-   */
-  /**
    * The user resolved the proposal `toolCallId` staged (`resolve_proposal`), or the agent did:
-   * its card shows the outcome and no longer offers Accept and Reject.
+   * its card shows the outcome and no longer offers Accept and Reject. `state` "proposed" means
+   * OMP holds no preview for it any more ("No staged proposal"): the card keeps its state.
    */
   resolveProposal(toolCallId: string, state: OmpProposalState, now: DateTime.Utc): Array<Event> {
     const item = this.#staged.get(toolCallId);
@@ -679,6 +676,26 @@ export class OmpThreadMapper {
         } as OrchestrationV2TurnItem,
       },
     ];
+  }
+
+  /**
+   * A click OMP did not settle (another resolve holds the preview, or no answer came): the card
+   * stops offering Accept and Reject but stays staged, so the agent's result still settles it.
+   */
+  withdrawProposalOffer(toolCallId: string, now: DateTime.Utc): Array<Event> {
+    const item = this.#staged.get(toolCallId);
+    const output = item?.type === "dynamic_tool" ? asRecord(item.output) : undefined;
+    const card = readOmpToolCard(output);
+    if (item === undefined || output === undefined || card?.kind !== "proposed_edit") return [];
+    if (card.resolvable !== true) return [];
+    const { resolvable: _offered, ...rest } = card;
+    const turnItem = {
+      ...item,
+      updatedAt: now,
+      output: { ...output, [OMP_CARD_OUTPUT_KEY]: rest },
+    } as OrchestrationV2TurnItem;
+    this.#staged.set(toolCallId, turnItem);
+    return [{ type: "turn_item.updated", driver: OMP_PROVIDER, turnItem }];
   }
 
   /** The session ended (closed, replaced or crashed): OMP dropped every staged preview. */
