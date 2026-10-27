@@ -107,6 +107,15 @@ command; `/vibe` stays in OMP's TUI.
 Each worker is an OMP subagent, shown in the thread's Agents panel tree under the `vibe_spawn`
 call that started it (see [subagents.md](./subagents.md#vibe-workers)).
 
+## Role chip
+
+On an OMP thread that runs as a role other than `default`, the composer bar shows a
+`Role: <name>` chip beside the traits control. It updates when the role changes.
+Clicking it opens the traits menu, where the Role select changes it. On the
+default role there is no chip, as with any trait left at its default. The role
+itself is described in [models.md](./models.md#role-chip).
+The chip is web and desktop only; the mobile composer has no traits menu.
+
 ## Magic keywords
 
 OMP reacts to a few words typed as standalone prose: `ultrathink` (the model's highest

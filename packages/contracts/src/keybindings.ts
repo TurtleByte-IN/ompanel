@@ -92,6 +92,8 @@ export const STATIC_KEYBINDING_COMMANDS = [
   "composer.sendAndNewThread",
   "composer.host",
   "composer.cycleHost",
+  "composer.cycleModel",
+  "composer.cycleModelBackward",
   "composer.effort",
   "composer.increaseEffort",
   "composer.decreaseEffort",

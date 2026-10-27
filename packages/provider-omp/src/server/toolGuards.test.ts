@@ -122,7 +122,6 @@ describe("ompRefusedSlashCommand", () => {
       "/plugins install evil",
       "/marketplace add https://evil",
       "/reload-plugins",
-      "/move /etc",
       "/add-dir /",
       "/remove-dir src",
       "/ssh host",
@@ -141,6 +140,22 @@ describe("ompRefusedSlashCommand", () => {
     ]) {
       assert.strictEqual(ompRefusedSlashCommand(text)?.reason, "builtin_command_refused", text);
     }
+  });
+
+  it("sends /move only while T3 approves OMP's directory changes", () => {
+    for (const text of ["/move ../repo-review", "/move /etc", "/move"]) {
+      assert.isUndefined(ompRefusedSlashCommand(text, {}, { hostOwnsCwdChange: true }), text);
+      // Without host-owned directory changes OMP would move the session anywhere itself.
+      assert.strictEqual(ompRefusedSlashCommand(text)?.reason, "builtin_command_refused", text);
+      assert.strictEqual(
+        ompRefusedSlashCommand(text, {}, { hostOwnsCwdChange: false })?.reason,
+        "builtin_command_refused",
+        text,
+      );
+    }
+    assert.match(String(ompRefusedSlashCommand("/move x")?.detail), /approves the target/);
+    // The `/` menu offers it; the adapter checks the session when it is sent.
+    assert.isTrue(ompBuiltinAllowed("move"));
   });
 
   it("refuses refused builtins under their aliases", () => {
@@ -191,6 +206,38 @@ describe("ompRefusedSlashCommand", () => {
     }
   });
 
+  it("sends /security only to list, show, compare or validate stored scans", () => {
+    // `scan` runs an auto-approved scan agent, `plan --output`/`export --output` write any path,
+    // `import` and `--knowledge-base` read any path, `cloud` reaches Codex Security,
+    // `status`/`cancel` rewrite other processes' running scans, `disposition` writes the store.
+    for (const text of [
+      "/security scan",
+      "/security SCAN --working-tree",
+      "/security:scan",
+      "/security plan --output /tmp/x",
+      "/security status",
+      "/security cancel secop_1",
+      "/security import /etc/passwd",
+      "/security export secscan_1 --output ~/.zshrc",
+      "/security cloud start --repo-id x --repo-url y --environment z",
+      "/security disposition secscan_1 f1 fixed done",
+      "/security frobnicate",
+    ]) {
+      assert.strictEqual(ompRefusedSlashCommand(text)?.reason, "builtin_command_refused", text);
+    }
+    for (const text of [
+      "/security",
+      "/security scans",
+      "/security show secscan_1",
+      "/security:SHOW security://scans/secscan_1/findings",
+      "/security compare secscan_1 secscan_2",
+      "/security validate secscan_1 f1",
+    ]) {
+      assert.isUndefined(ompRefusedSlashCommand(text), text);
+    }
+    assert.isTrue(ompBuiltinAllowed("security"));
+  });
+
   it("refuses a builtin OMP reports that the pinned table does not know, by name and alias", () => {
     const reported = ompReportedBuiltins([
       { name: "teleport", source: "builtin", aliases: ["tp"] },
@@ -221,6 +268,8 @@ describe("ompRefusedSlashCommand", () => {
       "/shared notes",
       "/compact focus",
       "/fresh",
+      "/handoff",
+      "/handoff:focus on the failing tests",
       "/wt feature",
       "/skill:tdd write tests",
       "/my-custom-template arg",

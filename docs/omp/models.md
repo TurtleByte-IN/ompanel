@@ -50,6 +50,16 @@ T3's selection. The composer's effort keys (`composer.increaseEffort` /
 `composer.decreaseEffort`) step through the thinking levels, and the model picker's
 keys switch models; each lands as a selection the next turn applies.
 
+`mod+alt+p` (**Composer: Cycle Model**) moves to the next model of the thread's
+provider without opening the picker; `mod+alt+shift+p` (**Composer: Cycle Model
+Backward**) moves back. On an OMP thread it steps through the models the picker
+lists, in the picker's order: favorites first, then OMP default and the catalog. It
+skips legacy models and models the picker disables, and wraps at either end. It
+changes T3's selection, so the next turn sends `set_model` as for a pick. OMP's TUI
+cycles on `Ctrl+P`, but `mod+p` already opens the file picker (and `mod` is `Ctrl`
+on Windows and Linux), so the default adds `Alt`. Rebind it in Settings →
+Keybindings.
+
 ## Thinking levels
 
 `inherit` (the default) leaves the level to OMP's config. A listed model offers `off`
@@ -69,7 +79,7 @@ refused (see [security.md](security.md)).
 
 ## Role chip
 
-On OMP default, the Role select runs the thread as one of OMP's chat roles (`smol`,
+On OMP default, the Role select in the traits menu runs the thread as one of OMP's chat roles (`smol`,
 `slow`, `plan`, `vision`, `task`, `advisor`, `commit`, `tiny`). The adapter writes
 `modelRoles.default: "@<role>"` to the thread's overlay before the process starts
 (overlays deep-merge, so the user's own `modelRoles` entries still apply), and a role
@@ -80,3 +90,6 @@ role's model; the adapter records it before it switches to the thread's session.
 resumed session reloads the model it recorded, so when that differs, the next turn
 on OMP default sends `set_model` with the launch model. Back on `default`, only a role
 alias is removed from the overlay; a model a settings override put there stays.
+
+A role other than `default` also shows as a chip (`Role: Smol`) beside the traits
+control in the composer bar ([composer.md](./composer.md#role-chip)).

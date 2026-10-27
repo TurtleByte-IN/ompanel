@@ -15,7 +15,10 @@ frames of one `omp --mode rpc-ui` process into V2 thread events. The adapter
 - The `prompt` response is echoed onto the frame stream, behind any
   `command_output` the prompt produced. It ends the turn when it is a failure
   (for example `session_busy`) or `agentInvoked: false` (a builtin slash
-  command that ran locally; no `prompt_result` follows).
+  command that ran locally; no `prompt_result` follows). `/compact` and
+  `/handoff` are the exception: OMP finishes them after the response, so their
+  turn ends with the closing `command_output`, or at a Stop
+  ([commands.md](./commands.md#-commands)).
 - Otherwise `prompt_result` with the prompt's id ends the turn: `completed`,
   `aborted` (interrupted) or `error` (failed; HTTP 429 is a usage limit).
 - After the turn the adapter reads `get_state` and `get_session_stats`

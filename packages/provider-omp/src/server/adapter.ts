@@ -474,7 +474,8 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       threadId: input.threadId,
       cwd,
       hostTools,
-      mcpSession: mcpSessions === undefined ? undefined : yield* mcpSessions.read(input.threadId),
+      readMcpSession:
+        mcpSessions === undefined ? Effect.succeed(undefined) : mcpSessions.read(input.threadId),
     });
     const now = yield* DateTime.now;
     const mapper = new OmpJournaledMapper(
@@ -1394,7 +1395,9 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
           : yield* options.commands.resolvePrompt(cwd, messageText);
       const refused = isContinuation
         ? undefined
-        : ompRefusedSlashCommand(promptText, reportedBuiltins);
+        : ompRefusedSlashCommand(promptText, reportedBuiltins, {
+            hostOwnsCwdChange: hostBridge.ownsCwdChange(),
+          });
       if (refused !== undefined) return yield* protocolError(refused.detail, refused.reason);
       yield* applySelection(turnInput.modelSelection);
       // T3 names the thread; OMP keeps it as a user-set title, which its own titling respects.
@@ -1473,6 +1476,8 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       );
       // A continuation sends nothing: no instructions reached OMP, and no prompt to restart.
       if (isContinuation) return;
+      // A credential T3 issued or replaced since the last prompt brings its MCP tools.
+      yield* hostBridge.refreshMcp;
       if (stated) instructionState = state;
       // A new attempt of the last turn's run is T3 restarting it ("interrupt and send", a
       // selection change): OMP aborts whatever it still runs or holds and takes the prompt.
@@ -1655,7 +1660,9 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
           const outcome =
             deferredSettle ??
             // A prompt that had finished, held for a message the Stop withdrew: nothing runs.
-            (answer._tag === "Success" && mapper.holdingOutcome && mapper.agentEnded
+            // A background `/compact` or `/handoff` the Stop cancelled sends nothing more.
+            (answer._tag === "Success" &&
+            ((mapper.holdingOutcome && mapper.agentEnded) || mapper.awaitingCommandOutput)
               ? ({ status: "interrupted" } as const)
               : null);
           deferredSettle = null;

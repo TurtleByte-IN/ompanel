@@ -2,14 +2,14 @@
 
 Six layers, from fastest to most faithful.
 
-| Layer           | Where                                                                                                                      | Drives                                                           |
-| --------------- | -------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| Unit            | `packages/provider-omp/src/**/*.test.ts`                                                                                   | Pure functions: launch arguments, approval-mode mapping, frames  |
-| Adapter         | `packages/provider-omp/src/server/adapter.test.ts` (and the process-layer tests next to it)                                | The adapter and thread process against the scripted fake `omp`   |
-| Control plane   | `packages/provider-omp/src/server/controlBinary.test.ts`                                                                   | `OmpControlService` against the scripted control fake `omp`      |
-| Replay fixtures | `apps/server/src/orchestration-v2/testkit/OmpReplayFixtures.integration.test.ts`, fixtures in `testkit/fixtures/omp_*`     | The process layer against stdout recorded from the pinned fork   |
-| End-to-end      | `apps/web/e2e/omp/omp-thread.spec.ts`, `omp-settings.spec.ts`, `omp-onboarding.spec.ts`, `omp-notify.spec.ts` (Playwright) | The web app and server against a real `omp` and a scripted model |
-| Live            | `apps/web/e2e/omp/omp-live.spec.ts` (Playwright, `OMPANEL_LIVE=1`)                                                         | The web app and server against a real `omp` and a real model     |
+| Layer           | Where                                                                                                                                                | Drives                                                           |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| Unit            | `packages/provider-omp/src/**/*.test.ts`                                                                                                             | Pure functions: launch arguments, approval-mode mapping, frames  |
+| Adapter         | `packages/provider-omp/src/server/adapter.test.ts` (and the process-layer tests next to it)                                                          | The adapter and thread process against the scripted fake `omp`   |
+| Control plane   | `packages/provider-omp/src/server/controlBinary.test.ts`                                                                                             | `OmpControlService` against the scripted control fake `omp`      |
+| Replay fixtures | `apps/server/src/orchestration-v2/testkit/OmpReplayFixtures.integration.test.ts`, fixtures in `testkit/fixtures/omp_*`                               | The process layer against stdout recorded from the pinned fork   |
+| End-to-end      | `apps/web/e2e/omp/omp-thread.spec.ts`, `omp-settings.spec.ts`, `omp-onboarding.spec.ts`, `omp-notify.spec.ts`, `omp-host-tools.spec.ts` (Playwright) | The web app and server against a real `omp` and a scripted model |
+| Live            | `apps/web/e2e/omp/omp-live.spec.ts` (Playwright, `OMPANEL_LIVE=1`)                                                                                   | The web app and server against a real `omp` and a real model     |
 
 The first four run in CI with the rest of the suite; none needs a model, an
 account or a built `omp`. The end-to-end test has its own CI job, `OMP E2E`,
@@ -265,6 +265,33 @@ agent-activity publish and 404s every other route. Its steps:
 3. turn Agent messages off; the next notify still reaches the relay (phones
    decide per device) but shows no toast.
 
+`apps/web/e2e/omp/omp-host-tools.spec.ts` covers T3's MCP tools in an OMP
+thread ([host-tools.md](host-tools.md)). Ompanel issues the thread an MCP
+credential, the driver gives OMP every tool of Ompanel's MCP server with
+`set_host_tools`, and the scripted model calls them by name. The first two
+steps run on one Full access thread, so no tool asks for approval:
+
+1. `tool: t3_preview_list {"limit":5}`: OMP offered the model `terminal` as a
+   tool and T3's MCP tools (`t3_preview_list`, `preview_open`,
+   `delegate_task`, …) as `xd://` devices in its system prompt. The model
+   calls the device with `write xd://t3_preview_list`, which goes through
+   Ompanel's MCP server. The result (the thread's preview tabs, none here)
+   comes back in the model's next request. The turn's work log shows the
+   `xd://t3_preview_list` entry, and the reply is `ran: …`.
+   `t3_preview_list` needs no browser to host a preview, so it runs headless;
+2. `tool: delegate_task {"task":…,"mode":"wait"}`: T3 starts a child thread on
+   the same OMP instance. The child's turn runs on the scripted model and
+   completes. The parent's tool result says `completed` and holds the child's
+   reply, and the parent's reply links the child. The child is listed in the
+   parent's Lineage panel and opens from there as a subagent thread with the
+   task and the reply.
+3. `/move` from the composer, on a new Full access thread. The test adds a git
+   worktree of the workspace on a new branch, plus an empty folder beside it.
+   `/move <folder>` reaches OMP, OMP asks the host, and the thread shows
+   `Move rejected by host: … is not a checkout of the project`. `/move <worktree>`
+   is accepted: OMP reports `Moved to …`, the thread shows the worktree's
+   branch, and the next message starts `omp` with `--cwd` at the worktree.
+
 `e2e/omp/ompSuite.ts` holds what the Playwright specs share: the hooks that
 start one stack and one paired page per file and record a trace per step, and
 the page helpers the steps use. `e2e/omp/ompStack.ts` starts everything in a
@@ -275,9 +302,14 @@ the OMP instance pointed at the given binary, and the scripted model
 (`e2e/omp/scriptedModel.ts`, adapted from the fork's
 `fake-openai-server.ts`). OMP's agent directory gets the model's
 `models.yml` and `modelRoles.default: fake/fake-model`. The model answers by
-the last message: `run: <command>` calls the shell tool, a tool result gets
-`ran: <first line>`, Ompanel's text generation prompts get the JSON they ask
-for, and anything else gets two streamed paragraphs. OMP's `collab.relayUrl`
+the last message: `run: <command>` calls the shell tool, a line
+`tool: <name> <json-args>` calls the offered tool `<name>` with those
+arguments, or writes them to its `xd://<name>` device when OMP mounted it
+there (T3's MCP tools; the reply `scripted model cannot call <name>: …` says
+it was offered neither way or the arguments are not a JSON object), a
+tool result gets `ran: <first line>`, Ompanel's text generation prompts get
+the JSON they ask for, and anything else gets two streamed paragraphs. OMP's
+`collab.relayUrl`
 is a loopback relay (`e2e/omp/collabRelay.ts`, cut down from the fork's
 `packages/collab-web/scripts/local-relay.ts`), so Share live opens and stops a
 real room without the internet. That step runs untraced and without
@@ -378,4 +410,11 @@ uploads the `omp-live` artifact. `OMP live` is not a required check.
 - `/compact` acks `{ agentInvoked: false }`, then sends
   `manual_compaction_start` and `manual_compaction_end` (with the compaction
   `result`, or `aborted`), then a `command_output` summary.
+- `/handoff [focus]` acks `{ agentInvoked: false }`, then sends one
+  `command_output` ("Context handed off and compacted in place.") once the
+  model wrote the document. There are no compaction frames and no
+  `session_info_update`; `get_state` keeps the session id and file, and
+  `get_entries` holds a new `compaction` entry.
+- `/security` with OMP's default `security.enabled: false` writes its
+  "Security is disabled" `command_output` before the ack.
 - `/context` output contains ANSI colour escapes.

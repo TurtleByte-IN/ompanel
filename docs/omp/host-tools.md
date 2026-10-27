@@ -1,16 +1,19 @@
 # OMP host tools
 
 A thread's `omp` process uses parts of T3 instead of its own: shell commands run
-in the thread's T3 terminal, T3's MCP tools are available to the agent, and
-`/wt` creates a T3 worktree. The OMP side is
+in the thread's T3 terminal, T3's MCP tools are available to the agent, T3
+threads and projects can be read as `t3://` URLs, `/wt` creates a T3 worktree,
+and `/move` moves the thread to another checkout of its project. The OMP side is
 `packages/provider-omp/src/server/hostTools.ts`. The T3 side is the
 `ProviderHostTools` service (`packages/provider-core/src/server/ProviderHostTools.ts`),
 implemented in `apps/server/src/provider/ProviderHostToolsLive.ts`.
 
-All of this is set up when the session opens, before the first prompt. When the
-T3 server does not provide `ProviderHostTools`, the session falls back to OMP's
-own shell and worktree handling. When a step fails, it is logged and the
-session opens without that feature.
+All of this is set up when the session opens, before the first prompt. Before
+each prompt the session also checks the thread's MCP credential again, in case
+T3 issued or replaced it since (see [T3 MCP tools](#t3-mcp-tools)). When the T3
+server does not provide `ProviderHostTools`, the session falls back to OMP's own
+shell and worktree handling. When a step fails, it is logged and the session
+goes on without that feature.
 
 ## Terminal
 
@@ -86,6 +89,51 @@ the other toolkits the thread's credential allows. A call is forwarded to the
 T3 MCP server over that connection. Text and image results come back as OMP
 tool content. The connection closes with the session.
 
+- The MCP tools are sent without `loadMode`. OMP then treats them as
+  discoverable and mounts each as an `xd://<tool>` device instead of a
+  top-level tool. The model reads `xd://<tool>` for the schema and calls the
+  tool by writing its JSON arguments there (`write {path: "xd://t3_preview_list",
+  content: "{…}"}`). Only `terminal` is sent as `essential` and stays a
+  top-level tool.
+- T3 issues the credential before it opens the provider session. The session
+  still reads it again before each prompt. When it appeared or changed
+  (endpoint, token, browser access), the session connects again and sends
+  `set_host_tools` once more, with the terminal and the new MCP tools. OMP
+  replaces its host tool set with each `set_host_tools`. A server that cannot
+  be reached is logged once per credential, not retried every turn.
+
+## T3 URI scheme (`t3://`)
+
+When the thread's MCP connection has T3's thread and project tools, the session
+registers one host URI scheme, `t3`, with `set_host_uri_schemes`. The agent
+reads these URLs with OMP's `read` tool:
+
+| URL                        | Answered by                      |
+| -------------------------- | -------------------------------- |
+| `t3://threads`             | `t3_thread_list` (this project)  |
+| `t3://thread/<threadId>`   | `t3_thread_read` (messages view) |
+| `t3://projects`            | `t3_project_list`                |
+| `t3://project/<projectId>` | `t3_project_read`                |
+
+- Only the paths whose tool the connection lists are served, and the scheme's
+  description lists only those. With none of the four tools, no scheme is
+  registered. A later connection without them registers an empty set, which
+  removes the scheme.
+- The scheme is read-only (`writable: false`, not `immutable`). A write is
+  answered with an error. To change T3 data the agent calls the T3 tools.
+- A read calls the tool with only the id from the URL, so the tool's defaults
+  apply (its own project, the `messages` view, the first page). An id may
+  contain `/`, raw or as `%2F`. A JSON result is returned as
+  `application/json`, anything else as `text/plain`. Image blocks are left
+  out, with a note.
+- An unknown path, or a tool that reports an error, is answered as a read
+  error with the reason. OMP shows it as the `read` tool's error.
+- OMP cancels a read with `host_uri_cancel`; the session interrupts the MCP
+  call.
+- `t3` is not one of OMP's built-in schemes, which OMP refuses to let a host
+  replace (`InternalUrlRouter.isBuiltin`). OMP's `read` tool resolves host
+  schemes through the same router as its own.
+
 ## Worktrees (`/wt`, `/move`)
 
 The session turns on `set_host_cwd_change`. After that, OMP sends a
@@ -97,32 +145,52 @@ The session turns on `set_host_cwd_change`. After that, OMP sends a
   session there. Then the thread is bound to the worktree: its metadata is
   updated, the project's setup script runs, and the agent terminal is closed
   so the next command opens in the worktree.
+- `/move <path>` (`reason: "move"`): a T3 thread stays in its project, but it
+  can move to another checkout of it. That is the project's folder, or a git
+  worktree of the project's repository that has a branch checked out (as
+  `git worktree list` reports it). Paths are compared with symlinks resolved.
+  The session answers `accepted` with the checkout's path, and OMP moves its
+  session there. Then the thread's metadata points at the checkout
+  (`worktreePath` is cleared for the project's folder) and its branch, and the
+  agent terminal is closed. No worktree is created or removed, and the setup
+  script does not run. A move to the directory the thread already works in is
+  accepted and changes nothing.
+- `/move` to any other directory is refused. A subdirectory of a checkout is
+  refused with the checkout to move to instead. A directory outside the
+  project is refused with the hint to add it as a project in T3 and start a
+  thread there. An archived thread cannot move. OMP shows a refusal as
+  `Move rejected by host: <reason>`.
+- The composer sends `/move` to OMP only when `set_host_cwd_change` was
+  accepted. Without it (an older contract, or OMP turned it down) OMP would
+  move the session into any directory itself, so the adapter refuses the
+  prompt with `builtin_command_refused`
+  ([security.md](./security.md#omp-builtins-from-the-composer)).
 - Changing a thread's workspace detaches its provider session. A turn still
-  running finishes first; this is the `/wt` turn itself, which binds the
-  thread before OMP has replied, so it completes normally. Until then the
-  session stays the thread's: archiving or deleting the thread, or a stricter
-  permission mode, still ends that turn at once (archive and delete revoke its
-  T3 MCP credential). Then the session is released and OMP exits; so does a
-  turn that fails to start, and if OMP exits or crashes first, the thread's
-  background jobs are cleared with it. The next message starts OMP in the
-  worktree, which reopens the same OMP session from the worktree's bucket
-  ([sessions.md](./sessions.md#reopening-a-thread)). OMP writes a session file
-  only once it has a reply, so after a `/wt` sent as a thread's first message
-  there is nothing to reopen and the next message starts a fresh session.
-- `/move <path>` (`reason: "move"`) is refused: a T3 thread stays in its project
-  or worktree. To work in another directory, start a new thread there.
+  running finishes first; this is the `/wt` or `/move` turn itself, which
+  moves the thread before OMP has replied, so it completes normally. Until then
+  the session stays the thread's: archiving or deleting the thread, or a
+  stricter permission mode, still ends that turn at once (archive and delete
+  revoke its T3 MCP credential). Then the session is released and OMP exits;
+  so does a turn that fails to start, and if OMP exits or crashes first, the
+  thread's background jobs are cleared with it. The next message starts OMP in
+  the new directory, which reopens the same OMP session from that directory's
+  bucket ([sessions.md](./sessions.md#reopening-a-thread)). OMP writes a
+  session file only once it has a reply, so after a `/wt` or `/move` sent as a
+  thread's first message there is nothing to reopen and the next message
+  starts a fresh session.
 - A worktree that cannot be created (not a git repository, detached HEAD, the
   branch exists, …) is refused with T3's reason. OMP shows it as
   `Worktree creation rejected by host: <reason>`.
 
 ## Contract versions
 
-| Feature                                                  | Needs RPC contract  |
-| -------------------------------------------------------- | ------------------- |
-| `set_host_tools` (MCP tools)                             | 1.0.0               |
-| `set_tool_enabled` (terminal in place of `bash`)         | 1.1.0               |
-| `set_host_cwd_change`, `host_cwd_change_request` (`/wt`) | 1.5.0 (oh-my-pi#38) |
+| Feature                                                           | Needs RPC contract  |
+| ----------------------------------------------------------------- | ------------------- |
+| `set_host_tools` (MCP tools)                                      | 1.0.0               |
+| `set_host_uri_schemes`, `host_uri_request` (`t3://`)              | 1.0.0               |
+| `set_tool_enabled` (terminal in place of `bash`)                  | 1.1.0               |
+| `set_host_cwd_change`, `host_cwd_change_request` (`/wt`, `/move`) | 1.5.0 (oh-my-pi#38) |
 
 The session compares the pinned contract (`omp.lock`) against these versions.
 It leaves out what the pinned sidecar cannot do. The current pin
-(v18.12.6-ompanel.4, RPC 1.8.0) has all three.
+(v18.12.6-ompanel.4, RPC 1.8.0) has all of them.

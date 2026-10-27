@@ -34,6 +34,11 @@ To change effort one step without opening the picker, bind
 Both are unbound by default. Increase wraps from the highest level to the
 lowest, and decrease wraps from the lowest level to the highest.
 
+Use `mod+alt+p` to switch to the next model of the thread's provider without
+opening the picker, and `mod+alt+shift+p` to go back. Models follow the picker's
+order and wrap at either end. Change them under **Composer: Cycle Model** and
+**Composer: Cycle Model Backward**.
+
 In the model picker, press Left in an empty search field or Shift+Tab to reach
 the provider list. Use Up/Down to move and Enter to choose. Right returns to
 model search. `mod+shift+up` and `mod+shift+down` switch providers directly and clear the
