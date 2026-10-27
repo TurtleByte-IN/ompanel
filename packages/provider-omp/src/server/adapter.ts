@@ -952,6 +952,24 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       }),
       isBusy: () => mapper.hasActiveTurn || sessionChanging,
     });
+    yield* options.threadSessions.list.pipe(
+      Effect.flatMap((open) =>
+        Effect.logInfo("TEMP-Z02 omp thread registered", {
+          instanceId: options.instanceId,
+          openThreads: open.length,
+        }),
+      ),
+    );
+    yield* Effect.addFinalizer(() =>
+      options.threadSessions.list.pipe(
+        Effect.flatMap((open) =>
+          Effect.logInfo("TEMP-Z02 omp thread scope closing", {
+            instanceId: options.instanceId,
+            openThreads: open.length,
+          }),
+        ),
+      ),
+    );
     // Before the first turn, so its tools and directory handling are in place.
     yield* hostBridge.setup;
 

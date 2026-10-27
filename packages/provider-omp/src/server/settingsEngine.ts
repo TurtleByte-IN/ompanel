@@ -273,6 +273,11 @@ export const makeOmpSettingsEngine = (deps: {
     field: OmpSettingsField,
     scope: OmpConfigScope,
   ) {
+    yield* Effect.logInfo("TEMP-Z02 omp launch-scoped check", {
+      key: field.key,
+      launchScoped: field.launchScoped,
+      scope,
+    });
     if (!field.launchScoped) return [];
     const affected = (yield* threads.openThreads).filter(
       (thread) => scope === "global" || isWithin(target.cwd, thread.cwd),
