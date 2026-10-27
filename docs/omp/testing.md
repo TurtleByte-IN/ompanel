@@ -342,7 +342,8 @@ the last message: `run: <command>` calls the shell tool, a line
 arguments, or writes them to its `xd://<name>` device when OMP mounted it
 there (T3's MCP tools; the reply `scripted model cannot call <name>: …` says
 it was offered neither way or the arguments are not a JSON object), a
-tool result gets `ran: <first line>`, Ompanel's text generation prompts get
+tool result gets `ran: <first line>`, `vibe spawn: <name>` in vibe mode starts
+one `good` worker named `<name>` with `vibe_spawn`, Ompanel's text generation prompts get
 the JSON they ask for, and anything else gets two streamed paragraphs. OMP's
 `collab.relayUrl`
 is a loopback relay (`e2e/omp/collabRelay.ts`, cut down from the fork's
