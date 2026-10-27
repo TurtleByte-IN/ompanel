@@ -1807,3 +1807,111 @@ describe("streamed feed updates", () => {
     expect(showsDelegation(steps[3]!)).toBe(false);
   });
 });
+
+// OMP notices (FR-23c), shaped as packages/provider-omp/src/server/mapper.ts emits them: advisor
+// notes, rule (TTSR) injections and model fallbacks are `notification` items; OMP compaction is a
+// `compaction` item.
+describe("OMP notices on mobile", () => {
+  const notice = (
+    id: string,
+    ordinal: number,
+    fields: { title: string; outcome: "failed" | "updated"; summary: string; detail: string },
+  ): OrchestrationV2TurnItem => ({
+    ...base(id, "2026-06-20T00:00:02.500Z", ordinal),
+    type: "notification",
+    source: { kind: "system" },
+    ...fields,
+  });
+  const advisor = notice("omp-advisor", 3, {
+    title: "Advisor",
+    outcome: "failed",
+    summary: "Advisor: Check the null case",
+    detail: "[blocker · safety] Check the null case",
+  });
+  const rule = notice("omp-ttsr", 4, {
+    title: "Rule injected",
+    outcome: "updated",
+    summary: "Rule injected: no-any",
+    detail: "no-any (/r/no-any.md)\nNever use any.",
+  });
+  const fallback = notice("omp-fallback", 5, {
+    title: "Fallback applied",
+    outcome: "updated",
+    summary: "Fallback applied: a/model-1 → b/model-2 (default)",
+    detail: "rate limited",
+  });
+  const compaction = (status: "running" | "completed"): OrchestrationV2TurnItem => ({
+    ...base("omp-compaction", "2026-06-20T00:00:02.800Z", 6),
+    type: "compaction",
+    driver: ProviderDriverKind.make("omp"),
+    status,
+    beforeTokenCount: 120_000,
+    ...(status === "completed" ? { afterTokenCount: 18_000 } : {}),
+  });
+  const activityOf = (entries: ReadonlyArray<ThreadFeedEntry>, id: string) =>
+    entries
+      .flatMap((entry) => (entry.type === "activity-group" ? entry.activities : []))
+      .find((activity) => activity.projectedItem.item.id === id);
+
+  it("shows advisor, rule and fallback notices as their own rows with detail on expand", () => {
+    const feed = buildThreadFeed(
+      [userMessage(), command(), advisor, rule, fallback, assistantMessage()].map((item, index) =>
+        projected(item, index),
+      ),
+    );
+    for (const [item, status] of [
+      [advisor, "failure"],
+      [rule, null],
+      [fallback, null],
+    ] as const) {
+      const activity = activityOf(feed, item.id);
+      const fields = item.type === "notification" ? item : null;
+      expect(activity).toMatchObject({
+        summary: fields?.summary,
+        // The row shows the summary; the detail opens when it is expanded.
+        detail: null,
+        canExpand: true,
+        status,
+      });
+      expect(activity?.getFullDetail()).toBe(fields?.detail);
+    }
+  });
+
+  it("keeps notices visible after the run settles while ordinary tool work folds", () => {
+    const presented = deriveThreadFeedPresentation(
+      buildThreadFeed(
+        [userMessage(), command(), advisor, rule, fallback, assistantMessage()].map((item, index) =>
+          projected(item, index),
+        ),
+      ),
+      {
+        runId,
+        status: "completed",
+        startedAt: "2026-06-20T00:00:01.000Z",
+        completedAt: "2026-06-20T00:00:04.000Z",
+      },
+      new Set(),
+    );
+    const notices = presented.flatMap((entry) =>
+      entry.type === "activity-group" ? entry.activities.map((activity) => activity.summary) : [],
+    );
+    expect(notices).toEqual([
+      "Advisor: Check the null case",
+      "Rule injected: no-any",
+      "Fallback applied: a/model-1 → b/model-2 (default)",
+    ]);
+    expect(presented.some((entry) => entry.type === "run-fold")).toBe(true);
+  });
+
+  it("shows OMP compaction as one divider while it runs and with token counts after", () => {
+    for (const [status, label] of [
+      ["running", "Compacting context"],
+      ["completed", "Context compacted 120K → 18K tokens"],
+    ] as const) {
+      const feed = buildThreadFeed([projected(userMessage(), 0), projected(compaction(status), 1)]);
+      const groups = feed.filter((entry) => entry.type === "activity-group");
+      expect(groups).toHaveLength(1);
+      expect(activityOf(feed, "omp-compaction")?.summary).toBe(label);
+    }
+  });
+});

@@ -107,6 +107,9 @@ from the instance and session id, so importing twice returns the same thread; a
 session a thread of this instance already runs (by its record) is shown as
 imported.
 
+Mobile lists the same sessions read-only under Settings → OMP (one project at a
+time, marking those already a thread); importing stays on web and desktop.
+
 ## Rewind and fork
 
 The code is in `sessionBranches.ts` and the adapter's `rollbackThread` and

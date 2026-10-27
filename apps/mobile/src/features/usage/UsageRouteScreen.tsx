@@ -53,6 +53,7 @@ import { UsageDailyChart } from "./UsageDailyChart";
 import { toggleUsageEnvironment } from "./usageEnvironmentSelection";
 import { useRefreshLimits } from "./UsageLimitsSection";
 import { UsageLimitsSection } from "./UsageLimitsPooled";
+import { OmpUsageSection, useOmpUsageInstances } from "./OmpUsageSection";
 import { Menu } from "../../components/ui/Menu";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
@@ -60,11 +61,16 @@ import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
 import type { UsageChartMetric } from "./usageChartData";
 import { PROVIDER_LABEL, useProviderColors, useUsageMixColors } from "./usageProviders";
 
-type UsageTab = "usage" | "limits";
+type UsageTab = "usage" | "limits" | "omp";
 const TAB_OPTIONS = [
   { value: "usage", label: "Usage" },
   { value: "limits", label: "Limits" },
 ] as const satisfies readonly { value: UsageTab; label: string }[];
+const OMP_TAB_OPTION = { value: "omp", label: "OMP" } as const;
+
+function usageTabFromParam(tabParam: string | undefined): UsageTab {
+  return tabParam === "usage" || tabParam === "omp" ? tabParam : "limits";
+}
 
 const WINDOW_OPTIONS = [
   { value: 1, label: "24h", accessibilityLabel: "Past 24 hours" },
@@ -94,13 +100,10 @@ function UsageScreen(props: {
   const insets = useSafeAreaInsets();
   const [selection, setSelection] = useState(() => ({
     params: props.tabParam,
-    tab: (props.tabParam === "usage" ? "usage" : "limits") as UsageTab,
+    tab: usageTabFromParam(props.tabParam),
   }));
   if (selection.params !== props.tabParam) {
-    setSelection({
-      params: props.tabParam,
-      tab: props.tabParam === "usage" ? "usage" : "limits",
-    });
+    setSelection({ params: props.tabParam, tab: usageTabFromParam(props.tabParam) });
   }
   const { tab } = selection;
   const setTab = (tab: UsageTab) => setSelection({ params: props.tabParam, tab });
@@ -161,6 +164,12 @@ function UsageScreen(props: {
   const [refreshingUsage, setRefreshingUsage] = useState(false);
   const refreshingRef = useRef(false);
   const showingLimits = tab === "limits";
+  const showingOmp = tab === "omp";
+  const [ompRefreshKey, setOmpRefreshKey] = useState(0);
+  const ompInstances = useOmpUsageInstances(selectedEnvironments);
+  // Kept while selected, so the tab does not vanish under the user when OMP is removed.
+  const tabOptions =
+    showingOmp || ompInstances.length > 0 ? [...TAB_OPTIONS, OMP_TAB_OPTION] : TAB_OPTIONS;
   const progress = usageProgress(selectedEnvironments, {
     refreshing: refreshingUsage,
     providerLabel,
@@ -280,7 +289,12 @@ function UsageScreen(props: {
         contentContainerClassName="gap-6 px-5 pt-4"
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
         refreshControl={
-          showingLimits || canReadDiagnostics ? (
+          showingOmp ? (
+            <RefreshControl
+              refreshing={false}
+              onRefresh={() => setOmpRefreshKey((key) => key + 1)}
+            />
+          ) : showingLimits || canReadDiagnostics ? (
             <RefreshControl
               refreshing={showingLimits ? limits.refreshing : refreshingUsage}
               onRefresh={showingLimits ? () => void limits.refresh() : refreshWindow}
@@ -288,13 +302,15 @@ function UsageScreen(props: {
           ) : undefined
         }
       >
-        <SegmentedControl options={TAB_OPTIONS} selected={tab} onSelect={setTab} role="tab" />
+        <SegmentedControl options={tabOptions} selected={tab} onSelect={setTab} role="tab" />
         <Animated.View
           key={tab}
           entering={FadeIn.duration(160).reduceMotion(ReduceMotion.System)}
           className="gap-6"
         >
-          {showingLimits ? (
+          {showingOmp ? (
+            <OmpUsageSection environments={selectedEnvironments} refreshKey={ompRefreshKey} />
+          ) : showingLimits ? (
             <UsageLimitsSection
               now={limits.now}
               failedLabels={limits.failedLabels}

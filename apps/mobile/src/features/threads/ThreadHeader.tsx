@@ -22,7 +22,7 @@ export function ThreadHeader(
   const goBack = useWorkspaceBackNavigation("threads");
   const { layout, panes, toggleAuxiliaryPane, composerKeyboardActive } =
     useAdaptiveWorkspaceLayout();
-  const { onOpenTerminal, onMergeBack } = props.gitControls;
+  const { onOpenTerminal, onMergeBack, onOpenOmp } = props.gitControls;
   const native = useThreadHeaderOptions(props);
   const androidHeaderActions = useMemo<ReadonlyArray<AppBarAction>>(() => {
     const actions: AppBarAction[] = [];
@@ -61,6 +61,9 @@ export function ThreadHeader(
         onPress: onMergeBack,
       });
     }
+    if (onOpenOmp) {
+      actions.push({ accessibilityLabel: "OMP actions", icon: "sparkles", onPress: onOpenOmp });
+    }
     return actions;
   }, [
     props.inspectorMode,
@@ -68,6 +71,7 @@ export function ThreadHeader(
     props.onOpenFilesInspector,
     onOpenTerminal,
     onMergeBack,
+    onOpenOmp,
     props.onOpenGitInspector,
     toggleAuxiliaryPane,
     props.onReturnToThread,

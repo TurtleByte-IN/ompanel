@@ -7,9 +7,12 @@ and transcript, and can steer, kill and revive them.
 On mobile the agents sheet shows the same tree when the thread has OMP
 subagents (records with `controls`): status, nesting, model, cost, tokens and
 tool calls per row, and the selected subagent's transcript, paged the same way.
-Tapping an OMP subagent in a thread's work log opens it there. Mobile reads;
-steer, kill and revive stay on web and desktop. Both clients share the view
-model in `@t3tools/client-runtime/state/agents-tree`.
+Tapping an OMP subagent in a thread's work log opens it there. The selected
+subagent also has the web panel's controls, as far as its provider and status
+allow: a message box with Send to steer it and Kill while it runs, and Revive
+with an optional message once it stopped; a failed control shows OMP's message
+under them. Both clients share the view model in
+`@t3tools/client-runtime/state/agents-tree`.
 
 ## Where the records come from
 

@@ -79,6 +79,7 @@ type ThreadGitHeaderActionItems = {
   readonly terminal: HeaderItem;
   readonly files: HeaderItem;
   readonly git: HeaderItem;
+  readonly omp: HeaderItem | null;
 };
 type QuickActionIcon =
   | "arrow.down.circle"
@@ -111,6 +112,8 @@ type ThreadGitControlsProps = ThreadGitMenuProps & {
   readonly projectScripts: ReadonlyArray<ProjectScript>;
   readonly terminalSessions: ReadonlyArray<TerminalMenuSession>;
   readonly showActionControls?: boolean;
+  /** Opens the OMP section; present only for a thread that runs on OMP. */
+  readonly onOpenOmp?: () => void;
   readonly showDirectFileControl?: boolean;
   readonly onOpenTerminal: (terminalId?: string | null) => void;
   readonly onOpenNewTerminal: () => void;
@@ -414,17 +417,33 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
       type: "menu",
       variant: "plain",
     },
+    omp: props.onOpenOmp
+      ? {
+          accessibilityLabel: "OMP actions",
+          icon: { name: "sparkles", type: "sfSymbol" },
+          identifier: "thread-right-omp",
+          label: "OMP",
+          onPress: props.onOpenOmp,
+          sharesBackground: true,
+          type: "button",
+          variant: "plain",
+        }
+      : null,
   };
 }
 
 export function useThreadGitRightHeaderItems(props: ThreadGitControlsProps): HeaderItems {
   const actionItems = useThreadGitHeaderActionItems(props);
-  return [actionItems.git, actionItems.files, actionItems.terminal] as HeaderItems;
+  return [actionItems.git, actionItems.files, actionItems.terminal, actionItems.omp].filter(
+    (item) => item !== null,
+  );
 }
 
 export function useThreadGitCenterHeaderItems(props: ThreadGitControlsProps): HeaderItems {
   const actionItems = useThreadGitHeaderActionItems(props);
-  return [actionItems.files, actionItems.git, actionItems.terminal] as HeaderItems;
+  return [actionItems.files, actionItems.git, actionItems.terminal, actionItems.omp].filter(
+    (item) => item !== null,
+  );
 }
 
 export function ThreadGitControls(props: ThreadGitControlsProps) {
@@ -508,6 +527,14 @@ export function ThreadGitControls(props: ThreadGitControlsProps) {
           disabled={!props.canOpenFiles}
           icon="folder"
           onPress={model.openFiles}
+          separateBackground
+        />
+      ) : null}
+      {showActionControls && props.onOpenOmp ? (
+        <Toolbar.Button
+          accessibilityLabel="OMP actions"
+          icon="sparkles"
+          onPress={props.onOpenOmp}
           separateBackground
         />
       ) : null}

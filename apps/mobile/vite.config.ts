@@ -18,8 +18,16 @@ const reactTests = [
   "src/features/threads/OmpToolCard.test.tsx",
   "src/features/threads/OmpRuntimeRequestCards.test.tsx",
   "src/features/threads/ThreadAgentsTree.test.tsx",
+  "src/features/threads/WorkLogOutputImages.test.tsx",
   "src/features/settings/OmpAccountsSection.test.tsx",
   "src/features/settings/SettingsOmpRouteScreen.test.tsx",
+  "src/features/settings/OmpPluginsSummary.test.tsx",
+  "src/features/settings/OmpAgentDirectorySummary.test.tsx",
+  "src/features/settings/OmpSessionsSummary.test.tsx",
+  "src/features/usage/OmpUsageSection.test.tsx",
+  "src/features/threads/ThreadGoalPanel.test.tsx",
+  "src/features/threads/OmpThreadMenu.test.tsx",
+  "src/features/threads/ThreadOmpSheet.test.tsx",
 ];
 
 export default defineConfig({

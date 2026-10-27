@@ -130,6 +130,16 @@ summaries (value, source layer, restart note; credentials show only whether one 
 Editing stays on web and desktop; OMP sign-in on mobile lives under Provider accounts
 ([accounts.md](accounts.md)).
 
+**Mobile.** Below each OMP instance's settings, Settings → OMP on mobile also lists, read-only
+and over the same RPCs as web: Plugins (installed plugins with version, source, enabled and
+project-override state, plus marketplaces) and Skills (name, source, hidden flag, path, OMP's
+warnings) from `server.listOmpPlugins` and `server.listOmpSkills`; Advisor & Agents files, MCP
+servers (name, transport, command or URL, disabled, file state) and Customization files by kind
+from one `server.listOmpAgentFiles` read; and OMP sessions, one project at a time from
+`server.listOmpSessions`. Each part loads and fails on its own. Mobile has no install, enable,
+reload, update check, open, create, unpack or import action: those change the host and stay on
+web and desktop. Session import in particular creates a thread and is not offered on mobile.
+
 | Page              | Keys                                                                                                                                                                                                         |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Models & Roles    | `modelRoles` (one field per role), `modelRoleStorage`, `modelTags`, `modelProviderOrder`, `cycleOrder`, `enabledModels`, `disabledProviders`, `includeModelInPrompt`                                         |
