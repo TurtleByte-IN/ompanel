@@ -1964,14 +1964,16 @@ export function GeneralSettingsPanel() {
  * server-wide trust. Says plainly when the server's OMP does not enforce it (contract < 1.9.0).
  */
 function TrustProjectAgentConfigSetting() {
-  const { scope, targets } = useSettingsScope();
+  const { scope, targets, connectedEnvironments } = useSettingsScope();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   if (scope.kind !== "project" && scope.kind !== "checkout") return null;
   const enforced =
     targets.length > 0 &&
     targets.every(
-      (target) => target.serverConfig?.environment.capabilities.ompWorkspaceTrust === true,
+      (target) =>
+        connectedEnvironments.find((entry) => entry.environmentId === target.environmentId)
+          ?.serverConfig?.environment.capabilities.ompWorkspaceTrust === true,
     );
   return (
     <SettingsRow
