@@ -180,6 +180,41 @@ another commit. For each scenario it:
    the process layer, and only then writes the fixture. A failed live run
    leaves what it saw in `$TMPDIR/omp-record-<name>.failed.ndjson`.
 
+## RPC wire contract
+
+`packages/provider-omp/src/contract.test.ts` validates frames against the vendored
+`packages/provider-omp/contract/rpc-wire.schema.json` with Ajv (2020-12, strict): every
+`emit_inbound`/`expect_outbound` frame in
+`apps/server/src/orchestration-v2/testkit/fixtures/omp_*/omp_transcript.ndjson`, the `fakeOmpFrames`
+builders, and what `fakeOmp.fixture.mjs` writes (handshake, `get_state`, collab, unsupported, a
+scripted turn, `rpc_chunk` reassembled, the session-store answers). Host commands are checked against
+their `params`, OMP frames against `RpcServerFrame`, and successful response `data` against the
+command's `result` (absent `data` is allowed, as `RpcResponse` declares). An unknown frame `type`,
+malformed frames and mismatched response data are rejected. The schema closes no object, so
+undeclared properties pass until a pin closes one; a re-pin whose recorded frames stop conforming
+fails here.
+
+```sh
+cd packages/provider-omp && pnpm exec vp test run --config ../../vite.config.ts --dir . src/contract.test.ts
+```
+
+## Component checks
+
+- Share gist: `apps/web/src/components/chat/OmpShareGistDialog.browser.test.tsx` ("uploads only
+  after the confirm, then shows the share link and its gist"; "shows the trim note when OMP trimmed
+  large content"; "shows the refusal when gh is missing, with no link, and lets the user retry";
+  "Cancel closes the dialog without uploading"). Server side:
+  `threadMenuController.test.ts` › "refuses Share gist before anything uploads unless gh is signed in".
+- OMP instance Profile field:
+  `apps/web/src/components/settings/ProviderSettingsForm.omp.browser.test.tsx` shows Profile after
+  Binary path (placeholder "default"), stores a valid name and omits it when cleared; invalid names
+  ("Work Space", "../work", "-work", "con") fail `OmpSettings`, the schema the server decodes instance
+  config with (`settings.test.ts` › "OmpSettings.profile").
+
+```sh
+cd apps/web && pnpm exec vp test run --project browser src/components/chat/OmpShareGistDialog.browser.test.tsx src/components/settings/ProviderSettingsForm.omp.browser.test.tsx
+```
+
 ## End-to-end
 
 `apps/web/e2e/omp/omp-thread.spec.ts` is gate G1: one OMP thread through the
@@ -312,8 +347,8 @@ the JSON they ask for, and anything else gets two streamed paragraphs. OMP's
 `collab.relayUrl`
 is a loopback relay (`e2e/omp/collabRelay.ts`, cut down from the fork's
 `packages/collab-web/scripts/local-relay.ts`), so Share live opens and stops a
-real room without the internet. That step runs untraced and without
-screenshots, and its two links join the teardown secrets scan. Nothing reads
+real room without the internet. That step runs untraced; the parity spec's QR
+screenshot masks the code and both links, and its two links join the teardown secrets scan. Nothing reads
 the developer's `~/.omp` or Ompanel home, and no API key is used.
 
 Run it locally (the Node version in `package.json` `engines`, `bun`, and a
@@ -340,6 +375,34 @@ In CI, `OMP E2E` caches the binary by the pinned commit, so only the first
 run after a re-pin builds it; it uploads the screenshots, traces and report as
 the `omp-e2e` artifact. The build and the Chromium install are the composite
 action `.github/actions/setup-omp-e2e`, shared with `OMP live`.
+
+### Parity checks
+
+`apps/web/e2e/omp/omp-parity.spec.ts` runs in the same stack as the G1 thread suite and is part of
+`test:e2e`. Steps, in order:
+
+1. "opens the Agents panel and lists fanned-out subagents": `fanout: parity-alpha, parity-beta` in
+   Full access; the Agents panel lists both as Completed.
+2. "shows T3's checkpoint summary under an OMP turn that changed a file": a turn rewrites
+   `README.md`; the summary under it reads "1 changed file", +2 −1, `README.md`, Open diff.
+3. "shows the Share live browser link as a QR code, outside the trace": untraced; the QR code
+   rendered in the dialog encodes exactly the browser link (compared module by module with
+   `@t3tools/shared/qrCode`); the screenshot masks the QR code and both links, and both links join
+   the teardown secrets scan.
+4. "launches an OMP thread on the instance's named profile": the profile `parity-work` gets the
+   scripted model's `config.yml` and `models.yml`. The step sets Profile on the OMP instance in
+   Settings → Providers and starts a new thread. The thread's `omp` runs with
+   `--profile parity-work`, and its session file is under
+   `~/.omp/profiles/parity-work/agent/sessions`, not the default agent directory.
+
+Artifacts go to `apps/web/.playwright/omp-parity-artifacts/`, or to `parity/` under
+`OMPANEL_E2E_ARTIFACTS_DIR`. Run it alone with
+`pnpm --filter @t3tools/web exec playwright test e2e/omp/omp-parity.spec.ts` (after `vp build`,
+with `OMPANEL_E2E_OMP_BINARY` set).
+
+In CI, `OMP E2E` also runs the live suite against the scripted model after `Test`
+(`test:e2e:live:prebuilt`: `OMPANEL_LIVE=1`, without rebuilding the web app) and uploads it as the
+`omp-e2e-live` artifact.
 
 ## Live suite
 
@@ -392,8 +455,8 @@ In CI, `.github/workflows/omp-live.yml` (`OMP live`) runs the suite nightly,
 on pull requests that change it, and on demand (`workflow_dispatch`, with an
 optional `model` input; `scripted` needs no key). The key is the repository
 secret `OMPANEL_LIVE_ANTHROPIC_API_KEY`, passed to the test step's
-environment only. Without it the job passes, runs nothing, and posts the
-notice "OMP live suite skipped" on the run and in its summary. The run
+environment only. Without it the job runs the suite against the scripted model
+and posts the notice "OMP live suite ran scripted" on the run and in its summary. The run
 uploads the `omp-live` artifact. `OMP live` is not a required check.
 
 ## What the recordings show (pinned tag)

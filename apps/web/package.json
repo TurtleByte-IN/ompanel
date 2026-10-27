@@ -11,7 +11,8 @@
     "preview": "vp preview",
     "test": "vp test run --passWithNoTests --project unit --project browser",
     "test:e2e": "vp build && playwright test",
-    "test:e2e:live": "vp build && OMPANEL_LIVE=1 playwright test e2e/omp/omp-live.spec.ts"
+    "test:e2e:live": "vp build && OMPANEL_LIVE=1 playwright test e2e/omp/omp-live.spec.ts",
+    "test:e2e:live:prebuilt": "OMPANEL_LIVE=1 playwright test e2e/omp/omp-live.spec.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",

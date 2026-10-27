@@ -87,6 +87,7 @@ posixOnly("startOmpRpcProcess", () => {
         const frame = yield* omp.frames.pipe(Stream.runHead);
         assert.deepStrictEqual(Option.getOrUndefined(frame), {
           type: "notice",
+          level: "info",
           message: "negotiated",
         } as never);
 

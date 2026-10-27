@@ -421,7 +421,7 @@ function spawnTree() {
   child.stdout.once("data", (data) => {
     const tree = { omp: process.pid, child: child.pid, grandchild: Number(String(data)) };
     if (stateDir) NodeFS.writeFileSync(NodePath.join(stateDir, "tree.json"), JSON.stringify(tree));
-    write({ type: "notice", message: "tree", tree });
+    write({ type: "notice", level: "info", message: "tree", tree });
   });
 }
 
@@ -530,7 +530,9 @@ function answerCollab(command) {
   respond({ stopped });
   if (stopped) write({ type: "collab_state", active: false, participantCount: 0 });
 }
-if (env.FAKE_OMP_FIRST_FRAME === "notice") write({ type: "notice", message: "too early" });
+if (env.FAKE_OMP_FIRST_FRAME === "notice") {
+  write({ type: "notice", level: "info", message: "too early" });
+}
 write({
   type: "ready",
   protocolVersion: 1,
@@ -544,7 +546,7 @@ if (script.afterReady !== undefined) runSteps(script.afterReady, undefined);
 
 function afterNegotiate() {
   runSteps(
-    script.afterNegotiate ?? [{ emit: { type: "notice", message: "negotiated" } }],
+    script.afterNegotiate ?? [{ emit: { type: "notice", level: "info", message: "negotiated" } }],
     undefined,
   );
 }
