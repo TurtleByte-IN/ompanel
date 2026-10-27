@@ -57,9 +57,9 @@ carry `--approval-mode` followed by one of `always-ask`, `always-ask-cached`,
 `write` or `yolo`; the session then fails to start with an `OmpRpcError`
 (`reason: "spawn"`) and no process is created. This covers a runtime mode the
 build does not know as well as a caller that builds its own command line. The
-fork's `omp --mode rpc-ui` refuses to start without the flag as well
-(TurtleByte-IN/oh-my-pi#46), from the first fork tag that carries it; until the
-lock is re-pinned to such a tag, the check here is the only one.
+fork's `omp --mode rpc-ui` refuses to start without the flag as well from tag
+v18.12.6-ompanel.4 (TurtleByte-IN/oh-my-pi#46); while `omp.lock` pins an
+earlier tag, the check here is the only one.
 
 ## Permission mode changes
 

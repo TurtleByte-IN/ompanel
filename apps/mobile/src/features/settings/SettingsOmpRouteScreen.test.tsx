@@ -19,6 +19,7 @@ vi.mock("../../components/ui/AppText", () => ({
 }));
 vi.mock("../../components/ui/ScreenScrollView", () => ({ ScreenScrollView: () => null }));
 vi.mock("../../state/presentation", () => ({ environmentPresentations: {} }));
+vi.mock("../../state/entities", () => ({ useProjects: () => [] }));
 vi.mock("../../state/server", () => ({ serverEnvironment: {} }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 vi.mock("./components/SettingsEnvironmentFilterHeader", () => ({

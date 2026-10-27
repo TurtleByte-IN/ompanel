@@ -80,6 +80,15 @@ OMP continues a goal on its own between turns only when its `goal.continuationMo
 includes `rpc` (Settings → OMP → Modes); those runs reach the thread as continuation turns.
 Otherwise each message works toward the goal.
 
+On mobile the floating goal pill above an OMP thread's composer opens the **Goal** sheet, and
+so does **Goal** in the thread's OMP sheet (the sparkles button in the thread header), so a
+thread without a goal can set one. The sheet shows the same summary, Pause, Resume and Drop,
+the set form with its optional token budget ("Enter a whole number of tokens." for anything but
+a positive whole number) and the `goal.continuationModes` note. Each action is queued as its own
+`/goal …` user turn through the thread outbox, the path the composer sends through; while the
+thread is working the actions wait for the turn to end. The sheet is
+`apps/mobile/src/features/threads/ThreadGoalPanel.tsx`.
+
 ## Vibe mode
 
 In vibe mode the agent directs persistent `fast` and `good` worker sessions (`vibe_spawn`,

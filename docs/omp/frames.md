@@ -8,8 +8,8 @@ frames of one `omp --mode rpc-ui` process into V2 thread events. The adapter
 
 - Opening a thread binds it to the session the process opened: `get_state`
   gives the session id (the provider thread's native id), the title, the
-  context window and the todo list. Switching to another session is not
-  wired yet.
+  context window and the todo list. A thread that ran an earlier session
+  reopens it with `switch_session` first ([sessions.md](sessions.md#reopening-a-thread)).
 - A turn is one `prompt`. Before sending it, the adapter sets the OMP session
   name to the thread's title (`set_session_name`), so OMP never auto-titles it.
 - The `prompt` response is echoed onto the frame stream, behind any
@@ -52,6 +52,12 @@ frames of one `omp --mode rpc-ui` process into V2 thread events. The adapter
 | `subagent_lifecycle` / `subagent_progress`                                                               | Subagent records for the agents panel (see [subagents.md](subagents.md)); at any time, not only in a turn.                                                                                                                                                                      |
 | anything else; any frame above outside a turn, except `session_info_update`, dialogs and subagent frames | Ignored (frames of a run OMP started on its own wait for a turn, see above).                                                                                                                                                                                                    |
 
+On mobile the advisor, rule and fallback notifications are their own rows in the thread (a
+blocker advisor note marked failed) that stay visible after the run's other tool work folds; the
+detail opens when the row is expanded. OMP compaction is one divider, "Compacting context" while
+it runs and the token counts after (`apps/mobile/src/lib/threadActivity.test.ts` ‹OMP notices on
+mobile›).
+
 ## Tool cards
 
 | Tool                                         | Card                                                                                                                                                                                                                                                                   |
@@ -75,7 +81,8 @@ frames of one `omp --mode rpc-ui` process into V2 thread events. The adapter
 
 Carded tools keep OMP's content blocks in the item output and add the card under `ompCard`
 (`OmpToolCard` in `@t3tools/contracts`); the web item inspector and the mobile work log render it
-in place of the raw output.
+in place of the raw output. On mobile an expanded eval row shows the images the cells produced
+above the card, in one swipeable preview gallery (`WorkLogOutputImages.test.tsx`).
 
 ## Todos
 

@@ -65,6 +65,7 @@ import { ThreadPullRequestsSheet } from "./features/threads/ThreadPullRequestsSh
 import { ThreadAgentsSheet } from "./features/threads/ThreadAgentsSheet";
 import { ThreadBackgroundWorkSheet } from "./features/threads/ThreadBackgroundWorkSheet";
 import { ThreadQueueSheet } from "./features/threads/ThreadQueueControl";
+import { ThreadGoalSheet, ThreadOmpSheet } from "./features/threads/ThreadOmpSheet";
 import {
   FullscreenThreadRouteScreen,
   ThreadRouteScreen,
@@ -929,6 +930,24 @@ const RootStackConfig = createWorkspaceStackNavigator({
         ...HORIZONTAL_FORM_SHEET_OPTIONS,
         headerShown: false,
         sheetAllowedDetents: formSheetDetents(0.5, 0.9),
+        sheetGrabberVisible: true,
+      },
+    }),
+    ThreadOmp: createNativeStackScreen({
+      screen: ThreadOmpSheet,
+      options: {
+        ...HORIZONTAL_FORM_SHEET_OPTIONS,
+        headerShown: false,
+        sheetAllowedDetents: formSheetDetents(0.6, 0.95),
+        sheetGrabberVisible: true,
+      },
+    }),
+    ThreadGoal: createNativeStackScreen({
+      screen: ThreadGoalSheet,
+      options: {
+        ...HORIZONTAL_FORM_SHEET_OPTIONS,
+        headerShown: false,
+        sheetAllowedDetents: formSheetDetents(0.6, 0.95),
         sheetGrabberVisible: true,
       },
     }),

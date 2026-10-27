@@ -23,6 +23,10 @@
       "types": "./src/composer.ts",
       "import": "./src/composer.ts"
     },
+    "./branchTree": {
+      "types": "./src/branchTree.ts",
+      "import": "./src/branchTree.ts"
+    },
     "./settingsPages": {
       "types": "./src/settingsPages.ts",
       "import": "./src/settingsPages.ts"

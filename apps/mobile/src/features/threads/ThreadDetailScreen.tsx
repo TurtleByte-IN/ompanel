@@ -67,10 +67,7 @@ import {
   type ApprovalResponder,
   type ThreadUserInputQuestion,
 } from "@t3tools/client-runtime/state/thread-requests";
-import {
-  presentPendingBackgroundWork,
-  presentProviderGoal,
-} from "@t3tools/client-runtime/state/thread-execution";
+import { presentPendingBackgroundWork } from "@t3tools/client-runtime/state/thread-execution";
 import { resolveSubagentPillSegment } from "@t3tools/client-runtime/state/thread-subagents";
 import {
   formatModelSelectionEffort,
@@ -178,7 +175,12 @@ import {
   FLOATING_WORKING_CONTROL_COVERAGE,
   FloatingWorkingControl,
 } from "./floating-working-control";
-import { connectionFloatingStatus, type FloatingWorkingStatus } from "./floating-working-status";
+import {
+  connectionFloatingStatus,
+  goalFloatingStatus,
+  type FloatingWorkingStatus,
+} from "./floating-working-status";
+import { useOmpThreadInstanceId } from "./omp-thread";
 import {
   derivePendingUserInputMaxHeight,
   ESTIMATED_KEYBOARD_HEIGHT,
@@ -676,6 +678,10 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
   const pendingBackgroundWork = presentPendingBackgroundWork(
     props.selectedThread.pendingBackgroundTasks,
   );
+  const ompInstanceId = useOmpThreadInstanceId({
+    environmentId: props.environmentId,
+    threadId: props.selectedThread.id,
+  });
   const floatingStatus = ((): FloatingWorkingStatus | null => {
     const connectionStatus = connectionFloatingStatus({
       connectionError: props.connectionError,
@@ -771,12 +777,17 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
       };
     }
     if (props.selectedThread.goal !== null && contentPresentationKind === "ready") {
-      const goal = presentProviderGoal(props.selectedThread.goal, false);
-      return {
-        kind: "goal",
-        label: goal.title,
-        accessibilityLabel: `${goal.title}: ${goal.objective}`,
-      };
+      return goalFloatingStatus({
+        goal: props.selectedThread.goal,
+        isOmpThread: ompInstanceId !== null,
+        onOpenGoal: () => {
+          Keyboard.dismiss();
+          navigation.navigate("ThreadGoal", {
+            environmentId: props.environmentId,
+            threadId: props.selectedThread.id,
+          });
+        },
+      });
     }
     return null;
   })();

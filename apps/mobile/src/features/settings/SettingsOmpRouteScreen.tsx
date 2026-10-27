@@ -1,6 +1,7 @@
 // Settings → OMP on mobile: read-only summaries of the OMP settings pages web and desktop edit
-// (apps/web/src/components/settings/OmpSettingsPage.tsx). Accounts stay editable under Provider
-// accounts; everything here is shown, never written (FR-19).
+// (apps/web/src/components/settings/OmpSettingsPage.tsx), plus plugins, skills, the agent
+// directory's files and saved sessions. Accounts stay editable under Provider accounts;
+// everything here is shown, never written (FR-19).
 import { useAtomValue } from "@effect/atom-react";
 import {
   isAtomCommandInterrupted,
@@ -29,6 +30,9 @@ import {
 } from "./components/SettingsEnvironmentFilterHeader";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
+import { OmpAgentDirectorySummary } from "./OmpAgentDirectorySummary";
+import { OmpPluginsSummary, OmpSkillsSummary } from "./OmpPluginsSummary";
+import { OmpSessionsSummary } from "./OmpSessionsSummary";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
 
 const SOURCE_LABEL: Record<OmpConfigSource, string> = {
@@ -154,8 +158,8 @@ export function SettingsOmpRouteScreen() {
           contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
         >
           <Text className="text-sm text-foreground-muted">
-            Read-only. Change OMP settings in web or desktop Settings; sign in under Provider
-            accounts.
+            Read-only. Change OMP settings, plugins and agent files, and import sessions, in web or
+            desktop Settings; sign in under Provider accounts.
           </Text>
           {selectedTargets.length === 0 ? (
             <Text className="text-foreground-muted">Select a connected environment.</Text>
@@ -172,11 +176,27 @@ export function SettingsOmpRouteScreen() {
                 ];
               }
               return instances.map((provider) => (
-                <View key={`${environment.environmentId}:${provider.instanceId}`} className="gap-3">
+                <View key={`${environment.environmentId}:${provider.instanceId}`} className="gap-6">
                   <Text className="text-lg font-semibold text-foreground">
                     {`${environment.label} · ${provider.displayName ?? provider.instanceId}`}
                   </Text>
                   <OmpSettingsSummary
+                    environmentId={environment.environmentId}
+                    instanceId={provider.instanceId}
+                  />
+                  <OmpPluginsSummary
+                    environmentId={environment.environmentId}
+                    instanceId={provider.instanceId}
+                  />
+                  <OmpSkillsSummary
+                    environmentId={environment.environmentId}
+                    instanceId={provider.instanceId}
+                  />
+                  <OmpAgentDirectorySummary
+                    environmentId={environment.environmentId}
+                    instanceId={provider.instanceId}
+                  />
+                  <OmpSessionsSummary
                     environmentId={environment.environmentId}
                     instanceId={provider.instanceId}
                   />

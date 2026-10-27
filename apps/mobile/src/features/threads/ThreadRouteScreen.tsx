@@ -63,6 +63,7 @@ import { terminalDebugLog } from "../terminal/terminalDebugLog";
 import type { ThreadDetailScreenProps } from "./ThreadDetailScreen";
 import { ThreadScreenBinding, ThreadScreenFallback, ThreadScreenHost } from "./ThreadScreenHost";
 import { draftRouteIdentity } from "./thread-route-state";
+import { useOmpThreadInstanceId } from "./omp-thread";
 import { NewTaskDraftRouteScreen, type NewTaskDraftRouteParams } from "./NewTaskDraftRouteScreen";
 import { GitOverviewSheet } from "./git/GitOverviewSheet";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -309,6 +310,11 @@ function ThreadRouteContent(
   const canOperateThread = useEnvironmentScope(
     selectedThread?.environmentId ?? null,
     AuthOrchestrationOperateScope,
+  );
+  const ompInstanceId = useOmpThreadInstanceId(
+    selectedThread
+      ? { environmentId: selectedThread.environmentId, threadId: selectedThread.id }
+      : null,
   );
   const canReadTerminal = useEnvironmentScope(
     selectedThread?.environmentId ?? null,
@@ -796,6 +802,14 @@ function ThreadRouteContent(
     onRunProjectScript: handleRunProjectScript,
     onPull: gitActions.onPullSelectedThreadBranch,
     onRunAction: gitActions.onRunSelectedThreadGitAction,
+    onOpenOmp:
+      ompInstanceId !== null && selectedThread
+        ? () =>
+            navigation.navigate("ThreadOmp", {
+              environmentId: selectedThread.environmentId,
+              threadId: selectedThread.id,
+            })
+        : undefined,
   };
   const handleEditFailedCreation = async () => {
     const creation = selectedThreadCreation?.message;
