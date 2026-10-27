@@ -16,6 +16,15 @@ The status probe asks the same RPC server that answers `get_login_providers` for
 
 A refused or unreadable catalog leaves the picker with OMP default and custom models.
 
+The list also depends on the folder: a project's `.omp/config.yml` and path-scoped
+`enabledModels` / `disabledProviders` entries narrow it. When a composer opens on a
+folder, the workspace snapshot refresh (the same one that lists `/` commands and `$`
+skills, `OmpCommandCatalog`) asks a control server started in that folder for
+`get_available_models`, keeps the answer 60 s per folder, and publishes it as the
+workspace snapshot's `models`. The web and mobile pickers use that list for the
+folder and fall back to the instance list when the folder has none (not listed
+yet, or OMP could not list it).
+
 ## Applying a selection
 
 T3 owns the selection. Before each prompt the adapter sends only what changed since

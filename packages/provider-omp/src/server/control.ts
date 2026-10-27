@@ -893,7 +893,7 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
 
   /** Runs `omp [--profile p] config <args>` and decodes its JSON stdout. */
   const runConfig = <A>(
-    operation: "config_list" | "config_set" | "config_reset",
+    operation: "config_list" | "config_layer" | "config_set" | "config_reset",
     target: OmpControlTarget,
     args: ReadonlyArray<string>,
     decode: (stdout: string) => Effect.Effect<A, Schema.SchemaError>,
