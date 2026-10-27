@@ -244,6 +244,8 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv, OmpUsageReader
 
     const settingsEngine = makeOmpSettingsEngine({
       control,
+      // `enabledModels` & co. change what each folder lists.
+      onModelScopeChange: catalog.invalidate,
       threads: yield* makeOmpThreadSettingsHost({
         sessions: threadSessions,
         threadsDir: stateDirs.threads,

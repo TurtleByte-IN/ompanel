@@ -261,11 +261,9 @@ export const OMP_APPROVAL_POLICIES = ["allow", "prompt", "deny"] as const;
 export type OmpApprovalPolicy = (typeof OMP_APPROVAL_POLICIES)[number];
 
 /**
- * Arrays OMP lets hold path-scoped entries (`pathScoped` in `config/model-settings.ts`).
- * `config list` reports them already resolved for its working directory, so a write of the shown
- * value would drop every entry scoped to another path. The pages mark them read-only; the web form
- * edits a field that carries `globalEntries` (the global layer's own value) through its own
- * control, and the settings engine keeps the scoped entries on every write.
+ * Arrays OMP lets hold path-scoped entries; `config list` resolves them for its folder, so writing
+ * the shown value back would drop other folders' entries. Pages mark them read-only; the web form
+ * edits `globalEntries` instead and the engine keeps the scoped entries.
  */
 export const OMP_PATH_SCOPED_KEYS: ReadonlyArray<string> = [
   "enabledModels",

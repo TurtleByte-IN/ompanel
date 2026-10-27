@@ -42,11 +42,9 @@ const SETTINGS: Readonly<Record<string, FakeSetting>> = {
 const PROJECT = "/work/app";
 
 /**
- * A scripted `omp config` with OMP's layering (default < global < project < env) and redaction,
- * so a write is observable through the next `config list`. `enabledModels` resolves its
- * `{ path, models }` entries for `--cwd`, as OMP does. `layerList` makes `config list --scope`
- * list a layer as written (CLI contract 1.1.0); without it that call exits 1, like the pinned OMP.
- * Layer listings are recorded in `layerLaunches`, apart from the other `config` calls.
+ * A scripted `omp config` with OMP's layering (default < global < project < env), redaction and
+ * path-scoped `enabledModels`. `layerList` enables `config list --scope` (CLI contract 1.1.0;
+ * else exit 1, like the pinned OMP); those calls go to `layerLaunches`.
  */
 function fakeOmpConfig(
   seed: { readonly global?: Record<string, unknown>; readonly layerList?: boolean } = {},
@@ -215,9 +213,18 @@ const withEngine = <A, E>(
   omp: ReturnType<typeof fakeOmpConfig>,
   threads: ReturnType<typeof fakeThreads>,
   use: (engine: OmpSettingsEngine) => Effect.Effect<A, E>,
+  onModelScopeChange?: Effect.Effect<void>,
 ) =>
   makeOmpControlService().pipe(
-    Effect.flatMap((control) => use(makeOmpSettingsEngine({ control, threads: threads.host }))),
+    Effect.flatMap((control) =>
+      use(
+        makeOmpSettingsEngine({
+          control,
+          threads: threads.host,
+          ...(onModelScopeChange === undefined ? {} : { onModelScopeChange }),
+        }),
+      ),
+    ),
     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, omp.spawner),
     Effect.scoped,
   );
@@ -491,6 +498,40 @@ describe("path-scoped arrays", () => {
       assert.deepStrictEqual(omp.global["enabledModels"], ["lab/b", "lab/c", SCOPED]);
       const field = result.form.fields.find((candidate) => candidate.key === "enabledModels");
       assert.deepStrictEqual(field?.globalEntries, ["lab/b", "lab/c", SCOPED]);
+    }),
+  );
+
+  it.effect("drop the per-folder model lists after a change, and only after one", () =>
+    Effect.gen(function* () {
+      const omp = fakeOmpConfig({ layerList: true, global: { enabledModels: ["lab/a", SCOPED] } });
+      let invalidations = 0;
+      const invalidate = Effect.sync(() => void invalidations++);
+      yield* withEngine(
+        omp,
+        fakeThreads([]),
+        (engine) =>
+          Effect.gen(function* () {
+            yield* engine.write(TARGET, {
+              key: "compaction.enabled",
+              value: false,
+              scope: "global",
+            });
+            assert.strictEqual(invalidations, 0, "other keys leave the lists alone");
+            yield* engine.write(TARGET, {
+              key: "enabledModels",
+              value: ["lab/b"],
+              scope: "global",
+            });
+            assert.strictEqual(invalidations, 1);
+            yield* engine.reset(TARGET, { key: "enabledModels", scope: "global" });
+            assert.strictEqual(invalidations, 2);
+            yield* engine
+              .write(TARGET, { key: "enabledModels", value: ["lab/c"], scope: "project" })
+              .pipe(Effect.flip);
+            assert.strictEqual(invalidations, 2, "a refused write changes nothing");
+          }),
+        invalidate,
+      );
     }),
   );
 

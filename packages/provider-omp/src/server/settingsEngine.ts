@@ -1,10 +1,7 @@
 /**
- * The OMP settings engine (PRD §7): reads every setting through `omp config list --json`, writes
- * global and project keys only through `omp config set|reset` and re-reads afterwards, and applies
- * per-thread overrides through a session RPC command where one exists, else the thread's
- * `--config` overlay. It never runs `omp config get`, which prints credentials unmasked.
- * Path-scoped arrays are written only in the global layer, from that layer's own value
- * (`omp config list --scope global`), so entries scoped to other folders are kept.
+ * OMP settings engine (PRD §7): reads via `omp config list --json`, writes only via `omp config
+ * set|reset` (never `config get`), per-thread overrides via RPC or the thread's `--config` overlay.
+ * Path-scoped arrays are written only globally, keeping entries scoped to other folders.
  */
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
@@ -228,8 +225,12 @@ const isWithin = (dir: string, cwd: string): boolean => {
 export const makeOmpSettingsEngine = (deps: {
   readonly control: OmpControlService;
   readonly threads: OmpThreadSettingsHost;
+  /** Runs after a path-scoped key changed: per-folder model lists cached elsewhere are stale. */
+  readonly onModelScopeChange?: Effect.Effect<void>;
 }): OmpSettingsEngine => {
   const { control, threads } = deps;
+  const afterChange = (key: string) =>
+    OMP_PATH_SCOPED_KEYS.includes(key) ? (deps.onModelScopeChange ?? Effect.void) : Effect.void;
 
   const read = Effect.fn("OmpSettingsEngine.read")(function* (target: OmpControlTarget) {
     const [list, globalLayer] = yield* Effect.all(
@@ -310,6 +311,7 @@ export const makeOmpSettingsEngine = (deps: {
       value = ompWithUnscopedEntries(entries, value);
     }
     const result = yield* control.configSet(target, { ...input, value });
+    yield* afterChange(field.key);
     // `config set` reports the scope's file, not what the next load resolves (oh-my-pi#23).
     const form = yield* read(target);
     const restartRequired = yield* markLaunchScopedChange(target, field, input.scope);
@@ -331,6 +333,7 @@ export const makeOmpSettingsEngine = (deps: {
       : [];
     if (scoped.length > 0) yield* control.configSet(target, { ...input, value: scoped });
     else yield* control.configReset(target, input);
+    yield* afterChange(field.key);
     const form = yield* read(target);
     const restartRequired = yield* markLaunchScopedChange(target, field, input.scope);
     return { form, restartRequired } satisfies OmpSettingsWriteResult;
