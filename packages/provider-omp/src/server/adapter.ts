@@ -65,6 +65,7 @@ import {
 import { ompApprovalModeFor } from "./launch.ts";
 import { isOmpExtensionStatusRequest, OMP_PROVIDER, type OmpTurnOutcome } from "./mapper.ts";
 import {
+  isOmpProposalNotPending,
   OMP_RESOLVE_PROPOSAL_TIMEOUT_MS,
   ompProposalsResolvable,
   requestResolveProposal,
@@ -863,6 +864,8 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       yield* emit(uiRequests.closeAll(yield* DateTime.now));
       // So do staged edit previews: OMP keeps them in memory only.
       yield* emit(mapper.settleProposals(yield* DateTime.now));
+      // And extension status lines: the extensions that set them are gone.
+      yield* emit(mapper.clearExtensionStatus(yield* DateTime.now));
       yield* emit(mapper.setSessionStatus(status, lastError, yield* DateTime.now));
       yield* Queue.end(events);
     });
@@ -966,7 +969,21 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       resolveProposal: Effect.fn("OmpAdapter.resolveProposal")(function* (request) {
         const answer = yield* requestResolveProposal(process, request, {
           timeoutMs: OMP_RESOLVE_PROPOSAL_TIMEOUT_MS,
-        });
+        }).pipe(
+          // Gone (another resolve won) or unanswered (it may have applied): the card stops offering.
+          Effect.tapError((error) =>
+            isOmpProposalNotPending(error) || error._tag === "OmpRpcTimeoutError"
+              ? exclusive(
+                  Effect.gen(function* () {
+                    if (settled) return;
+                    yield* emit(
+                      mapper.resolveProposal(request.toolCallId, "proposed", yield* DateTime.now),
+                    );
+                  }),
+                )
+              : Effect.void,
+          ),
+        );
         yield* exclusive(
           Effect.gen(function* () {
             if (settled) return;

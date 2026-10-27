@@ -57,6 +57,7 @@ function projected(
   toolName: string,
   card: OmpToolCard,
   content: ReadonlyArray<unknown> = [],
+  status = "completed",
 ): OrchestrationV2ProjectedTurnItem {
   const id = TurnItemId.make(`turn-item:omp:${toolName}`);
   return {
@@ -78,7 +79,7 @@ function projected(
       },
       parentItemId: null,
       ordinal: 1,
-      status: "completed",
+      status,
       startedAt: NOW,
       completedAt: NOW,
       updatedAt: NOW,
@@ -118,15 +119,20 @@ it("ask card lists single, multi and Other answers", async () => {
 it("a resolvable proposed edit offers Accept and Reject for its tool call", async () => {
   resolveCalls.length = 0;
   await using screen = await show(
-    projected("ast_edit", {
-      kind: "proposed_edit",
-      source: "ast_edit",
-      state: "proposed",
-      files: [{ path: "src/x.ts", count: 1 }],
-      replacements: 1,
-      diff: "-1:a\n+1:b",
-      resolvable: true,
-    }),
+    projected(
+      "ast_edit",
+      {
+        kind: "proposed_edit",
+        source: "ast_edit",
+        state: "proposed",
+        files: [{ path: "src/x.ts", count: 1 }],
+        replacements: 1,
+        diff: "-1:a\n+1:b",
+        resolvable: true,
+      },
+      [],
+      "waiting",
+    ),
   );
   expect(screen.text()).toContain("Accept or reject it");
   const buttons = [...screen.root.querySelectorAll("button")];
@@ -138,6 +144,27 @@ it("a resolvable proposed edit offers Accept and Reject for its tool call", asyn
     toolCallId: "ast_edit",
     action: "apply",
   });
+});
+
+it("a resolvable card whose item is no longer waiting offers no buttons", async () => {
+  // Crash recovery cancels the item; OMP lost the preview with its process.
+  await using screen = await show(
+    projected(
+      "ast_edit",
+      {
+        kind: "proposed_edit",
+        source: "ast_edit",
+        state: "proposed",
+        files: [],
+        replacements: 1,
+        diff: "",
+        resolvable: true,
+      },
+      [],
+      "cancelled",
+    ),
+  );
+  expect(screen.root.querySelectorAll("button")).toHaveLength(0);
 });
 
 it("an applied proposed edit offers no buttons", async () => {

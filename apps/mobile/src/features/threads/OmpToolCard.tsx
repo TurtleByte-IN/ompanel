@@ -273,3 +273,14 @@ export function OmpToolCard(props: {
     </View>
   );
 }
+
+/**
+ * The tool call whose staged proposal the card may resolve: only while the item waits for it.
+ * A cancelled item (crash recovery) or a settled one is read-only.
+ */
+export function ompProposalToolCallId(item: {
+  readonly status: string;
+  readonly nativeItemRef: { readonly nativeId: string | null } | null;
+}): string | undefined {
+  return item.status === "waiting" ? (item.nativeItemRef?.nativeId ?? undefined) : undefined;
+}

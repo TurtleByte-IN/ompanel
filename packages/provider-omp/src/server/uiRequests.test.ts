@@ -709,6 +709,22 @@ describe("OmpThreadMapper UI frames", () => {
     ...fields,
   });
 
+  it("clears extension status lines when the session ends", () => {
+    const m = mapper();
+    m.bindThread(
+      { threadId: THREAD_ID, state: { sessionId: "session-a", sessionFile: "/s/a.jsonl" } },
+      T0,
+    );
+    // Nothing shown: nothing to clear.
+    assert.deepStrictEqual(m.clearExtensionStatus(T0), []);
+    m.applyExtensionStatus(
+      frame({ method: "setStatus", statusKey: "git", statusText: "main" }),
+      T0,
+    );
+    const cleared = m.clearExtensionStatus(T1);
+    assert.deepStrictEqual(statusOf(cleared), [undefined]);
+  });
+
   it("keeps extension status lines and widgets on the provider thread, out of a turn too", () => {
     const m = mapper();
     // No thread bound yet: nothing to update.

@@ -14,6 +14,7 @@ import {
   RunId,
   RuntimeRequestId,
   ThreadId,
+  type OmpProposalState,
 } from "@t3tools/contracts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
@@ -138,9 +139,11 @@ export type OmpJournalEntry =
       readonly k: "proposal";
       readonly at: number;
       readonly toolCallId: string;
-      readonly state: "applied" | "discarded";
+      readonly state: OmpProposalState;
     }
   | { readonly k: "settleProposals"; readonly at: number }
+  /** The session ended and its extension status lines went with it. */
+  | { readonly k: "clearStatus"; readonly at: number }
   /** Events the adapter emitted from outside the state objects (an imported session's history). */
   | { readonly k: "events"; readonly events: unknown };
 
@@ -168,6 +171,7 @@ const ENTRY_KINDS: Record<OmpJournalEntry["k"], true> = {
   closeAll: true,
   proposal: true,
   settleProposals: true,
+  clearStatus: true,
   events: true,
 };
 
@@ -560,12 +564,19 @@ export class OmpJournaledMapper extends OmpThreadMapper {
   }
   override resolveProposal(
     toolCallId: string,
-    state: "applied" | "discarded",
+    state: OmpProposalState,
     now: DateTime.Utc,
   ): Array<Event> {
     return this.#recorder.run(
       () => ({ k: "proposal", at: millis(now), toolCallId, state }),
       () => super.resolveProposal(toolCallId, state, now),
+    );
+  }
+
+  override clearExtensionStatus(now: DateTime.Utc): Array<Event> {
+    return this.#recorder.run(
+      () => ({ k: "clearStatus", at: millis(now) }),
+      () => super.clearExtensionStatus(now),
     );
   }
 
@@ -931,6 +942,9 @@ export function replayOmpJournal(entries: Iterable<OmpJournalEntry>): OmpJournal
           break;
         case "settleProposals":
           push(mapper.settleProposals(utc(entry.at)));
+          break;
+        case "clearStatus":
+          push(mapper.clearExtensionStatus(utc(entry.at)));
           break;
         case "events":
           push(decodeEvents(entry.events));

@@ -28,7 +28,7 @@ import { ompStateDirs } from "./session.ts";
 import { makeOmpThreadMenuController, OMP_COLLAB_CONTRACT } from "./threadMenuController.ts";
 import type { OmpThreadSession } from "./threadSessions.ts";
 import { makeOmpThreadSessions } from "./threadSessions.ts";
-import { fakeOmpFrames, makeFakeOmpState, waitUntil } from "./testing/fakeOmp.ts";
+import { type FakeOmpStep, fakeOmpFrames, makeFakeOmpState, waitUntil } from "./testing/fakeOmp.ts";
 import {
   makeFakeOmpControl,
   type FakeOmpControl,
@@ -541,7 +541,18 @@ posixOnly("Accept and Reject on a staged ast_edit card (FR-18b)", () => {
       return card?.kind === "proposed_edit" ? [{ status: item.status, card }] : [];
     });
 
-  const run = (contract: string) =>
+  const APPLIED: FakeOmpStep = {
+    respond: {
+      action: "apply",
+      sourceToolName: "ast_edit",
+      toolCallId: "call-ast-1",
+      text: "Applied 1 replacement in 1 file.",
+      isError: false,
+      details: { applied: true, totalReplacements: 1 },
+    },
+  };
+
+  const run = (contract: string, resolveStep: FakeOmpStep = APPLIED) =>
     Effect.gen(function* () {
       const state = yield* makeFakeOmpState;
       const path = yield* Path.Path;
@@ -566,18 +577,7 @@ posixOnly("Accept and Reject on a staged ast_edit card (FR-18b)", () => {
                   },
                 }),
               ],
-              resolve_proposal: [
-                {
-                  respond: {
-                    action: "apply",
-                    sourceToolName: "ast_edit",
-                    toolCallId: "call-ast-1",
-                    text: "Applied 1 replacement in 1 file.",
-                    isError: false,
-                    details: { applied: true, totalReplacements: 1 },
-                  },
-                },
-              ],
+              resolve_proposal: [resolveStep],
             },
           }),
         }),
@@ -681,6 +681,20 @@ posixOnly("Accept and Reject on a staged ast_edit card (FR-18b)", () => {
         // The journal holds the click, so a reloaded thread shows the same applied card.
         assert.deepStrictEqual(replayed.at(-1), settled);
       }),
+  );
+
+  it.live("a click the agent beat is not pending: the card keeps its state, without buttons", () =>
+    Effect.gen(function* () {
+      const { outcome, live } = yield* run(OMP_RESOLVE_PROPOSAL_CONTRACT, {
+        fail: "Proposal was already resolved.",
+      });
+      assert.isTrue(Result.isFailure(outcome));
+      if (Result.isFailure(outcome)) assert.strictEqual(outcome.failure.reason, "not_pending");
+      const last = live.at(-1);
+      assert.strictEqual(last?.status, "completed");
+      assert.strictEqual(last?.card.state, "proposed");
+      assert.notProperty(last?.card, "resolvable");
+    }),
   );
 
   it.live("on the pinned contract 1.8.0, the card offers nothing and the menu says why", () =>

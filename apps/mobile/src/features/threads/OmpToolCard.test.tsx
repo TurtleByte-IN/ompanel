@@ -17,7 +17,7 @@ vi.mock("../../components/ui/AppText", () => ({
   ),
 }));
 
-import { OmpToolCard } from "./OmpToolCard";
+import { OmpToolCard, ompProposalToolCallId } from "./OmpToolCard";
 
 let container: HTMLDivElement;
 let root: Root;
@@ -117,6 +117,14 @@ describe("OmpToolCard (mobile)", () => {
       ),
     );
     expect(container.querySelector("[data-testid=omp-proposal-actions]")).toBeNull();
+  });
+
+  it("offers a proposal's tool call only while its item waits", () => {
+    const ref = { nativeId: "call-1" };
+    expect(ompProposalToolCallId({ status: "waiting", nativeItemRef: ref })).toBe("call-1");
+    expect(ompProposalToolCallId({ status: "cancelled", nativeItemRef: ref })).toBeUndefined();
+    expect(ompProposalToolCallId({ status: "completed", nativeItemRef: ref })).toBeUndefined();
+    expect(ompProposalToolCallId({ status: "waiting", nativeItemRef: null })).toBeUndefined();
   });
 
   it("renders a conflict resolution with its target and resolved path", () => {

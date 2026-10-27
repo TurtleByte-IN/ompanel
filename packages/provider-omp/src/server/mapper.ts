@@ -24,6 +24,7 @@ import {
   type ThreadTokenUsageSnapshot,
   type ToolActivitySource,
   type TurnTokenUsage,
+  type OmpProposalState,
 } from "@t3tools/contracts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -650,14 +651,14 @@ export class OmpThreadMapper {
   }
 
   /**
+   * `state` "proposed" withdraws the offer only: OMP no longer holds the preview for this click
+   * (another resolve won, or the answer never came), so the card keeps its state, without buttons.
+   */
+  /**
    * The user resolved the proposal `toolCallId` staged (`resolve_proposal`), or the agent did:
    * its card shows the outcome and no longer offers Accept and Reject.
    */
-  resolveProposal(
-    toolCallId: string,
-    state: "applied" | "discarded",
-    now: DateTime.Utc,
-  ): Array<Event> {
+  resolveProposal(toolCallId: string, state: OmpProposalState, now: DateTime.Utc): Array<Event> {
     const item = this.#staged.get(toolCallId);
     if (item === undefined) return [];
     this.#staged.delete(toolCallId);
@@ -873,6 +874,25 @@ export class OmpThreadMapper {
     thread.providerThread = {
       ...thread.providerThread,
       nativeMetadata: next.length > 0 ? { ...rest, extensionStatus: next } : rest,
+      updatedAt: now,
+    };
+    return [
+      {
+        type: "provider_thread.updated",
+        driver: OMP_PROVIDER,
+        providerThread: thread.providerThread,
+      },
+    ];
+  }
+
+  /** The session ended: its extension status lines and widgets went with it. */
+  clearExtensionStatus(now: DateTime.Utc): Array<Event> {
+    const thread = this.#thread;
+    const metadata = thread?.providerThread.nativeMetadata ?? null;
+    if (thread === null || (metadata?.extensionStatus ?? []).length === 0) return [];
+    thread.providerThread = {
+      ...thread.providerThread,
+      nativeMetadata: withoutExtensionStatus(metadata) ?? {},
       updatedAt: now,
     };
     return [
@@ -1874,8 +1894,6 @@ export class OmpThreadMapper {
       this.#staged.set(toolCallId, item.turnItem);
     } else if (
       completed &&
-      proposal?.kind === "proposed_edit" &&
-      proposal.state !== "proposed" &&
       card.type === "dynamic_tool" &&
       (card.toolName === "xd://resolve" || card.toolName === "xd://reject")
     ) {
@@ -1884,9 +1902,18 @@ export class OmpThreadMapper {
         asRecord(asRecord(asRecord(result)?.["details"])?.["xdev"])?.["inner"],
       );
       const named = inner?.["toolCallId"];
-      const target = typeof named === "string" ? named : [...this.#staged.keys()].at(-1);
+      const settled = proposal?.kind === "proposed_edit" && proposal.state !== "proposed";
+      // An errored resolve that names its preview still consumed it (a stale apply, a refusal).
+      const target =
+        typeof named === "string" ? named : settled ? [...this.#staged.keys()].at(-1) : undefined;
       if (target !== undefined) {
-        events.push(...this.resolveProposal(target, proposal.state, now));
+        const state = settled
+          ? proposal.state
+          : (inner?.["action"] ?? (card.toolName === "xd://resolve" ? "apply" : "discard")) ===
+              "apply"
+            ? "applied"
+            : "discarded";
+        events.push(...this.resolveProposal(target, state, now));
       }
     }
     return events;

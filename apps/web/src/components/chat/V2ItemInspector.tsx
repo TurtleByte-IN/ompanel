@@ -400,7 +400,7 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
             card={ompCard}
             environmentId={props.environmentId}
             threadId={props.projectedItem.sourceThreadId}
-            {...(ompToolCallId === undefined
+            {...(ompToolCallId === undefined || item.status !== "waiting"
               ? {}
               : {
                   onResolveProposal: (action: OmpProposalAction) =>

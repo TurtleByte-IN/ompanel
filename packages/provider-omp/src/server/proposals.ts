@@ -36,8 +36,8 @@ export type OmpResolveProposalAnswer = typeof ResolveProposalAnswer.Type;
 
 const decodeAnswer = Schema.decodeUnknownEffect(ResolveProposalAnswer);
 
-/** OMP's refusal when the tool call has nothing staged any more (docs/rpc.md, contract 1.10.0). */
-const NOT_PENDING = /^No staged proposal\b/;
+/** OMP's refusals when the preview is gone or another resolve holds it (docs/rpc.md, 1.10.0). */
+const NOT_PENDING = /^No staged proposal\b|already being resolved|was already resolved/;
 
 /** OMP refused because the proposal is no longer staged: the agent or another click resolved it. */
 export const isOmpProposalNotPending = (error: OmpRpcRequestError): boolean =>
