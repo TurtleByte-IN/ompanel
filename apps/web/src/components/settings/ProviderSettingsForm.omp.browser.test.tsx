@@ -45,7 +45,7 @@ describe("OMP instance form: Profile", () => {
     const labels = [...screen.container.querySelectorAll("label")].map(
       (label) => label.textContent,
     );
-    expect(labels).toEqual(["Binary path", "Profile"]);
+    expect(labels).toEqual(["Binary path", "Profile", "Agent directory", "Launch arguments"]);
     expect(omp.settingsSchema).toBe(OmpSettings);
     const field = screen.getByLabelText("Profile");
     await expect.element(field).toHaveAttribute("placeholder", "default");
