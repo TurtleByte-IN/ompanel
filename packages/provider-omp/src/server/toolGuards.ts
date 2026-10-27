@@ -144,6 +144,8 @@ const OMP_SAFE_BUILTINS: Readonly<Record<string, true | Readonly<Record<string, 
   fresh: true,
   handoff: true,
   jobs: true,
+  // Sent only while Ompanel owns the session's directory changes; see `ompRefusedSlashCommand`.
+  move: true,
   prewalk: true,
   rename: true,
   retry: true,
@@ -238,13 +240,13 @@ export const ompAllowedSubcommands = (
 
 /**
  * Why `text` must not reach OMP as a prompt (OMP would run it as a builtin), or `undefined`.
- * Builtins outside {@link OMP_SAFE_BUILTINS} can run commands (`/mcp add` + `/mcp test`), install
- * or enable code (`/plugin enable`), move the workspace, write files or upload; `/computer status`
- * is the one other form sent. `reported` is what OMP lists as builtins for this session.
+ * Unsafe builtins are refused, `/computer` except `status`, and `/move` unless
+ * `hostOwnsCwdChange` (otherwise OMP moves the session anywhere without asking T3).
  */
 export const ompRefusedSlashCommand = (
   text: string,
   reported: OmpReportedBuiltins = {},
+  options: { readonly hostOwnsCwdChange?: boolean } = {},
 ): OmpRefusedCommand | undefined => {
   const parsed = parseSlash(text);
   if (parsed === undefined) return undefined;
@@ -264,6 +266,13 @@ export const ompRefusedSlashCommand = (
       reason: "share_command_refused",
       detail:
         "Share the session with Share as gist… in the thread's OMP menu; Ompanel does not send /share to OMP.",
+    };
+  }
+  if (canonical === "move" && options.hostOwnsCwdChange !== true) {
+    return {
+      reason: "builtin_command_refused",
+      detail:
+        "Ompanel sends /move only when it approves the target directory, and this thread's OMP does not ask it (it needs RPC contract 1.5.0). Start a thread in the other checkout instead.",
     };
   }
   if (ompBuiltinAllowed(name, args, reported)) return undefined;

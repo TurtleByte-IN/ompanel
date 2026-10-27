@@ -124,3 +124,43 @@ test("an OMP thread delegates to a child thread through delegate_task", async ()
   await expect(page.getByRole("button", { name: "Stop generation" })).toHaveCount(0);
   await screenshot("z04-04-delegated-child");
 });
+
+test("/move from the composer moves an OMP thread into a project worktree, and not elsewhere", async () => {
+  const { createOmpThread, page, screenshot, sendAndSettle, stack, threadId } = suite.current();
+  const branch = "z04-move";
+  const target = NodePath.join(NodePath.dirname(stack.workspace), "z04-move-worktree");
+  stack.git("worktree", "add", "-b", branch, target);
+  const outside = NodeFS.mkdtempSync(NodePath.join(NodePath.dirname(stack.workspace), "z04-"));
+  await createOmpThread("Full access");
+  const main = page.getByRole("main");
+  const threads = page.getByRole("navigation", { name: "Threads" });
+
+  // A folder that is no checkout of the project: OMP asks the host, which refuses.
+  await sendAndSettle(`/move ${outside}`);
+  await expect(
+    main.getByText(/Move rejected by host: .* is not a checkout of the project/).first(),
+  ).toBeVisible();
+  await expect(threads.getByText(branch)).toHaveCount(0);
+  await screenshot("z04-05-move-refused");
+
+  // The project's worktree: the thread now works there, on its branch.
+  await sendAndSettle(`/move ${target}`);
+  await expect(main.getByText(/Moved to .*z04-move-worktree/).first()).toBeVisible();
+  await expect(threads.getByText(branch)).toBeVisible();
+  await expect(main.getByText("Provider error")).toHaveCount(0);
+  await screenshot("z04-06-move-accepted");
+  // The next message starts OMP in the worktree, as git records it.
+  const recorded = stack
+    .git("worktree", "list", "--porcelain")
+    .split("\n\n")
+    .find((entry) => entry.includes(`branch refs/heads/${branch}`))
+    ?.match(/^worktree (.+)$/m)?.[1];
+  expect(recorded).toBeDefined();
+  await sendAndSettle("hello from the moved thread");
+  expect(
+    suite
+      .current()
+      .threadProcesses(threadId())
+      .map((entry) => entry.args),
+  ).toEqual([expect.stringContaining(`--cwd ${recorded}`)]);
+});

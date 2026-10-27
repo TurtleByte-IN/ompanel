@@ -21,6 +21,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { makeOmpAdapter } from "./adapter.ts";
@@ -40,6 +41,7 @@ import { fakeOmpFrames, type FakeOmpStep, makeFakeOmpState, waitUntil } from "./
 
 const platform = HostProcess.Platform.defaultValue();
 const posixOnly = describe.skipIf(platform === "win32");
+const isProtocolError = Schema.is(ProviderAdapter.ProviderAdapterProtocolError);
 
 const INSTANCE_ID = ProviderInstanceId.make("omp-host");
 const THREAD_ID = ThreadId.make("thread/host-tools");
@@ -184,6 +186,10 @@ const runSession = (input: {
   readonly mcpTools?: ReadonlyArray<ProviderHostTools.ProviderHostMcpTool>;
   /** T3 issues the MCP credential only after the session opened (a late or rotated credential). */
   readonly mcpCredentialAfterOpen?: boolean;
+  /** The composer message the turn sends; "go" by default. */
+  readonly text?: string;
+  /** How OMP answers `set_host_cwd_change`; it accepts by default. */
+  readonly setHostCwdChange?: FakeOmpStep;
 }) =>
   Effect.gen(function* () {
     const state = yield* makeFakeOmpState;
@@ -194,7 +200,7 @@ const runSession = (input: {
         set_tool_enabled: [{ respond: { enabled: false } }],
         set_host_tools: [input.setHostTools ?? { respond: { toolNames: ["$id"] } }],
         set_host_uri_schemes: [{ respond: { schemes: [OMP_T3_URI_SCHEME] } }],
-        set_host_cwd_change: [{ respond: { enabled: true } }],
+        set_host_cwd_change: [input.setHostCwdChange ?? { respond: { enabled: true } }],
         set_session_name: [{ respond: null }],
         prompt: [ack, ...input.promptSteps],
         // Host replies are frames, not commands: the fake must not answer them.
@@ -236,7 +242,7 @@ const runSession = (input: {
       ? makeAdapter
       : makeAdapter.pipe(Effect.provideService(ProviderHostTools.ProviderHostTools, host.service));
 
-    const events = yield* Effect.gen(function* () {
+    const run = yield* Effect.gen(function* () {
       const policy = runtimePolicy(input.runtimeMode);
       const session = yield* adapter.openSession({
         threadId: THREAD_ID,
@@ -274,34 +280,38 @@ const runSession = (input: {
         lastVisitedAt: null,
         deletedAt: null,
       };
-      yield* session.startTurn({
-        appThread,
-        threadId: THREAD_ID,
-        runId: RunId.make("run:host:1"),
-        runOrdinal: 1,
-        providerTurnOrdinal: 1,
-        attemptId: RunAttemptId.make("run-attempt:host:1"),
-        rootNodeId: NodeId.make("node:host:root"),
-        providerThread,
-        message: {
-          messageId: "message:host:1" as never,
-          text: "go",
-          attachments: [],
-          createdBy: "user",
-          creationSource: "web",
-        },
-        modelSelection: { instanceId: INSTANCE_ID, model: "default" },
-        runtimePolicy: policy,
-      });
+      const started = yield* session
+        .startTurn({
+          appThread,
+          threadId: THREAD_ID,
+          runId: RunId.make("run:host:1"),
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId: RunAttemptId.make("run-attempt:host:1"),
+          rootNodeId: NodeId.make("node:host:root"),
+          providerThread,
+          message: {
+            messageId: "message:host:1" as never,
+            text: input.text ?? "go",
+            attachments: [],
+            createdBy: "user",
+            creationSource: "web",
+          },
+          modelSelection: { instanceId: INSTANCE_ID, model: "default" },
+          runtimePolicy: policy,
+        })
+        .pipe(Effect.result);
+      // A turn the adapter refused before its prompt has no events.
+      if (started._tag === "Failure") return { events: [], startError: started.failure };
       const collected = yield* session.events.pipe(
         Stream.takeUntil((event) => event.type === "turn.terminal"),
         Stream.runCollect,
       );
       // Host replies are written beside the frame loop; let them reach the fake.
       yield* waitUntil(() => state.commands().some((frame) => frame["type"] === "prompt"));
-      return collected;
+      return { events: collected, startError: undefined };
     }).pipe(Effect.scoped);
-    return { state, host, events };
+    return { state, host, ...run };
   });
 
 /** The frames the fake read from stdin that have `type`. */
@@ -581,6 +591,97 @@ posixOnly("OMP host tools", () => {
       const outside = answers.find((answer) => answer["id"] === "move-outside");
       assert.strictEqual(outside?.["accepted"], false);
       assert.match(String(outside?.["error"]), /add it as a project in T3/);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("sends the composer's /move to OMP and moves the thread into a project worktree", () =>
+    Effect.gen(function* () {
+      const { state, host, startError } = yield* runSession({
+        contract: OMP_HOST_CWD_CHANGE_CONTRACT,
+        runtimeMode: "approval-required",
+        text: "/move /worktrees/repo-review",
+        promptSteps: [
+          {
+            emit: {
+              type: "host_cwd_change_request",
+              id: "composer-move",
+              reason: "move",
+              cwd: "/repo",
+              path: "/worktrees/repo-review",
+            },
+          },
+          { sleepMs: 200 },
+          ...fakeOmpFrames.promptTurn({ text: ["Moved"] }).slice(1),
+        ],
+      });
+      assert.isUndefined(startError);
+      assert.deepStrictEqual(
+        framesOfType(state.commands(), "prompt").map((frame) => frame["message"]),
+        ["/move /worktrees/repo-review"],
+      );
+      assert.deepStrictEqual(host.calls.moved, [
+        { threadId: THREAD_ID, workspace: CHECKOUTS["/worktrees/repo-review"] },
+      ]);
+      assert.deepInclude(framesOfType(state.commands(), "host_cwd_change_result"), {
+        type: "host_cwd_change_result",
+        id: "composer-move",
+        accepted: true,
+        cwd: "/worktrees/repo-review",
+      });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("refuses the composer's /move into a folder outside the project", () =>
+    Effect.gen(function* () {
+      const { state, host } = yield* runSession({
+        contract: OMP_HOST_CWD_CHANGE_CONTRACT,
+        runtimeMode: "full-access",
+        text: "/move /elsewhere",
+        promptSteps: [
+          {
+            emit: {
+              type: "host_cwd_change_request",
+              id: "composer-move-outside",
+              reason: "move",
+              cwd: "/repo",
+              path: "/elsewhere",
+            },
+          },
+          { sleepMs: 200 },
+          ...fakeOmpFrames.promptTurn({ text: ["Move rejected by host"] }).slice(1),
+        ],
+      });
+      assert.deepStrictEqual(host.calls.moved, []);
+      const answer = framesOfType(state.commands(), "host_cwd_change_result")[0];
+      assert.strictEqual(answer?.["id"], "composer-move-outside");
+      assert.strictEqual(answer?.["accepted"], false);
+      assert.match(String(answer?.["error"]), /add it as a project in T3/);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("keeps /move from OMP when OMP would change directory without asking T3", () =>
+    Effect.gen(function* () {
+      for (const setup of [
+        // A pinned contract before host-owned directory changes.
+        { contract: "1.0.0" },
+        // OMP turned host-owned directory changes down.
+        { contract: OMP_HOST_CWD_CHANGE_CONTRACT, answer: { respond: { enabled: false } } },
+        { contract: OMP_HOST_CWD_CHANGE_CONTRACT, answer: { fail: "not now" } },
+      ] as const) {
+        const { state, host, startError } = yield* runSession({
+          contract: setup.contract,
+          runtimeMode: "full-access",
+          text: "/move /elsewhere",
+          promptSteps: [],
+          ...("answer" in setup ? { setHostCwdChange: setup.answer } : {}),
+        });
+        assert.strictEqual(startError?._tag, "ProviderAdapterTurnStartError", setup.contract);
+        const cause = startError !== undefined && "cause" in startError ? startError.cause : null;
+        assert.isTrue(isProtocolError(cause));
+        if (isProtocolError(cause)) assert.strictEqual(cause.reason, "builtin_command_refused");
+        assert.deepStrictEqual(framesOfType(state.commands(), "prompt"), []);
+        assert.deepStrictEqual(host.calls.moved, []);
+      }
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

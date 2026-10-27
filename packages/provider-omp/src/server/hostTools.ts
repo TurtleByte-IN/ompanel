@@ -99,6 +99,8 @@ export interface OmpHostBridge {
    * changed since the last look, and registers the tools and `t3://` scheme again. Never fails.
    */
   readonly refreshMcp: Effect.Effect<void>;
+  /** Whether OMP asks T3 before `/wt` and `/move` (`set_host_cwd_change` accepted at setup). */
+  readonly ownsCwdChange: () => boolean;
   /** Handles host requests; returns false for frames that are not host requests. */
   readonly handleFrame: (frame: RpcServerFrame) => Effect.Effect<boolean>;
 }
@@ -207,6 +209,7 @@ export const makeOmpHostBridge = Effect.fn("makeOmpHostBridge")(function* (
     return {
       setup: Effect.void,
       refreshMcp: Effect.void,
+      ownsCwdChange: () => false,
       handleFrame: () => Effect.succeed(false),
     } satisfies OmpHostBridge;
   }
@@ -229,6 +232,7 @@ export const makeOmpHostBridge = Effect.fn("makeOmpHostBridge")(function* (
   const noT3UriHelp = `OMP has no ${OMP_T3_URI_SCHEME}:// scheme from T3.`;
   let t3UriHelp = noT3UriHelp;
   let cwd = input.cwd;
+  let cwdChangeOwned = false;
 
   const reply = (id: string, result: HostToolResultPayload, isError = false) =>
     process.send({ type: "host_tool_result", id, result, ...(isError ? { isError } : {}) });
@@ -370,13 +374,14 @@ export const makeOmpHostBridge = Effect.fn("makeOmpHostBridge")(function* (
     yield* registerHostTools;
     yield* registerT3UriScheme;
     if (contractAtLeast(process.contractVersion, OMP_HOST_CWD_CHANGE_CONTRACT)) {
-      yield* process
-        .request("set_host_cwd_change", { enabled: true })
-        .pipe(
-          Effect.catch((error) =>
-            Effect.logWarning("OMP keeps handling /wt and /move itself", { detail: error.message }),
-          ),
-        );
+      const result = yield* process.request("set_host_cwd_change", { enabled: true }).pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("OMP keeps handling /wt and /move itself", {
+            detail: error.message,
+          }).pipe(Effect.as(undefined)),
+        ),
+      );
+      cwdChangeOwned = result?.enabled === true;
     }
   });
 
@@ -572,5 +577,10 @@ export const makeOmpHostBridge = Effect.fn("makeOmpHostBridge")(function* (
     return false;
   });
 
-  return { setup, refreshMcp, handleFrame } satisfies OmpHostBridge;
+  return {
+    setup,
+    refreshMcp,
+    ownsCwdChange: () => cwdChangeOwned,
+    handleFrame,
+  } satisfies OmpHostBridge;
 });

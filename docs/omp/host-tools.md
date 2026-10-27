@@ -160,6 +160,11 @@ The session turns on `set_host_cwd_change`. After that, OMP sends a
   project is refused with the hint to add it as a project in T3 and start a
   thread there. An archived thread cannot move. OMP shows a refusal as
   `Move rejected by host: <reason>`.
+- The composer sends `/move` to OMP only when `set_host_cwd_change` was
+  accepted. Without it (an older contract, or OMP turned it down) OMP would
+  move the session into any directory itself, so the adapter refuses the
+  prompt with `builtin_command_refused`
+  ([security.md](./security.md#omp-builtins-from-the-composer)).
 - Changing a thread's workspace detaches its provider session. A turn still
   running finishes first; this is the `/wt` or `/move` turn itself, which
   moves the thread before OMP has replied, so it completes normally. Until then

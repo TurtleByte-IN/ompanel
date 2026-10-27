@@ -122,7 +122,6 @@ describe("ompRefusedSlashCommand", () => {
       "/plugins install evil",
       "/marketplace add https://evil",
       "/reload-plugins",
-      "/move /etc",
       "/add-dir /",
       "/remove-dir src",
       "/ssh host",
@@ -141,6 +140,22 @@ describe("ompRefusedSlashCommand", () => {
     ]) {
       assert.strictEqual(ompRefusedSlashCommand(text)?.reason, "builtin_command_refused", text);
     }
+  });
+
+  it("sends /move only while T3 approves OMP's directory changes", () => {
+    for (const text of ["/move ../repo-review", "/move /etc", "/move"]) {
+      assert.isUndefined(ompRefusedSlashCommand(text, {}, { hostOwnsCwdChange: true }), text);
+      // Without host-owned directory changes OMP would move the session anywhere itself.
+      assert.strictEqual(ompRefusedSlashCommand(text)?.reason, "builtin_command_refused", text);
+      assert.strictEqual(
+        ompRefusedSlashCommand(text, {}, { hostOwnsCwdChange: false })?.reason,
+        "builtin_command_refused",
+        text,
+      );
+    }
+    assert.match(String(ompRefusedSlashCommand("/move x")?.detail), /approves the target/);
+    // The `/` menu offers it; the adapter checks the session when it is sent.
+    assert.isTrue(ompBuiltinAllowed("move"));
   });
 
   it("refuses refused builtins under their aliases", () => {

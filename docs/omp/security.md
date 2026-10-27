@@ -69,7 +69,7 @@ Projects & threads, project-scoped; on mobile under Server controls → Agent be
 
 OMP runs any prompt that starts with one of its RPC builtins, by name or alias, as that
 command, outside the thread's approvals (`/mcp add … ` then `/mcp test` starts a command;
-`/plugins install` or `/plugin enable`, `/move`, `/add-dir`, `/ssh`, `/export <path>` act
+`/plugins install` or `/plugin enable`, `/add-dir`, `/ssh`, `/export <path>` act
 on the machine). The adapter resolves aliases as OMP does (`/plugin` is `/plugins`,
 `/models` is `/model`, `/worktree` is `/wt`) and sends only builtins that change nothing
 but this session's model knobs, context, todos or view: `advisor`, `changelog`,
@@ -78,7 +78,8 @@ but this session's model knobs, context, todos or view: `advisor`, `changelog`,
 `compare` and `validate`), `slow`, `todo` (only no subcommand, `append`, `start`,
 `done`, `drop`, `rm` and `help`; `export` and `import` write and read any path, `copy`
 uses the host's clipboard), `usage` (only no subcommand or `show`; `reset` spends a
-provider rate-limit reset), `wt` (handled by Ompanel's host), plus `/computer status`.
+provider rate-limit reset), `wt` and `move` (both decided by Ompanel's host, below),
+plus `/computer status`.
 `/stats` is refused: its dashboard serves every OMP session's transcript without
 authentication on whatever `--host` it is given and opens a browser. Every other
 builtin is refused (`builtin_command_refused`; `/share` with `share_command_refused`,
@@ -88,6 +89,19 @@ Skills (`/skill:…`) and prompt templates are prompts and go through.
 `/handoff [focus]` makes one request to the thread's model with its own credentials, as
 `/compact` does, and writes the result as a compaction entry in the same session file. It
 runs no tools, writes no other file and keeps the session id.
+
+`/move <dir>` goes to OMP only while Ompanel owns the session's directory changes
+(`set_host_cwd_change` accepted at session start, RPC contract 1.5.0 or later); otherwise
+it is refused, since OMP would then move the session into any directory itself. At the
+pin, OMP's `/move` checks that the target is an existing directory, then sends
+`host_cwd_change_request` and moves only into the directory the host accepts
+(`slash-commands/builtin-lifecycle.ts` `/move` handler and `askHostForCwd`;
+`modes/rpc/host-cwd.ts`). Ompanel accepts only the thread's project root or a git worktree
+of the project's repository with a branch checked out, and refuses any other directory
+([host-tools.md](./host-tools.md#worktrees-wt-move)). On accept, Ompanel changes only the
+thread's recorded checkout and OMP moves its session file into the target's session bucket,
+as for `/wt`. No worktree is created or removed, no setup script runs, and the thread's
+approvals do not change.
 
 `/security` (off unless OMP's `security.enabled` is on) is sent only to read OMP's stored
 scans for the project (in OMP's state directory, `~/.omp/security` by default): list

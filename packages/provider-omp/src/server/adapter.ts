@@ -1395,7 +1395,9 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
           : yield* options.commands.resolvePrompt(cwd, messageText);
       const refused = isContinuation
         ? undefined
-        : ompRefusedSlashCommand(promptText, reportedBuiltins);
+        : ompRefusedSlashCommand(promptText, reportedBuiltins, {
+            hostOwnsCwdChange: hostBridge.ownsCwdChange(),
+          });
       if (refused !== undefined) return yield* protocolError(refused.detail, refused.reason);
       yield* applySelection(turnInput.modelSelection);
       // T3 names the thread; OMP keeps it as a user-set title, which its own titling respects.

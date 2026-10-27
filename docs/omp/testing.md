@@ -268,8 +268,8 @@ agent-activity publish and 404s every other route. Its steps:
 `apps/web/e2e/omp/omp-host-tools.spec.ts` covers T3's MCP tools in an OMP
 thread ([host-tools.md](host-tools.md)). Ompanel issues the thread an MCP
 credential, the driver gives OMP every tool of Ompanel's MCP server with
-`set_host_tools`, and the scripted model calls them by name. Both steps run on
-one Full access thread, so no tool asks for approval:
+`set_host_tools`, and the scripted model calls them by name. The first two
+steps run on one Full access thread, so no tool asks for approval:
 
 1. `tool: t3_preview_list {"limit":5}`: OMP offered the model `terminal` as a
    tool and T3's MCP tools (`t3_preview_list`, `preview_open`,
@@ -285,6 +285,12 @@ one Full access thread, so no tool asks for approval:
    reply, and the parent's reply links the child. The child is listed in the
    parent's Lineage panel and opens from there as a subagent thread with the
    task and the reply.
+3. `/move` from the composer, on a new Full access thread. The test adds a git
+   worktree of the workspace on a new branch, plus an empty folder beside it.
+   `/move <folder>` reaches OMP, OMP asks the host, and the thread shows
+   `Move rejected by host: … is not a checkout of the project`. `/move <worktree>`
+   is accepted: OMP reports `Moved to …`, the thread shows the worktree's
+   branch, and the next message starts `omp` with `--cwd` at the worktree.
 
 `e2e/omp/ompSuite.ts` holds what the Playwright specs share: the hooks that
 start one stack and one paired page per file and record a trace per step, and
