@@ -73,6 +73,33 @@ describe("isProviderInstancePickerReady", () => {
   });
 });
 
+describe("deriveProviderInstanceEntries", () => {
+  it("offers the models a provider lists for the composer's directory", () => {
+    const omp = {
+      ...provider({
+        provider: ProviderDriverKind.make("omp"),
+        instanceId: "omp",
+        models: [model("default"), model("lab/a"), model("lab/b")],
+      }),
+      workspaceSnapshots: [
+        {
+          cwd: "/repo",
+          checkedAt: "2026-01-01T00:01:00.000Z",
+          slashCommands: [],
+          skills: [],
+          models: [model("default"), model("lab/a")],
+        },
+      ],
+    } satisfies ServerProvider;
+    const slugs = (cwd?: string | null) =>
+      deriveProviderInstanceEntries([omp], cwd)[0]?.models.map((entry) => entry.slug);
+
+    expect(slugs("/repo")).toEqual(["default", "lab/a"]);
+    expect(slugs("/elsewhere")).toEqual(["default", "lab/a", "lab/b"]);
+    expect(slugs()).toEqual(["default", "lab/a", "lab/b"]);
+  });
+});
+
 describe("resolveProviderCatalogAvailability", () => {
   const [entry] = deriveProviderInstanceEntries([
     provider({ provider: ProviderDriverKind.make("codex"), instanceId: "codex" }),

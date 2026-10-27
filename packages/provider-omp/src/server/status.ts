@@ -42,7 +42,8 @@ const OMP_DEFAULT_MODEL: ServerProviderModel = {
   capabilities: OMP_DEFAULT_MODEL_CAPABILITIES,
 };
 
-const ompModels = (
+/** The picker's models: OMP default, each model OMP listed once, then the instance's custom ones. */
+export const ompProviderModels = (
   customModels: ReadonlyArray<CustomModelSetting>,
   catalog: ReadonlyArray<OmpCatalogModel>,
 ) =>
@@ -62,7 +63,7 @@ const ompSnapshot = (
     presentation: OMP_PRESENTATION,
     enabled: settings.enabled,
     checkedAt,
-    models: ompModels(settings.customModels, catalog),
+    models: ompProviderModels(settings.customModels, catalog),
     probe,
   }),
   supportsTextGeneration: true,

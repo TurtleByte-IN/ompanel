@@ -1,8 +1,7 @@
 /**
- * The OMP settings engine (PRD §7): reads every setting through `omp config list --json`, writes
- * global and project keys only through `omp config set|reset` and re-reads afterwards, and applies
- * per-thread overrides through a session RPC command where one exists, else the thread's
- * `--config` overlay. It never runs `omp config get`, which prints credentials unmasked.
+ * OMP settings engine (PRD §7): reads via `omp config list --json`, writes only via `omp config
+ * set|reset` (never `config get`), per-thread overrides via RPC or the thread's `--config` overlay.
+ * Path-scoped arrays are written only globally, keeping entries scoped to other folders.
  */
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
@@ -19,8 +18,10 @@ import {
   buildOmpSettingsForm,
   ompConfigValueFits,
   ompThreadRpcCommand,
+  ompWithUnscopedEntries,
   type OmpThreadRpcCommand,
 } from "../configForm.ts";
+import { OMP_PATH_SCOPED_KEYS } from "../settingsPages.ts";
 import type { OmpControlError, OmpControlService, OmpControlTarget } from "./control.ts";
 
 export class OmpSettingsError extends Schema.TaggedError<OmpSettingsError>()("OmpSettingsError", {
@@ -32,6 +33,7 @@ export class OmpSettingsError extends Schema.TaggedError<OmpSettingsError>()("Om
     "thread_not_open",
     "no_value",
     "invalid_overlay",
+    "path_scoped",
     "not_thread_overridable",
     "credential",
   ]),
@@ -54,6 +56,8 @@ export class OmpSettingsError extends Schema.TaggedError<OmpSettingsError>()("Om
         return `${this.key} is a stored credential; change it with OMP sign-in or an environment variable, or reset it.`;
       case "invalid_overlay":
         return `The thread's OMP overlay is not one Ompanel wrote, so ${this.key} was not changed.`;
+      case "path_scoped":
+        return `${this.key} can hold entries scoped to folders; Ompanel changes only the global list, and only with an OMP that reports the global config's own entries. Edit it in OMP's config file otherwise.`;
     }
   }
 }
@@ -221,12 +225,33 @@ const isWithin = (dir: string, cwd: string): boolean => {
 export const makeOmpSettingsEngine = (deps: {
   readonly control: OmpControlService;
   readonly threads: OmpThreadSettingsHost;
+  /** Runs after a path-scoped key changed: per-folder model lists cached elsewhere are stale. */
+  readonly onModelScopeChange?: Effect.Effect<void>;
 }): OmpSettingsEngine => {
   const { control, threads } = deps;
+  const afterChange = (key: string) =>
+    OMP_PATH_SCOPED_KEYS.includes(key) ? (deps.onModelScopeChange ?? Effect.void) : Effect.void;
 
   const read = Effect.fn("OmpSettingsEngine.read")(function* (target: OmpControlTarget) {
-    return buildOmpSettingsForm(yield* control.configList(target));
+    const [list, globalLayer] = yield* Effect.all(
+      [
+        control.configList(target),
+        // An OMP before CLI contract 1.1.0 cannot list a layer: path-scoped keys stay read-only.
+        control.configLayer(target, "global").pipe(Effect.orElseSucceed(() => undefined)),
+      ],
+      { concurrency: 2 },
+    );
+    return buildOmpSettingsForm(list, globalLayer);
   });
+
+  /**
+   * The global entries of a path-scoped key, or `path_scoped` when this write cannot keep the
+   * entries scoped to folders: a project write, or an OMP that cannot report them.
+   */
+  const pathScopedEntries = (field: OmpSettingsField, scope: OmpConfigScope) =>
+    scope === "global" && field.globalEntries !== undefined
+      ? Effect.succeed(field.globalEntries)
+      : Effect.fail(new OmpSettingsError({ key: field.key, reason: "path_scoped" }));
 
   const writableField = Effect.fn("OmpSettingsEngine.writableField")(function* (
     target: OmpControlTarget,
@@ -267,13 +292,26 @@ export const makeOmpSettingsEngine = (deps: {
         ? Effect.void
         : Effect.fail(new OmpSettingsError({ key: field.key, reason: "invalid_value" }));
 
+  /**
+   * A path-scoped key takes only the plain entries, as strings; the global layer's `{ path, … }`
+   * entries are appended as they are, so a stale or resolved list cannot drop them.
+   */
   const write = Effect.fn("OmpSettingsEngine.write")(function* (
     target: OmpControlTarget,
     input: { readonly key: string; readonly value: unknown; readonly scope: OmpConfigScope },
   ) {
     const field = yield* writableField(target, input.key);
     yield* checkAssignable(field, input.value);
-    const result = yield* control.configSet(target, input);
+    let value = input.value;
+    if (OMP_PATH_SCOPED_KEYS.includes(field.key)) {
+      const entries = yield* pathScopedEntries(field, input.scope);
+      if (!Array.isArray(value) || !value.every(Predicate.isString)) {
+        return yield* new OmpSettingsError({ key: field.key, reason: "invalid_value" });
+      }
+      value = ompWithUnscopedEntries(entries, value);
+    }
+    const result = yield* control.configSet(target, { ...input, value });
+    yield* afterChange(field.key);
     // `config set` reports the scope's file, not what the next load resolves (oh-my-pi#23).
     const form = yield* read(target);
     const restartRequired = yield* markLaunchScopedChange(target, field, input.scope);
@@ -284,12 +322,18 @@ export const makeOmpSettingsEngine = (deps: {
     } satisfies OmpSettingsWriteResult;
   });
 
+  /** A path-scoped key loses only its plain entries; entries scoped to folders stay. */
   const reset = Effect.fn("OmpSettingsEngine.reset")(function* (
     target: OmpControlTarget,
     input: { readonly key: string; readonly scope: OmpConfigScope },
   ) {
     const field = yield* writableField(target, input.key);
-    yield* control.configReset(target, input);
+    const scoped = OMP_PATH_SCOPED_KEYS.includes(field.key)
+      ? ompWithUnscopedEntries(yield* pathScopedEntries(field, input.scope), [])
+      : [];
+    if (scoped.length > 0) yield* control.configSet(target, { ...input, value: scoped });
+    else yield* control.configReset(target, input);
+    yield* afterChange(field.key);
     const form = yield* read(target);
     const restartRequired = yield* markLaunchScopedChange(target, field, input.scope);
     return { form, restartRequired } satisfies OmpSettingsWriteResult;

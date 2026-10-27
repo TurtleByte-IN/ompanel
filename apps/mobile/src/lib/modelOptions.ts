@@ -1,3 +1,4 @@
+import { resolveProviderModelsForCwd } from "@t3tools/client-runtime/providerSkills";
 import {
   normalizeProviderAccentColor,
   resolveProviderInstanceDisplayName,
@@ -240,6 +241,8 @@ export function buildModelOptions(
   providerInstanceId: ModelSelection["instanceId"] | undefined,
   projectId: ProjectId | null,
   includeHidden = false,
+  /** The thread's directory: each provider's model list there, where it lists one (OMP). */
+  cwd: string | null = null,
 ): ReadonlyArray<ModelOption> {
   const options = new Map<string, ModelOption>();
   const lockedProvider = config?.providers.find(
@@ -313,7 +316,7 @@ export function buildModelOptions(
     const preferences = config?.settings?.providerModelPreferences?.[provider.instanceId];
     const hiddenModels = new Set(preferences?.hiddenModels ?? []);
     const order = new Map((preferences?.modelOrder ?? []).map((slug, index) => [slug, index]));
-    const models = provider.models.filter(
+    const models = resolveProviderModelsForCwd(provider, cwd).filter(
       (model) => includeHidden || model.isCustom || !hiddenModels.has(model.slug),
     );
     if (order.size > 0)

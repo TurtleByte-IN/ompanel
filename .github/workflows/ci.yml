@@ -395,6 +395,14 @@ jobs:
       - name: Setup omp and Chromium
         uses: ./.github/actions/setup-omp-e2e
 
+      # provider-omp tests that only run against a real omp (`T3_TEST_OMP_BINARY`): every file
+      # that reads the variable, against the pinned build the end-to-end test uses.
+      - name: Real-omp provider tests
+        working-directory: packages/provider-omp
+        run: |
+          mapfile -t files < <(grep -rl --include='*.test.ts' T3_TEST_OMP_BINARY src)
+          T3_TEST_OMP_BINARY="$HOME/omp-e2e/omp" vp test run --config ../../vite.config.ts "${files[@]}"
+
       - name: Test
         run: OMPANEL_E2E_OMP_BINARY="$HOME/omp-e2e/omp" vp run --filter @t3tools/web test:e2e
 
