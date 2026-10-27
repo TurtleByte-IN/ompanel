@@ -1,6 +1,7 @@
 import {
   readOmpToolCard,
   type EnvironmentId,
+  type OmpProposalAction,
   type OrchestrationV2ProjectedTurnItem,
   type RunId,
   type ThreadId,
@@ -33,6 +34,7 @@ import { resolveExternalWebLinkHref } from "./externalLinkContextMenu";
 import type { ExpandedImagePreview } from "./ExpandedImagePreview";
 import { ShellCommandBlock } from "./ShellCommandBlock";
 import { OmpToolCard } from "./OmpToolCard";
+import { resolveOmpProposal } from "./OmpThreadMenu";
 import type { TurnItemSource } from "./timelineRowContext";
 
 interface V2ItemInspectorProps {
@@ -256,6 +258,8 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
   const item = fetched.item;
   const outputState = fetched.output;
   const ompCard = item.type === "dynamic_tool" ? readOmpToolCard(item.output) : null;
+  // The OMP tool call behind the card: what Accept and Reject on a staged edit name.
+  const ompToolCallId = item.nativeItemRef?.nativeId ?? undefined;
   const support = useV2ItemSupport({
     environmentId: props.environmentId,
     sourceThreadId: props.projectedItem.sourceThreadId,
@@ -396,6 +400,19 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
             card={ompCard}
             environmentId={props.environmentId}
             threadId={props.projectedItem.sourceThreadId}
+            {...(ompToolCallId === undefined
+              ? {}
+              : {
+                  onResolveProposal: (action: OmpProposalAction) =>
+                    resolveOmpProposal(
+                      {
+                        environmentId: props.environmentId,
+                        threadId: props.projectedItem.sourceThreadId,
+                      },
+                      ompToolCallId,
+                      action,
+                    ),
+                })}
             images={outputState.images.map((resource) => (
               <ChatMarkdownAssetImage
                 key={resource.index}

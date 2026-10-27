@@ -91,6 +91,34 @@ describe("OmpToolCard (mobile)", () => {
     expect(container.querySelector("p")?.className).toContain("line-through");
   });
 
+  it("offers Accept and Reject only on a resolvable staged edit", () => {
+    const actions = () => <div data-testid="omp-proposal-actions" />;
+    const staged: Card = {
+      kind: "proposed_edit",
+      source: "ast_edit",
+      state: "proposed",
+      files: [],
+      replacements: 1,
+      diff: "",
+      resolvable: true,
+    };
+    act(() => root.render(<OmpToolCard card={staged} renderProposalActions={actions} />));
+    expect(container.querySelector("[data-testid=omp-proposal-actions]")).not.toBeNull();
+    expect(container.querySelector("p")?.textContent).toBe(
+      "Proposed: files not modified yet. Accept or reject it. · 1 replacement",
+    );
+    // On the pinned contract (no `resolvable`) and once resolved, the card is read-only.
+    const { resolvable: _offered, ...pinned } = staged;
+    act(() => root.render(<OmpToolCard card={pinned} renderProposalActions={actions} />));
+    expect(container.querySelector("[data-testid=omp-proposal-actions]")).toBeNull();
+    act(() =>
+      root.render(
+        <OmpToolCard card={{ ...staged, state: "applied" }} renderProposalActions={actions} />,
+      ),
+    );
+    expect(container.querySelector("[data-testid=omp-proposal-actions]")).toBeNull();
+  });
+
   it("renders a conflict resolution with its target and resolved path", () => {
     expect(
       render({

@@ -34,6 +34,17 @@ vi.mock(import("~/assets/assetUrls"), async (original) => {
   };
 });
 
+const resolveCalls = vi.hoisted(
+  () => [] as Array<{ threadRef: unknown; toolCallId: string; action: string }>,
+);
+vi.mock(import("./OmpThreadMenu"), async (original) => ({
+  ...(await original()),
+  // Records the click instead of calling the server; the card then follows the thread.
+  resolveOmpProposal: async (threadRef, toolCallId, action) => {
+    resolveCalls.push({ threadRef, toolCallId, action });
+  },
+}));
+
 import { render } from "../../../test/render";
 import { V2ItemInspector } from "./V2ItemInspector";
 
@@ -102,6 +113,46 @@ it("ask card lists single, multi and Other answers", async () => {
   );
   expect(screen.text()).toContain("Which?x, y");
   expect(screen.text()).toContain("Name?Other: Zed");
+});
+
+it("a resolvable proposed edit offers Accept and Reject for its tool call", async () => {
+  resolveCalls.length = 0;
+  await using screen = await show(
+    projected("ast_edit", {
+      kind: "proposed_edit",
+      source: "ast_edit",
+      state: "proposed",
+      files: [{ path: "src/x.ts", count: 1 }],
+      replacements: 1,
+      diff: "-1:a\n+1:b",
+      resolvable: true,
+    }),
+  );
+  expect(screen.text()).toContain("Accept or reject it");
+  const buttons = [...screen.root.querySelectorAll("button")];
+  expect(buttons.map((button) => button.textContent)).toEqual(["Accept", "Reject"]);
+  buttons[0]!.click();
+  await vi.waitFor(() => expect(resolveCalls).toHaveLength(1));
+  expect(resolveCalls[0]).toEqual({
+    threadRef: { environmentId: ENVIRONMENT_ID, threadId: THREAD_ID },
+    toolCallId: "ast_edit",
+    action: "apply",
+  });
+});
+
+it("an applied proposed edit offers no buttons", async () => {
+  await using screen = await show(
+    projected("ast_edit", {
+      kind: "proposed_edit",
+      source: "ast_edit",
+      state: "applied",
+      files: [{ path: "src/x.ts", count: 1 }],
+      replacements: 1,
+      diff: "-1:a\n+1:b",
+    }),
+  );
+  expect(screen.root.querySelector("[data-omp-proposal=applied]")).not.toBeNull();
+  expect(screen.root.querySelectorAll("button")).toHaveLength(0);
 });
 
 it("proposed edit card shows the staged state without accept or reject buttons", async () => {
