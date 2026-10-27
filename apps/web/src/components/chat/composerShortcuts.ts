@@ -18,6 +18,12 @@ export function composerShortcutCommands(
     "modelPicker.toggle": ({ event }) => {
       if (!event.repeat) composerRef.current?.toggleModelPicker();
     },
+    "composer.cycleModel": ({ event }) => {
+      if (!event.repeat) composerRef.current?.cycleModel(1);
+    },
+    "composer.cycleModelBackward": ({ event }) => {
+      if (!event.repeat) composerRef.current?.cycleModel(-1);
+    },
     "composer.increaseEffort": ({ event }) => {
       if (!event.repeat) composerRef.current?.stepReasoningEffort(1);
     },

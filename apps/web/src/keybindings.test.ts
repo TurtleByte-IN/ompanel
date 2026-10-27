@@ -424,6 +424,32 @@ describe("chat/editor shortcuts", () => {
     }
   });
 
+  it("cycles the composer model on mod+alt+p, leaving mod+p to the file picker", () => {
+    for (const platform of ["MacIntel", "Win32", "Linux"]) {
+      const mod = { metaKey: platform === "MacIntel", ctrlKey: platform !== "MacIntel" };
+      const resolve = (input: ShortcutEventLike) =>
+        resolveShortcutCommand(input, DEFAULT_RESOLVED_KEYBINDINGS, {
+          platform,
+          context: { terminalFocus: false, composerFocus: true, editableFocus: true },
+        });
+      assert.strictEqual(resolve(event({ key: "p", ...mod, altKey: true })), "composer.cycleModel");
+      assert.strictEqual(
+        resolve(event({ key: "p", ...mod, altKey: true, shiftKey: true })),
+        "composer.cycleModelBackward",
+      );
+      assert.strictEqual(resolve(event({ key: "p", ...mod })), "filePicker.toggle");
+    }
+    // Option+P types "π" on a US Mac layout; the physical key still matches.
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "π", code: "KeyP", metaKey: true, altKey: true }),
+        DEFAULT_RESOLVED_KEYBINDINGS,
+        { platform: "MacIntel", context: { terminalFocus: false } },
+      ),
+      "composer.cycleModel",
+    );
+  });
+
   it("preserves a user-configured thread panel shortcut instead of its default", () => {
     const bindings = mergeWithDefaultKeybindings(
       compile([

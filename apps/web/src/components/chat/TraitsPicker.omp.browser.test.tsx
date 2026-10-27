@@ -71,3 +71,30 @@ it("shows OMP's thinking levels, role chip and boolean traits, and writes picks"
   await page.getByRole("menuitemradio", { name: /^Smol/ }).click();
   expect(changes.at(-1)).toContainEqual({ id: "role", value: "smol" });
 });
+
+it("shows the picked role as a chip beside the traits control, and the chip opens the menu", async () => {
+  const picker = (options: ReadonlyArray<ProviderOptionSelection>) => (
+    <TraitsPicker
+      provider={ProviderDriverKind.make("omp")}
+      instanceId={ProviderInstanceId.make("omp")}
+      models={[DEFAULT_MODEL]}
+      model="default"
+      modelOptions={options}
+      planModeEnabled={false}
+      onModelOptionsChange={() => {}}
+    />
+  );
+  const chip = () => page.getByRole("button", { name: /^OMP role:/ });
+  await using screen = await render(picker([]));
+  // The default role is not worth a chip.
+  await expect.element(chip()).not.toBeInTheDocument();
+
+  await screen.rerender(picker([{ id: "role", value: "smol" }]));
+  await expect.element(chip()).toHaveTextContent("Role: Smol");
+
+  await screen.rerender(picker([{ id: "role", value: "slow" }]));
+  await expect.element(chip()).toHaveTextContent("Role: Slow");
+
+  await chip().click();
+  await expect.element(page.getByRole("menuitemradio", { name: /^Slow/ })).toBeVisible();
+});
