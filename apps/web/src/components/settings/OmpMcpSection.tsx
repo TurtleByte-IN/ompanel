@@ -126,7 +126,7 @@ export function OmpMcpSection({
         <h3 className="font-medium text-sm">Ompanel's MCP server</h3>
         <p className="text-muted-foreground text-xs">
           Ompanel runs its own MCP server, separate from these: other agents reach this environment
-          through it. Copy its URL from the environment's menu under Settings → Connections.
+          through it. Copy its URL from the environment's menu under Settings → Environments.
         </p>
       </div>
     </section>

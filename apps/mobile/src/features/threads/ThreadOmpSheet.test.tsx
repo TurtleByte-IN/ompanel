@@ -1,5 +1,7 @@
 // While a gist upload or a live room request runs, its result (the share link) shows only in this
-// sheet, so nothing may close it: header back, hardware back (removal guard) or swipe-down.
+// sheet, so nothing may close it: hardware back (removal guard) or swipe-down. React tests compile
+// the screen the way an iOS release build does (`Platform.OS` is inlined as "ios"), so this drives
+// the iOS frame, which has no header back button.
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -23,7 +25,9 @@ vi.mock("react-native", () => ({
   ScrollView: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
   View: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
 }));
-vi.mock("react-native-screens", () => ({ ScreenStack: () => null }));
+vi.mock("react-native-screens", () => ({
+  ScreenStack: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
+}));
 vi.mock("react-native-safe-area-context", () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
@@ -48,8 +52,8 @@ vi.mock("../../native/StackHeader", () => ({
   },
 }));
 vi.mock("../../native/ThemedScreenStack", () => ({
-  NativeHeader: () => null,
-  NativeScreen: () => null,
+  NativeHeader: (props: { title: string }) => <h1>{props.title}</h1>,
+  NativeScreen: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
 }));
 vi.mock("../layout/AdaptiveWorkspaceLayout", () => ({
   useAdaptiveWorkspaceLayout: () => ({ layout: { usesSplitView: false } }),
@@ -105,7 +109,7 @@ const press = (label: string) =>
   act(() => container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!.click());
 
 describe("ThreadOmpSheet", () => {
-  it("cannot be closed while a share request runs, and can again once it settles", () => {
+  it("cannot be dismissed while a share request runs, and can again once it settles", () => {
     act(() =>
       root.render(
         <ThreadOmpSheet
@@ -114,21 +118,14 @@ describe("ThreadOmpSheet", () => {
       ),
     );
     press("Open Share live");
-    expect(container.querySelector('[aria-label="Back from Share live"]')).not.toBeNull();
+    expect(container.querySelector("h1")?.textContent).toBe("Share live");
 
     press("Start request");
     expect(navigation.preventRemove.at(-1)).toBe(true);
     expect(navigation.gestureEnabled.at(-1)).toBe(false);
-    press("Back from Share live");
-    // Still on the sharing view: back did nothing.
-    expect(container.querySelector('[aria-label="Back from Share live"]')).not.toBeNull();
 
     press("Finish request");
     expect(navigation.preventRemove.at(-1)).toBe(false);
     expect(navigation.gestureEnabled.at(-1)).toBe(true);
-    press("Back from Share live");
-    expect(container.querySelector('[aria-label="Back from OMP"]')).not.toBeNull();
-    press("Back from OMP");
-    expect(navigation.goBack).toHaveBeenCalledTimes(1);
   });
 });

@@ -74,7 +74,7 @@ export function OmpMcpSummaryView(props: { readonly read: OmpRead<OmpAgentFilesL
   return (
     <SettingsSection
       title="MCP servers"
-      footer="Ompanel's own MCP server is separate: copy its URL from the environment's menu in web or desktop Settings → Connections. Edit mcp.json on web or desktop."
+      footer="Ompanel's own MCP server is separate: copy its URL from the environment's menu in web or desktop Settings → Environments. Edit mcp.json on web or desktop."
     >
       {read.status !== "ok" ? (
         readStatus(read)

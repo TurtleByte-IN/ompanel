@@ -1,5 +1,11 @@
 import type { DesktopBridge, DesktopUpdateState } from "@t3tools/contracts";
-import { CLI_COMMAND, PRODUCT_NAME, RELEASES_URL, REPOSITORY_URL } from "@t3tools/shared/brand";
+
+// This file loads on its own before the app bundle (see bundledDev.test.ts), so it imports no
+// workspace package. The values mirror @t3tools/shared/brand.
+const PRODUCT_NAME = "Ompanel";
+const CLI_COMMAND = "ompanel";
+const REPOSITORY_URL = "https://github.com/TurtleByte-IN/ompanel";
+const RELEASES_URL = `${REPOSITORY_URL}/releases`;
 
 const FALLBACK_TRIAGE_COMMAND = `npx ${CLI_COMMAND} triage`;
 const DOWNLOAD_URL = RELEASES_URL;

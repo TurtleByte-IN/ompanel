@@ -6,15 +6,15 @@ to connect it, see [Remote access](./remote-access.md).
 
 ## OMP on mobile
 
-| What                 | Where                                           | On mobile                                                                                         |
-| -------------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| OMP sign-in          | **Settings → Provider accounts**                | Sign in and out, answer prompts, enter API keys ([OMP accounts](./omp-accounts.md))               |
-| OMP settings         | **Settings → OMP**                              | Read-only: value, source and restart note ([OMP settings](./omp-settings.md))                     |
-| Workspace trust      | **Settings → Server settings → Agent behavior** | **Trust project agent config** for the selected project ([Workspace trust](./workspace-trust.md)) |
-| Subagents            | The agents segment above the composer           | Tree and transcripts; no steer, kill or revive ([Agents panel](./agents-panel.md))                |
-| Tool cards           | The thread's work log                           | The same cards as on web ([OMP tool and turn cards](./omp-cards.md))                              |
-| Agent message alerts | **Settings → Notifications → Agent Messages**   | Push alerts ([Notifications](./notifications.md))                                                 |
-| Usage                | **Usage** in the workspace navigation           | Totals and limits ([Usage and limits](./usage.md))                                                |
+| What                 | Where                                   | On mobile                                                                                         |
+| -------------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| OMP sign-in          | **Settings → Providers**                | Sign in and out, answer prompts, enter API keys ([OMP accounts](./omp-accounts.md))               |
+| OMP settings         | **Settings → OMP**                      | Read-only: value, source and restart note ([OMP settings](./omp-settings.md))                     |
+| Workspace trust      | **Settings → Threads**                  | **Trust project agent config** for the selected project ([Workspace trust](./workspace-trust.md)) |
+| Subagents            | The agents segment above the composer   | Tree and transcripts; no steer, kill or revive ([Agents panel](./agents-panel.md))                |
+| Tool cards           | The thread's work log                   | The same cards as on web ([OMP tool and turn cards](./omp-cards.md))                              |
+| Agent message alerts | **Settings → General → Agent messages** | Push alerts ([Notifications](./notifications.md))                                                 |
+| Usage                | **Usage** in the workspace navigation   | Totals and limits ([Usage and limits](./usage.md))                                                |
 
 ## Not on mobile
 

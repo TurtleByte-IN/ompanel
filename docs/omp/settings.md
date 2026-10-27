@@ -338,7 +338,7 @@ Settings → OMP → MCP lists the servers in `mcp.json` and `.mcp.json` of the
 agent directory (name, transport, command or URL without query or
 credentials; never arguments, headers or environment) and opens either file;
 new ones are created owner-only. A repository's `.omp/mcp.json` is not shown.
-Ompanel's own MCP server is separate; its URL is under Settings → Connections.
+Ompanel's own MCP server is separate; its URL is under Settings → Environments.
 
 Settings → OMP → Customization lists and opens, at the paths OMP discovers
 them: `skills/<name>/SKILL.md` and `managed-skills/<name>/SKILL.md`,

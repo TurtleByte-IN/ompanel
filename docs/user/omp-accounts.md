@@ -49,6 +49,6 @@ here is an alternative to `omp setup`; see [OMP setup](./omp-setup.md).
 
 ## Mobile
 
-On the mobile app, open **Settings → Provider accounts**. Each OMP instance shows the same
+On the mobile app, open **Settings → Providers**. Each OMP instance shows the same
 provider list with sign-in, prompts, API-key entry and sign-out. **Open sign-in page** opens the
 provider's page directly on the phone.
