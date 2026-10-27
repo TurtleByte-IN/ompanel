@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// @effect-diagnostics nodeBuiltinImport:off - sha256 of the downloaded sidecar, as the server checks it.
+import * as NodeCrypto from "node:crypto";
+
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Duration from "effect/Duration";
@@ -7,6 +10,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
@@ -16,8 +20,12 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as NetService from "@t3tools/shared/Net";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { OMP_LOCK, pinnedOmpSidecar } from "@t3tools/provider-omp/sidecar";
 import { windowsSystemTar } from "./lib/windows-tar.ts";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
+
+// The first-run sidecar download is ~100 MB; a cold runner can take a while.
+const OMP_DOWNLOAD_TIMEOUT = Duration.minutes(5);
 
 export class CliArchiveSmokeError extends Schema.TaggedError<CliArchiveSmokeError>()(
   "CliArchiveSmokeError",
@@ -59,8 +67,10 @@ const runExecutable = Effect.fn("runExecutable")(function* (
 });
 
 const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
-  readonly archive: string;
+  readonly archive: Option.Option<string>;
+  readonly executable: Option.Option<string>;
   readonly expectVersion: string;
+  readonly ompSidecar: boolean;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -77,26 +87,39 @@ const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
     ),
   );
 
-  // Windows bsdtar reads zip; Git Bash's GNU tar does not.
-  const tar = platform === "win32" ? windowsSystemTar() : "tar";
-  const extract = yield* spawner
-    .spawn(ChildProcess.make(tar, ["-xf", input.archive, "-C", scratch]))
-    .pipe(Effect.flatMap((child) => child.exitCode));
-  if (Number(extract) !== 0) {
+  const executableName = platform === "win32" ? "ompanel.exe" : "ompanel";
+  let contentDir: string;
+  if (Option.isSome(input.executable)) {
+    // An installed CLI (scripts/install.sh links the executable into its bin directory).
+    contentDir = path.dirname(yield* fs.realPath(input.executable.value));
+  } else if (Option.isSome(input.archive)) {
+    // Windows bsdtar reads zip; Git Bash's GNU tar does not.
+    const tar = platform === "win32" ? windowsSystemTar() : "tar";
+    const extract = yield* spawner
+      .spawn(ChildProcess.make(tar, ["-xf", input.archive.value, "-C", scratch]))
+      .pipe(Effect.flatMap((child) => child.exitCode));
+    if (Number(extract) !== 0) {
+      return yield* new CliArchiveSmokeError({
+        step: "extracting the archive",
+        detail: `tar exited with ${String(extract)}`,
+      });
+    }
+    const [extracted] = yield* fs.readDirectory(scratch);
+    if (extracted === undefined) {
+      return yield* new CliArchiveSmokeError({
+        step: "extracting the archive",
+        detail: "the archive was empty",
+      });
+    }
+    contentDir = path.join(scratch, extracted);
+  } else {
     return yield* new CliArchiveSmokeError({
-      step: "extracting the archive",
-      detail: `tar exited with ${String(extract)}`,
+      step: "reading the arguments",
+      detail: "pass --archive or --executable",
     });
   }
-  const [root] = yield* fs.readDirectory(scratch);
-  if (root === undefined) {
-    return yield* new CliArchiveSmokeError({
-      step: "extracting the archive",
-      detail: "the archive was empty",
-    });
-  }
-  const contentDir = path.join(scratch, root);
-  const executable = path.join(contentDir, platform === "win32" ? "ompanel.exe" : "ompanel");
+  const root = path.basename(contentDir);
+  const executable = path.join(contentDir, executableName);
   for (const required of [executable, path.join(contentDir, "client/index.html")]) {
     if (!(yield* fs.exists(required))) {
       return yield* new CliArchiveSmokeError({
@@ -117,6 +140,26 @@ const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
   const net = yield* NetService.NetService;
   const port = yield* net.findAvailablePort(47700);
   const home = path.join(scratch, "home");
+  // OMP enabled with no binary path: the server must download the pinned sidecar on its own,
+  // as a fresh web/server install does (docs/omp/sidecar.md#first-run-download-web-and-server).
+  const pinned = input.ompSidecar
+    ? yield* pinnedOmpSidecar(OMP_LOCK).pipe(
+        Effect.mapError(
+          (cause) =>
+            new CliArchiveSmokeError({
+              step: "resolving the pinned sidecar",
+              detail: cause.detail,
+            }),
+        ),
+      )
+    : undefined;
+  if (pinned !== undefined) {
+    yield* fs.makeDirectory(path.join(home, "userdata"), { recursive: true });
+    yield* fs.writeFileString(
+      path.join(home, "userdata", "settings.json"),
+      '{"providerInstances":{"omp":{"driver":"omp","enabled":true}}}\n',
+    );
+  }
   const server = yield* spawner.spawn(
     ChildProcess.make(
       executable,
@@ -158,6 +201,25 @@ const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
     Effect.timeout(Duration.seconds(30)),
     Effect.orElseSucceed(() => false),
   );
+  const cachedSidecar =
+    pinned === undefined ? undefined : path.join(home, "tools", "omp", OMP_LOCK.tag, pinned.asset);
+  // The server renames the download into place only after its sha256 matched; hash it again here.
+  const sidecarDigest = Effect.gen(function* () {
+    if (cachedSidecar === undefined || !(yield* fs.exists(cachedSidecar))) return undefined;
+    const bytes = yield* fs.readFile(cachedSidecar);
+    return NodeCrypto.createHash("sha256").update(bytes).digest("hex");
+  }).pipe(Effect.orElseSucceed(() => undefined));
+  const downloaded =
+    !ready || pinned === undefined
+      ? undefined
+      : yield* Effect.gen(function* () {
+          let digest = yield* sidecarDigest;
+          while (digest === undefined) {
+            yield* Effect.sleep(Duration.seconds(1));
+            digest = yield* sidecarDigest;
+          }
+          return digest;
+        }).pipe(Effect.timeoutOption(OMP_DOWNLOAD_TIMEOUT));
   yield* server.kill({ killSignal: "SIGTERM" }).pipe(Effect.ignore);
   yield* server.exitCode.pipe(Effect.timeout(Duration.seconds(10)), Effect.ignore);
   const [stdout, stderr] = yield* Fiber.join(output).pipe(
@@ -170,17 +232,42 @@ const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
       detail: `no 200 from / within 30s\n${stdout}${stderr}`,
     });
   }
+  if (pinned !== undefined && downloaded !== undefined) {
+    if (Option.isNone(downloaded)) {
+      return yield* new CliArchiveSmokeError({
+        step: "downloading the OMP sidecar",
+        detail: `${cachedSidecar} did not appear within ${Duration.format(OMP_DOWNLOAD_TIMEOUT)}\n${stdout}${stderr}`,
+      });
+    }
+    if (downloaded.value !== pinned.sha256) {
+      return yield* new CliArchiveSmokeError({
+        step: "downloading the OMP sidecar",
+        detail: `${cachedSidecar} has sha256 ${downloaded.value}; omp.lock pins ${pinned.sha256}`,
+      });
+    }
+    yield* Effect.log(
+      `[cli-smoke] ${root}: downloaded ${OMP_LOCK.tag} ${pinned.asset} (sha256 ${downloaded.value}).`,
+    );
+  }
   yield* Effect.log(`[cli-smoke] ${root}: --version passed and serve answered on ${String(port)}.`);
 });
 
 const command = Command.make(
   "smoke-cli-archive",
   {
-    archive: Flag.String("archive"),
+    archive: Flag.String("archive").pipe(Flag.optional),
+    executable: Flag.String("executable").pipe(
+      Flag.optional,
+      Flag.withDescription("An installed CLI to test instead of an archive."),
+    ),
     expectVersion: Flag.String("expect-version"),
+    ompSidecar: Flag.Boolean("omp-sidecar").pipe(
+      Flag.withDescription("Also require the server to download the pinned OMP sidecar."),
+      Flag.withDefault(false),
+    ),
   },
   (input) => smokeCliArchive(input).pipe(Effect.scoped),
-).pipe(Command.withDescription("Extract a CLI archive and run its executable."));
+).pipe(Command.withDescription("Run a CLI archive's or an installed CLI's executable."));
 
 if (import.meta.main) {
   Command.run(command, { version: "0.0.0" }).pipe(

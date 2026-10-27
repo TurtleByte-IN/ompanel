@@ -25,7 +25,7 @@ import {
   readOmpThreadSessionRecord,
   type OmpSessionsLocation,
 } from "./ompSessions.ts";
-import type { OmpRpcRequestError, OmpRpcRequestOptions } from "./rpcProcess.ts";
+import type { OmpRpcRequestError } from "./rpcProcess.ts";
 import { readOmpBranchTree } from "./sessionBranches.ts";
 import type { OmpSidecarError } from "./sidecar.ts";
 import type { OmpThreadSession, OmpThreadSessions } from "./threadSessions.ts";
@@ -60,7 +60,10 @@ const OMP_SHARE_SERVER_BLOCKED = "https://share-server-disabled.invalid";
 /** The overlay (`PI_CONFIG_FILES`, above project settings) `omp share` runs with. */
 const SHARE_OVERLAY = `share:\n  serverUrl: "${OMP_SHARE_SERVER_BLOCKED}"\n  store: gist\n`;
 
-/** OMP's `CollabStatus` (docs/rpc.md, Collab Hosting Sub-Protocol). */
+/**
+ * OMP's `CollabStatus` (docs/rpc.md, Collab Hosting Sub-Protocol). Every answer is decoded, so
+ * only these fields reach the caller.
+ */
 const CollabStatus = Schema.Struct({
   active: Schema.Boolean,
   access: Schema.optional(Schema.Literals(["view", "control"])),
@@ -77,16 +80,6 @@ const CollabStatus = Schema.Struct({
 });
 const decodeCollabStatus = Schema.decodeUnknownEffect(CollabStatus);
 const decodeCollabStop = Schema.decodeUnknownEffect(Schema.Struct({ stopped: Schema.Boolean }));
-
-/**
- * The collab commands, which the pinned contract's typed `request` does not list until the
- * sidecar is repinned to a contract with them; every response is decoded before use.
- */
-type OmpCollabRequest = (
-  command: "collab_start" | "collab_stop" | "collab_status",
-  params: { readonly access: OmpCollabAccess } | undefined,
-  options: OmpRpcRequestOptions,
-) => Effect.Effect<unknown, OmpRpcRequestError>;
 
 const NO_ROOM: OmpCollabStatus = { active: false, participants: [] };
 
@@ -281,50 +274,48 @@ export const makeOmpThreadMenuController = (
     `Share live needs OMP RPC contract ${OMP_COLLAB_CONTRACT} or later; this Ompanel runs OMP ${input.ompVersion} (contract ${input.contractVersion}). Update Ompanel to a build with a newer OMP.`,
   );
 
-  /** The narrow cast `OmpCollabRequest` documents; the process accepts any command name. */
-  const collabRequest = (session: OmpThreadSession): OmpCollabRequest =>
-    session.process.request as unknown as OmpCollabRequest;
-
   const startCollab = Effect.fn("OmpThreadMenu.startCollab")(function* (request: {
     readonly threadId: ThreadId;
     readonly access: OmpCollabAccess;
   }) {
     if (!collabSupported) return yield* needsNewerOmp;
     const session = yield* running(request.threadId);
-    const collab = collabRequest(session);
     // The links leave here in the result and nowhere else. A start that does not come back with
     // a room (timeout, a caller gone, a bad answer) is stopped, so no room stays open unseen.
-    return yield* collab(
-      "collab_start",
-      { access: request.access },
-      { timeoutMs: timeouts.collabStart, dropLateResponse: true },
-    ).pipe(
-      Effect.mapError(rpcFailed),
-      Effect.flatMap((answer) =>
-        decodeCollabStatus(answer).pipe(
-          Effect.mapError(() =>
-            fail("omp_failed", "OMP answered collab_start with an unknown shape."),
+    return yield* session.process
+      .request(
+        "collab_start",
+        { access: request.access },
+        { timeoutMs: timeouts.collabStart, dropLateResponse: true },
+      )
+      .pipe(
+        Effect.mapError(rpcFailed),
+        Effect.flatMap((answer) =>
+          decodeCollabStatus(answer).pipe(
+            Effect.mapError(() =>
+              fail("omp_failed", "OMP answered collab_start with an unknown shape."),
+            ),
           ),
         ),
-      ),
-      Effect.onExit((exit) =>
-        Exit.isSuccess(exit)
-          ? Effect.void
-          : collab("collab_stop", undefined, {
-              timeoutMs: timeouts.collab,
-              dropLateResponse: true,
-            }).pipe(Effect.ignore),
-      ),
-    );
+        Effect.onExit((exit) =>
+          Exit.isSuccess(exit)
+            ? Effect.void
+            : session.process
+                .request("collab_stop", undefined, {
+                  timeoutMs: timeouts.collab,
+                  dropLateResponse: true,
+                })
+                .pipe(Effect.ignore),
+        ),
+      );
   });
 
   const stopCollab = Effect.fn("OmpThreadMenu.stopCollab")(function* (threadId: ThreadId) {
     const session = sessions.get(threadId);
     if (!collabSupported || session === undefined) return { stopped: false };
-    const raw = yield* collabRequest(session)("collab_stop", undefined, {
-      timeoutMs: timeouts.collab,
-      dropLateResponse: true,
-    }).pipe(Effect.mapError(rpcFailed));
+    const raw = yield* session.process
+      .request("collab_stop", undefined, { timeoutMs: timeouts.collab, dropLateResponse: true })
+      .pipe(Effect.mapError(rpcFailed));
     return yield* decodeCollabStop(raw).pipe(
       Effect.mapError(() => fail("omp_failed", "OMP answered collab_stop with an unknown shape.")),
     );
@@ -335,10 +326,9 @@ export const makeOmpThreadMenuController = (
     if (!collabSupported) return yield* needsNewerOmp;
     const session = sessions.get(threadId);
     if (session === undefined) return NO_ROOM;
-    const raw = yield* collabRequest(session)("collab_status", undefined, {
-      timeoutMs: timeouts.collab,
-      dropLateResponse: true,
-    }).pipe(Effect.mapError(rpcFailed));
+    const raw = yield* session.process
+      .request("collab_status", undefined, { timeoutMs: timeouts.collab, dropLateResponse: true })
+      .pipe(Effect.mapError(rpcFailed));
     return yield* decodeCollabStatus(raw).pipe(
       Effect.mapError(() =>
         fail("omp_failed", "OMP answered collab_status with an unknown shape."),

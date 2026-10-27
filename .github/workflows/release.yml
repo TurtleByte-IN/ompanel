@@ -48,15 +48,18 @@ jobs:
   # triggering commit. Manual stable releases build the commit of the latest
   # published nightly, so stable only ever ships a build that nightly users
   # have already run. Scheduled runs also decide here whether a nightly is due.
+  # Runs on the Ompanel repository only; scheduled nightlies stay off until the
+  # repository variable OMPANEL_NIGHTLY_RELEASES is `true` (docs/omp/release.md).
   resolve_commit:
     name: Resolve release commit
-    if: github.repository == 'pingdotgg/t3code'
+    if: github.repository == 'TurtleByte-IN/ompanel' && (github.event_name != 'schedule' || vars.OMPANEL_NIGHTLY_RELEASES == 'true')
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       ref: ${{ steps.resolve.outputs.ref }}
       nightly_version: ${{ steps.resolve.outputs.nightly_version }}
       has_changes: ${{ steps.resolve.outputs.has_changes }}
+      signing: ${{ steps.resolve.outputs.signing }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -73,6 +76,7 @@ jobs:
             const {
               assertCommitOnDefaultBranch,
               assertReleaseSource,
+              mayReleaseSign,
               shouldReleaseNightly,
               resolveLatestNightlyCommit,
             } = require('./.github/scripts/check-nightly-release.cjs');
@@ -86,18 +90,23 @@ jobs:
 
             await assertReleaseSource({ github, context, releaseChannel });
 
+            let ref = context.sha;
             if (context.eventName === 'schedule') {
               core.setOutput('has_changes', await shouldReleaseNightly({ github, context, core }));
-              core.setOutput('ref', context.sha);
             } else if (context.eventName === 'workflow_dispatch' && dispatchChannel === 'stable') {
               const { tag, sha, version } = await resolveLatestNightlyCommit({ github, context, core });
               await assertCommitOnDefaultBranch({ github, context, sha });
               core.notice(`Stable release builds ${sha}, the commit shipped by ${tag}.`);
-              core.setOutput('ref', sha);
+              ref = sha;
               core.setOutput('nightly_version', version);
-            } else {
-              core.setOutput('ref', context.sha);
             }
+            core.setOutput('ref', ref);
+
+            // Signing and npm publishing run in the `release` environment, and only for a
+            // commit on main; anything else builds unsigned and is never published to npm.
+            const signing = await mayReleaseSign({ github, context, releaseChannel, sha: ref });
+            if (!signing) core.notice(`${ref} is a preview or not on the default branch: unsigned, no npm.`);
+            core.setOutput('signing', String(signing));
 
   preflight:
     name: Preflight
@@ -118,6 +127,9 @@ jobs:
       is_prerelease: ${{ steps.release_meta.outputs.is_prerelease }}
       make_latest: ${{ steps.release_meta.outputs.make_latest }}
       ref: ${{ needs.resolve_commit.outputs.ref }}
+      has_vercel: ${{ steps.credentials.outputs.has_vercel }}
+      has_release_app: ${{ steps.credentials.outputs.has_release_app }}
+      signing: ${{ needs.resolve_commit.outputs.signing }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -203,15 +215,30 @@ jobs:
             echo "version=$version" >> "$GITHUB_OUTPUT"
             echo "tag=v$version" >> "$GITHUB_OUTPUT"
             echo "name=Ompanel v$version" >> "$GITHUB_OUTPUT"
-            echo "cli_dist_tag=latest" >> "$GITHUB_OUTPUT"
             if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "cli_dist_tag=latest" >> "$GITHUB_OUTPUT"
               echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
               echo "make_latest=true" >> "$GITHUB_OUTPUT"
             else
+              # A release candidate (v1.2.3-rc.1): never `latest` on npm either.
+              echo "cli_dist_tag=next" >> "$GITHUB_OUTPUT"
               echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
               echo "make_latest=false" >> "$GITHUB_OUTPUT"
             fi
           fi
+
+      # Credentials the repository may not have yet (docs/omp/release.md). Jobs
+      # that need one are skipped while it is missing, not failed.
+      - id: credentials
+        name: Detect optional release credentials
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          RELEASE_APP_ID: ${{ secrets.RELEASE_APP_ID }}
+        run: |
+          has() { [[ -n "$1" ]] && echo true || echo false; }
+          echo "has_vercel=$(has "$VERCEL_TOKEN")" >> "$GITHUB_OUTPUT"
+          echo "has_release_app=$(has "$RELEASE_APP_ID")" >> "$GITHUB_OUTPUT"
 
       - id: previous_tag
         name: Resolve previous release tag
@@ -234,7 +261,7 @@ jobs:
     needs: [preflight]
     if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -266,7 +293,7 @@ jobs:
     needs: [preflight]
     if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -373,8 +400,32 @@ jobs:
       # No Electron setup here: `t3` (apps/server) has no Electron dependency
       # and none of its tests touch the runtime. Only the non-server `test`
       # job, which covers @t3tools/desktop, needs the download.
+      # Cache the pinned browser and skip apt unless shared libraries are
+      # missing, as ci.yml does: a slow apt mirror otherwise eats the budget.
+      - name: Resolve Playwright version
+        id: playwright_version
+        run: echo "version=$(node -p "require('./apps/server/node_modules/playwright-core/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Chromium
+        id: chromium_cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-shell-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright_version.outputs.version }}
+
       - name: Install Chromium for server browser integration tests
-        run: node apps/server/node_modules/playwright-core/cli.js install --with-deps --only-shell chromium
+        if: steps.chromium_cache.outputs.cache-hit != 'true'
+        run: node apps/server/node_modules/playwright-core/cli.js install --only-shell chromium
+
+      - uses: ./.github/actions/setup-apt-mirrors
+
+      - name: Install missing Chromium system dependencies
+        run: |
+          browser=$(find "$HOME/.cache/ms-playwright" -name chrome-headless-shell -type f -print -quit)
+          test -n "$browser"
+          if ldd "$browser" | grep '=> not found'; then
+            node apps/server/node_modules/playwright-core/cli.js install-deps chromium
+          fi
 
       - name: Test
         run: vp run --filter t3 test --shard ${{ matrix.shard }}/${{ strategy.job-total }}
@@ -415,6 +466,7 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Setup Vite+
+        if: env.CLOUDFLARE_API_TOKEN != ''
         uses: voidzero-dev/setup-vp@v1
         with:
           node-version-file: package.json
@@ -430,6 +482,7 @@ jobs:
       # Redacted values are persisted as
       # {"__redacted__": "<value>"}; the token is masked before it is written.
       - name: Read production relay tracing config
+        if: env.CLOUDFLARE_API_TOKEN != ''
         shell: bash
         working-directory: infra/relay
         run: |
@@ -448,6 +501,15 @@ jobs:
             echo "OMPANEL_RELAY_CLIENT_OTLP_TRACES_DATASET=$dataset"
             echo "OMPANEL_RELAY_CLIENT_OTLP_TRACES_TOKEN=$token"
           } > "$RUNNER_TEMP/relay-client-tracing.env"
+
+      # No relay deployed yet (B-009 in docs/omp/release.md): builds carry no
+      # client tracing, as pull request previews do.
+      - name: Skip relay tracing config
+        if: env.CLOUDFLARE_API_TOKEN == ''
+        shell: bash
+        run: |
+          echo "::notice::No CLOUDFLARE_API_TOKEN; this release carries no relay client tracing."
+          : > "$RUNNER_TEMP/relay-client-tracing.env"
 
       - name: Upload relay client tracing config
         uses: actions/upload-artifact@v7
@@ -479,6 +541,15 @@ jobs:
               missing+=("$name")
             fi
           done
+          # None configured means no relay is deployed yet: the release ships
+          # without Ompanel Connect. A partial configuration is a mistake.
+          if (( ${#missing[@]} == ${#required[@]} )); then
+            echo "::notice::Ompanel Connect is not configured; this release ships without it."
+            for key in clerk_publishable_key clerk_jwt_template clerk_cli_oauth_client_id relay_url; do
+              echo "$key=" >> "$GITHUB_OUTPUT"
+            done
+            exit 0
+          fi
           if (( ${#missing[@]} > 0 )); then
             printf 'Missing required relay deployment configuration: %s\n' "${missing[*]}" >&2
             exit 1
@@ -548,7 +619,7 @@ jobs:
         run: |
           config_path="$RUNNER_TEMP/relay-client-tracing/relay-client-tracing.env"
           tracing_token="$(sed -n 's/^OMPANEL_RELAY_CLIENT_OTLP_TRACES_TOKEN=//p' "$config_path")"
-          echo "::add-mask::$tracing_token"
+          if [[ -n "$tracing_token" ]]; then echo "::add-mask::$tracing_token"; fi
           cat "$config_path" >> "$GITHUB_ENV"
 
       - name: Align package versions to release version
@@ -613,6 +684,8 @@ jobs:
       rust_target: aarch64-apple-darwin
       resource_key: darwin-arm64
       cli_archive: true
+      sign: ${{ needs.preflight.outputs.signing == 'true' }}
+      environment: ${{ needs.preflight.outputs.signing == 'true' && 'release' || '' }}
 
   desktop_mac_x64:
     name: Desktop macOS x64
@@ -639,6 +712,8 @@ jobs:
       # (the SEA docs list macOS as arm64 only) and the built binary segfaults
       # on start. The x64 desktop app is Electron and unaffected.
       cli_archive: false
+      sign: ${{ needs.preflight.outputs.signing == 'true' }}
+      environment: ${{ needs.preflight.outputs.signing == 'true' && 'release' || '' }}
 
   desktop_linux_x64:
     name: Desktop Linux x64
@@ -662,6 +737,8 @@ jobs:
       rust_target: x86_64-unknown-linux-gnu
       resource_key: linux-x64
       cli_archive: true
+      sign: ${{ needs.preflight.outputs.signing == 'true' }}
+      environment: ${{ needs.preflight.outputs.signing == 'true' && 'release' || '' }}
 
   # node-pty has no Linux prebuild and compiles from source, so the arm64 app
   # and archive are built on arm64 hardware rather than cross-built.
@@ -687,6 +764,8 @@ jobs:
       rust_target: aarch64-unknown-linux-gnu
       resource_key: linux-arm64
       cli_archive: true
+      sign: ${{ needs.preflight.outputs.signing == 'true' }}
+      environment: ${{ needs.preflight.outputs.signing == 'true' && 'release' || '' }}
 
   # The Windows jobs start with the other platforms and wait for the same-arch
   # Linux CLI archive after their other setup. Packaging is mostly CPU and
@@ -716,6 +795,8 @@ jobs:
       rust_target: x86_64-pc-windows-msvc
       resource_key: win32-x64
       cli_archive: true
+      sign: ${{ needs.preflight.outputs.signing == 'true' }}
+      environment: ${{ needs.preflight.outputs.signing == 'true' && 'release' || '' }}
 
   desktop_win_arm64:
     name: Desktop Windows arm64
@@ -740,9 +821,14 @@ jobs:
       rust_target: aarch64-pc-windows-msvc
       resource_key: win32-arm64
       cli_archive: true
+      sign: ${{ needs.preflight.outputs.signing == 'true' }}
+      environment: ${{ needs.preflight.outputs.signing == 'true' && 'release' || '' }}
 
+  # Uploads everything as a draft. verify_release checks the draft and
+  # publish_release makes it public only after every check passed, so a broken
+  # release never reaches the installers or `releases/latest`.
   release:
-    name: Publish GitHub Release
+    name: Create draft GitHub Release
     needs:
       [
         preflight,
@@ -763,6 +849,8 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: write
+    outputs:
+      release_id: ${{ steps.publish.outputs.id || steps.publish_first.outputs.id }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -808,21 +896,8 @@ jobs:
             node .github/scripts/mirror-play-apk.cjs
           fi
 
-      # Installers verify archives against this file, so it is written from the
-      # signed bytes that get uploaded, never from an earlier stage.
-      - name: Write CLI archive checksums
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd release-assets
-          shopt -s nullglob
-          archives=(t3-*.tar.gz t3-*.zip)
-          if [[ ${#archives[@]} -eq 0 ]]; then
-            echo "No CLI archives were produced." >&2
-            exit 1
-          fi
-          sha256sum "${archives[@]}" > SHA256SUMS
-          cat SHA256SUMS
+      # Checksums are written last, in "Write checksums and resolve release
+      # asset list", from the exact bytes that get uploaded.
 
       # The desktop build omits the publish config for preview versions, so
       # electron-builder emits no updater manifests for them. Refuse to publish
@@ -871,31 +946,51 @@ jobs:
             fi
           done
 
-      # Updater manifests and blockmaps are what electron-updater consumes.
-      # They are only listed for channels an updater is meant to follow.
+      # Installers verify downloads against SHA256SUMS, so it is written from the
+      # exact bytes that get uploaded: every installer and CLI archive and, on
+      # channels an updater follows, the updater manifests and blockmaps.
+      # builder-debug.yml is electron-builder's config dump, not a release asset.
       - id: release_files
-        name: Resolve release asset list
+        name: Write checksums and resolve release asset list
         shell: bash
+        env:
+          RELEASE_CHANNEL: ${{ needs.preflight.outputs.release_channel }}
         run: |
+          set -euo pipefail
+          shopt -s nullglob
+          cd release-assets
+          archives=(ompanel-*.tar.gz ompanel-*.zip)
+          if [[ ${#archives[@]} -eq 0 ]]; then
+            echo "No CLI archives were produced." >&2
+            exit 1
+          fi
+          patterns=('*.dmg' '*.zip' '*.AppImage' '*.deb' '*.exe' '*.tar.gz' '*.apk')
+          if [[ "$RELEASE_CHANNEL" != "preview" ]]; then
+            patterns+=('*.blockmap' '*.yml')
+          fi
+          files=()
+          for pattern in "${patterns[@]}"; do
+            for file in $pattern; do
+              [[ "$file" == builder-debug.yml ]] || files+=("$file")
+            done
+          done
+          sha256sum "${files[@]}" > SHA256SUMS
+          cat SHA256SUMS
           {
             echo 'files<<EOF'
-            echo 'release-assets/*.dmg'
-            echo 'release-assets/*.zip'
-            echo 'release-assets/*.AppImage'
-            echo 'release-assets/*.deb'
-            echo 'release-assets/*.exe'
-            if [[ "${{ needs.preflight.outputs.release_channel }}" != "preview" ]]; then
-              echo 'release-assets/*.blockmap'
-              echo 'release-assets/*.yml'
-            fi
-            echo 'release-assets/*.tar.gz'
-            # Only list APKs when Play has a processed internal build available.
-            for apk in release-assets/*.apk; do
-              [[ -f "$apk" ]] && echo "$apk"
-            done
-            echo 'release-assets/SHA256SUMS'
+            printf 'release-assets/%s\n' "${files[@]}" SHA256SUMS
             echo 'EOF'
           } >> "$GITHUB_OUTPUT"
+
+      # The hashes of the bytes this job built and uploads, kept apart from the
+      # release so publish_release can check the draft still holds exactly them.
+      - name: Record built asset checksums
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-checksums
+          path: release-assets/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 7
 
       # A preview release gets a warning instead of generated notes. Generated
       # notes would list every commit since the previous preview, which is
@@ -915,7 +1010,8 @@ jobs:
           Built from `${{ needs.preflight.outputs.ref }}`.
           EOF
 
-      - name: Publish release
+      - name: Create draft release
+        id: publish
         if: needs.preflight.outputs.previous_tag != ''
         uses: softprops/action-gh-release@v3
         with:
@@ -925,13 +1021,15 @@ jobs:
           generate_release_notes: ${{ needs.preflight.outputs.release_channel != 'preview' }}
           body_path: ${{ needs.preflight.outputs.release_channel == 'preview' && 'release-notes.md' || '' }}
           previous_tag: ${{ needs.preflight.outputs.previous_tag }}
+          draft: true
           prerelease: ${{ needs.preflight.outputs.is_prerelease }}
-          make_latest: ${{ needs.preflight.outputs.make_latest }}
+          make_latest: false
           files: ${{ steps.release_files.outputs.files }}
           fail_on_unmatched_files: true
           token: ${{ github.token }}
 
-      - name: Publish first release
+      - name: Create first draft release
+        id: publish_first
         if: needs.preflight.outputs.previous_tag == ''
         uses: softprops/action-gh-release@v3
         with:
@@ -940,20 +1038,380 @@ jobs:
           name: ${{ needs.preflight.outputs.release_name }}
           generate_release_notes: ${{ needs.preflight.outputs.release_channel != 'preview' }}
           body_path: ${{ needs.preflight.outputs.release_channel == 'preview' && 'release-notes.md' || '' }}
+          draft: true
           prerelease: ${{ needs.preflight.outputs.is_prerelease }}
-          make_latest: ${{ needs.preflight.outputs.make_latest }}
+          make_latest: false
           files: ${{ steps.release_files.outputs.files }}
           fail_on_unmatched_files: true
           token: ${{ github.token }}
 
-  # The `ompanel` npm package is a launcher that downloads this version's CLI
-  # archive from the GitHub Release, so it publishes only once that release
-  # exists. Preview publishes too, under the `preview` dist-tag, which
-  # nothing resolves unless asked for by name.
-  publish_cli:
-    name: Publish CLI to npm
+  # Drafts are readable only with a token that can write contents, so this
+  # job alone holds one. It copies the draft's bytes into workflow artifacts,
+  # which the verify legs read without any repository write access.
+  stage_draft:
+    name: Stage draft release for verification
     needs: [preflight, release]
     if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_ID: ${{ needs.release.outputs.release_id }}
+    steps:
+      - name: Download the draft release
+        run: |
+          set -euo pipefail
+          mkdir -p draft darwin-arm64 win32-x64
+          gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" --jq '"\(.tag_name) draft=\(.draft) prerelease=\(.prerelease)"'
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?per_page=100" --jq '.[] | "\(.id) \(.name)"' |
+            while read -r id name; do
+              gh api -H "Accept: application/octet-stream" "repos/$GITHUB_REPOSITORY/releases/assets/$id" > "draft/$name"
+            done
+          cp draft/SHA256SUMS draft/*-arm64.dmg draft/ompanel-*-darwin-arm64.tar.gz darwin-arm64/
+          cp draft/SHA256SUMS draft/*-x64.exe draft/ompanel-*-win32-x64.zip win32-x64/
+          ls -l draft
+
+      - name: Upload every draft asset
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-draft-linux-x64
+          path: draft/*
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+      - name: Upload the macOS arm64 draft assets
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-draft-darwin-arm64
+          path: darwin-arm64/*
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+      - name: Upload the Windows x64 draft assets
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-draft-win32-x64
+          path: win32-x64/*
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  # Installs the draft release the way users will get it, on each OS
+  # (docs/omp/release.md#verification), before anyone can download it. Every
+  # downloaded asset must match SHA256SUMS; the one-line installer from the
+  # release commit installs the CLI (from a local mirror of the draft, since a
+  # draft has no public download URL), whose server must download the pinned
+  # OMP sidecar on first use; and the installed desktop app must start and turn
+  # OMP ready on the sidecar it bundles. Linux also checks that every
+  # platform's assets are there. Read-only: the draft's bytes come from
+  # stage_draft's artifacts, so the binaries run here can write nothing.
+  verify_release:
+    name: Verify draft release ${{ matrix.label }}
+    needs: [preflight, stage_draft]
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.stage_draft.result == 'success' }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Linux x64
+            runner: ubuntu-24.04
+            artifact: linux-x64
+          - label: macOS arm64
+            runner: macos-26
+            artifact: darwin-arm64
+          - label: Windows x64
+            runner: windows-2025
+            artifact: win32-x64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    env:
+      TAG: ${{ needs.preflight.outputs.tag }}
+      VERSION: ${{ needs.preflight.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+            !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
+          sparse-checkout-cone-mode: false
+
+      # persist-credentials: false would make checkout's cleanup walk the
+      # orphaned .repos gitlinks and fail, so drop the stored (read-only) token here.
+      - name: Forget the checkout token
+        run: git config --local --unset-all http.https://github.com/.extraheader || true
+
+      - name: Setup dependencies
+        uses: ./.github/actions/setup-ci-deps
+        with:
+          task-cache-read-token: ${{ secrets.T3_TASK_CACHE_READ_TOKEN }}
+
+      - name: Download the staged draft release
+        uses: actions/download-artifact@v8
+        with:
+          name: release-draft-${{ matrix.artifact }}
+          path: ${{ runner.temp }}/release
+
+      - name: List the draft assets
+        run: |
+          echo "RELEASE_DIR=$RUNNER_TEMP/release" >> "$GITHUB_ENV"
+          ls -l "$RUNNER_TEMP/release"
+
+      - name: Verify downloads against SHA256SUMS
+        working-directory: ${{ runner.temp }}/release
+        run: |
+          set -euo pipefail
+          sha256() {
+            if command -v sha256sum >/dev/null; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1
+          }
+          failed=0
+          for file in *; do
+            [[ "$file" == SHA256SUMS ]] && continue
+            expected="$(awk -v name="$file" '$2 == name || $2 == "*" name { print $1 }' SHA256SUMS)"
+            actual="$(sha256 "$file")"
+            if [[ -z "$expected" ]]; then
+              echo "::error::$file is not listed in SHA256SUMS"; failed=1
+            elif [[ "$expected" != "$actual" ]]; then
+              echo "::error::$file has sha256 $actual; SHA256SUMS lists $expected"; failed=1
+            else
+              echo "ok  $file"
+            fi
+          done
+          exit "$failed"
+
+      - name: Check every platform's assets were published
+        if: runner.os == 'Linux'
+        working-directory: ${{ runner.temp }}/release
+        run: |
+          set -euo pipefail
+          # Listed files missing from the release fail here too.
+          sha256sum -c --quiet SHA256SUMS
+          missing=0
+          expect() {
+            local count
+            count="$({ compgen -G "$1" || true; } | wc -l)"
+            if (( count != $2 )); then echo "::error::expected $2 of $1, found $count"; missing=1; fi
+          }
+          expect '*-arm64.dmg' 1
+          expect '*-x64.dmg' 1
+          expect '*.AppImage' 2
+          expect '*.deb' 2
+          expect '*-x64.exe' 1
+          expect '*-arm64.exe' 1
+          for target in darwin-arm64 linux-x64 linux-arm64; do expect "ompanel-*-$target.tar.gz" 1; done
+          for target in win32-x64 win32-arm64; do expect "ompanel-*-$target.zip" 1; done
+          exit "$missing"
+
+      # A draft has no public download URL, so the installer reads the draft's
+      # bytes from a local mirror (OMPANEL_RELEASE_BASE_URL). Everything else
+      # is the published one-liner: same script, same SHA256SUMS check.
+      - name: Install the CLI with the one-line installer
+        if: runner.os != 'Windows'
+        run: |
+          set -euo pipefail
+          mirror="$RUNNER_TEMP/mirror"
+          mkdir -p "$mirror/v$VERSION"
+          cp "$RELEASE_DIR"/SHA256SUMS "$RELEASE_DIR"/ompanel-*.tar.gz "$mirror/v$VERSION/"
+          python3 -m http.server 47801 --bind 127.0.0.1 --directory "$mirror" >/dev/null 2>&1 &
+          server=$!
+          trap 'kill "$server"' EXIT
+          for _ in $(seq 1 50); do curl -fsS -o /dev/null "http://127.0.0.1:47801/v$VERSION/SHA256SUMS" && break; sleep 0.2; done
+          curl -fsSL "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${TAG}/scripts/install.sh" \
+            | OMPANEL_RELEASE_BASE_URL=http://127.0.0.1:47801 OMPANEL_VERSION="$VERSION" OMPANEL_HOME="$RUNNER_TEMP/ompanel-home" OMPANEL_INSTALL_BIN_DIR="$RUNNER_TEMP/bin" sh
+          installed="$("$RUNNER_TEMP/bin/ompanel" --version)"
+          echo "$installed"
+          [[ "$installed" == *"$VERSION"* ]]
+          echo "OMPANEL_CLI=$RUNNER_TEMP/bin/ompanel" >> "$GITHUB_ENV"
+
+      - name: Install the CLI with the one-line installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $mirror = Join-Path $env:RUNNER_TEMP "mirror"
+          $versionDir = Join-Path $mirror "v$env:VERSION"
+          New-Item -ItemType Directory -Force -Path $versionDir | Out-Null
+          Copy-Item (Join-Path $env:RELEASE_DIR "SHA256SUMS"), (Join-Path $env:RELEASE_DIR "ompanel-*.zip") $versionDir
+          $server = Start-Process python -ArgumentList "-m", "http.server", "47801", "--bind", "127.0.0.1", "--directory", $mirror -PassThru -WindowStyle Hidden
+          try {
+            foreach ($attempt in 1..50) {
+              try { Invoke-WebRequest "http://127.0.0.1:47801/v$env:VERSION/SHA256SUMS" -UseBasicParsing | Out-Null; break } catch { Start-Sleep -Milliseconds 200 }
+            }
+            $env:OMPANEL_RELEASE_BASE_URL = "http://127.0.0.1:47801"
+            $env:OMPANEL_VERSION = $env:VERSION
+            $env:OMPANEL_HOME = Join-Path $env:RUNNER_TEMP "ompanel-home"
+            $env:OMPANEL_INSTALL_BIN_DIR = Join-Path $env:RUNNER_TEMP "bin"
+            irm "https://raw.githubusercontent.com/$env:GITHUB_REPOSITORY/$env:TAG/scripts/install.ps1" | iex
+          } finally {
+            Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
+          }
+          $installed = & (Join-Path $env:OMPANEL_INSTALL_BIN_DIR "ompanel.cmd") --version
+          Write-Host $installed
+          if (-not "$installed".Contains($env:VERSION)) { throw "ompanel --version printed '$installed'" }
+          "OMPANEL_CLI=$(Join-Path $env:OMPANEL_HOME "runtime\versions\$env:VERSION\ompanel.exe")" >> $env:GITHUB_ENV
+
+      - name: Serve from the installed CLI and download the OMP sidecar
+        timeout-minutes: 10
+        run: node scripts/smoke-cli-archive.ts --executable "$OMPANEL_CLI" --expect-version "$VERSION" --omp-sidecar
+
+      - uses: ./.github/actions/setup-apt-mirrors
+        if: runner.os == 'Linux'
+
+      - name: Install a virtual display
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y xvfb
+
+      # The static AppImage runtime extracts itself instead of mounting with FUSE.
+      - name: Launch the AppImage and wait for OMP
+        if: runner.os == 'Linux'
+        timeout-minutes: 15
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+          OMPANEL_DESKTOP_SMOKE_ARTIFACTS: ${{ runner.temp }}/desktop-smoke/appimage
+        run: |
+          set -euo pipefail
+          appimage="$(find "$RELEASE_DIR" -name '*.AppImage' ! -name '*arm64*' ! -name '*aarch64*' | head -n 1)"
+          chmod +x "$appimage"
+          OMPANEL_DESKTOP_SMOKE_EXECUTABLE="$appimage" xvfb-run -a node apps/desktop/scripts/smoke-omp.mjs
+
+      - name: Install the .deb and wait for OMP
+        if: runner.os == 'Linux'
+        timeout-minutes: 15
+        env:
+          OMPANEL_DESKTOP_SMOKE_ARTIFACTS: ${{ runner.temp }}/desktop-smoke/deb
+        run: |
+          set -euo pipefail
+          deb="$(find "$RELEASE_DIR" -name '*.deb' ! -name '*arm64*' ! -name '*aarch64*' | head -n 1)"
+          sudo apt-get install -y "$deb"
+          executable="$(dpkg -L "$(dpkg-deb -f "$deb" Package)" | grep -E '^/opt/.+/ompanel$' | head -n 1)"
+          OMPANEL_DESKTOP_SMOKE_EXECUTABLE="$executable" xvfb-run -a node apps/desktop/scripts/smoke-omp.mjs
+
+      - name: Open the .dmg and wait for OMP
+        if: runner.os == 'macOS'
+        timeout-minutes: 15
+        env:
+          OMPANEL_DESKTOP_SMOKE_ARTIFACTS: ${{ runner.temp }}/desktop-smoke/dmg
+        run: |
+          set -euo pipefail
+          dmg="$(find "$RELEASE_DIR" -name '*-arm64.dmg' | head -n 1)"
+          hdiutil attach -nobrowse -readonly -mountpoint "$RUNNER_TEMP/dmg" "$dmg"
+          mkdir -p "$RUNNER_TEMP/apps"
+          cp -R "$RUNNER_TEMP"/dmg/*.app "$RUNNER_TEMP/apps/"
+          hdiutil detach "$RUNNER_TEMP/dmg"
+          app="$(find "$RUNNER_TEMP/apps" -maxdepth 1 -name '*.app' | head -n 1)"
+          executable="$app/Contents/MacOS/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Contents/Info.plist")"
+          OMPANEL_DESKTOP_SMOKE_EXECUTABLE="$executable" node apps/desktop/scripts/smoke-omp.mjs
+
+      - name: Run the installer and wait for OMP
+        if: runner.os == 'Windows'
+        timeout-minutes: 15
+        shell: pwsh
+        env:
+          OMPANEL_DESKTOP_SMOKE_ARTIFACTS: ${{ runner.temp }}/desktop-smoke/nsis
+        run: |
+          $installer = Get-ChildItem $env:RELEASE_DIR -Filter "*-x64.exe" | Select-Object -First 1
+          Start-Process -FilePath $installer.FullName -ArgumentList "/S" -Wait
+          # The installed app is the folder holding resources\app.asar, per user or per machine.
+          $appDir = Get-ChildItem "$env:LOCALAPPDATA\Programs", $env:ProgramFiles -Directory -ErrorAction SilentlyContinue |
+            Where-Object { Test-Path (Join-Path $_.FullName "resources\app.asar") } |
+            Where-Object { $_.Name -like "*mpanel*" } | Select-Object -First 1
+          if (-not $appDir) { throw "The installer put no Ompanel app under Programs or Program Files." }
+          $exe = Get-ChildItem $appDir.FullName -Filter "*.exe" | Where-Object { $_.Name -notlike "Uninstall*" } | Select-Object -First 1
+          $env:OMPANEL_DESKTOP_SMOKE_EXECUTABLE = $exe.FullName
+          node apps/desktop/scripts/smoke-omp.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload screenshots and logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-verify-${{ matrix.artifact }}
+          path: ${{ runner.temp }}/desktop-smoke
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # Makes the verified draft public. Only now can installers, `releases/latest`
+  # and updaters reach it; the jobs below that announce or publish elsewhere
+  # wait for this one.
+  publish_release:
+    name: Publish GitHub Release
+    needs: [preflight, release, verify_release]
+    if: ${{ !failure() && !cancelled() && needs.release.result == 'success' && needs.verify_release.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_ID: ${{ needs.release.outputs.release_id }}
+      TAG: ${{ needs.preflight.outputs.tag }}
+    steps:
+      - name: Download the built asset checksums
+        uses: actions/download-artifact@v8
+        with:
+          name: release-checksums
+          path: recorded
+
+      # Re-hash every asset as the draft holds it now, against the hashes the
+      # release job recorded before uploading: an asset swapped, added or
+      # removed after verification stops the release here.
+      - name: Check the draft still holds the built bytes
+        run: |
+          set -euo pipefail
+          recorded=recorded/SHA256SUMS
+          seen=0
+          while read -r id name; do
+            actual="$(gh api -H "Accept: application/octet-stream" "repos/$GITHUB_REPOSITORY/releases/assets/$id" | sha256sum | cut -d' ' -f1)"
+            if [[ "$name" == SHA256SUMS ]]; then
+              expected="$(sha256sum "$recorded" | cut -d' ' -f1)"
+            else
+              expected="$(awk -v n="$name" '$2 == n || $2 == "*" n { print $1 }' "$recorded")"
+              seen=$((seen + 1))
+            fi
+            if [[ -z "$expected" || "$actual" != "$expected" ]]; then
+              echo "::error::draft asset $name has sha256 $actual; the build recorded '${expected:-nothing}'"
+              exit 1
+            fi
+            echo "ok  $name"
+          done < <(gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?per_page=100" --jq '.[] | "\(.id) \(.name)"')
+          listed="$(wc -l < "$recorded")"
+          if (( seen != listed )); then
+            echo "::error::the draft holds $seen assets besides SHA256SUMS; the build recorded $listed"
+            exit 1
+          fi
+
+      - name: Publish the verified draft
+        env:
+          MAKE_LATEST: ${{ needs.preflight.outputs.make_latest }}
+        run: |
+          set -euo pipefail
+          gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
+            -F draft=false -f make_latest="$MAKE_LATEST" \
+            --jq '"\(.tag_name) draft=\(.draft) prerelease=\(.prerelease) \(.html_url)"'
+          # The public URL the installers use now serves the recorded checksums.
+          curl -fsSL --retry 5 --retry-all-errors "https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/SHA256SUMS" -o public-sums
+          cmp public-sums recorded/SHA256SUMS
+
+  # The `ompanel` npm package is a launcher that downloads this version's CLI
+  # archive from the GitHub Release, so it publishes only once that release
+  # is public. Only builds of a commit on main publish, from the `release`
+  # environment (required reviewers); its npm trusted publisher should name
+  # that environment. Preview publishes never happen here (unsigned channel).
+  publish_cli:
+    name: Publish CLI to npm
+    needs: [preflight, publish_release]
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.publish_release.result == 'success' && needs.preflight.outputs.signing == 'true' && vars.OMPANEL_NPM_PUBLISH == 'true' }}
+    environment: release
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -991,8 +1449,8 @@ jobs:
 
   publish_aur:
     name: Publish AUR package
-    needs: [preflight, release]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' && needs.preflight.outputs.release_channel != 'preview' }}
+    needs: [preflight, publish_release]
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.publish_release.result == 'success' && needs.preflight.outputs.release_channel != 'preview' }}
     uses: ./.github/workflows/publish-aur.yml
     with:
       release_tag: ${{ needs.preflight.outputs.tag }}
@@ -1008,7 +1466,7 @@ jobs:
   build_web:
     name: Build hosted web app
     needs: [preflight, relay_public_config]
-    if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.preflight.outputs.release_channel != 'preview' }}
+    if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.preflight.outputs.release_channel != 'preview' && needs.preflight.outputs.has_vercel == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
@@ -1054,7 +1512,7 @@ jobs:
         run: |
           config_path="$RUNNER_TEMP/relay-client-tracing/relay-client-tracing.env"
           tracing_token="$(sed -n 's/^OMPANEL_RELAY_CLIENT_OTLP_TRACES_TOKEN=//p' "$config_path")"
-          echo "::add-mask::$tracing_token"
+          if [[ -n "$tracing_token" ]]; then echo "::add-mask::$tracing_token"; fi
           cat "$config_path" >> "$GITHUB_ENV"
 
       - name: Align package versions to release version
@@ -1118,8 +1576,8 @@ jobs:
 
   deploy_web:
     name: Deploy hosted web app
-    needs: [preflight, build_web, release, publish_cli]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.build_web.result == 'success' && needs.release.result == 'success' && needs.publish_cli.result == 'success' && needs.preflight.outputs.release_channel != 'preview' }}
+    needs: [preflight, build_web, publish_release, publish_cli]
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.build_web.result == 'success' && needs.publish_release.result == 'success' && needs.publish_cli.result == 'success' && needs.preflight.outputs.release_channel != 'preview' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     env:
@@ -1197,7 +1655,7 @@ jobs:
   build_marketing:
     name: Build marketing site
     needs: [preflight]
-    if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.preflight.outputs.release_channel == 'nightly' }}
+    if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.preflight.outputs.release_channel == 'nightly' && needs.preflight.outputs.has_vercel == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
@@ -1267,8 +1725,8 @@ jobs:
 
   deploy_marketing:
     name: Deploy marketing site
-    needs: [preflight, build_marketing, release]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.build_marketing.result == 'success' && needs.release.result == 'success' && needs.preflight.outputs.release_channel == 'nightly' }}
+    needs: [preflight, build_marketing, publish_release]
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.build_marketing.result == 'success' && needs.publish_release.result == 'success' && needs.preflight.outputs.release_channel == 'nightly' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     env:
@@ -1312,8 +1770,8 @@ jobs:
 
   finalize:
     name: Finalize release
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' && needs.preflight.outputs.release_channel == 'stable' }}
-    needs: [preflight, release]
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.publish_release.result == 'success' && needs.preflight.outputs.release_channel == 'stable' && needs.preflight.outputs.is_prerelease == 'false' && needs.preflight.outputs.has_release_app == 'true' }}
+    needs: [preflight, publish_release]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -1396,10 +1854,10 @@ jobs:
       needs.preflight.result == 'success' &&
       needs.preflight.outputs.release_channel != 'preview' &&
       needs.relay_public_config.result == 'success' &&
-      needs.release.result == 'success' &&
+      needs.publish_release.result == 'success' &&
       needs.deploy_web.result == 'success' &&
       (needs.finalize.result == 'success' || needs.finalize.result == 'skipped')
-    needs: [preflight, relay_public_config, release, deploy_web, finalize]
+    needs: [preflight, relay_public_config, publish_release, deploy_web, finalize]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
