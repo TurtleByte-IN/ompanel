@@ -79,7 +79,7 @@ export const OMP_SETTINGS_PAGES: Readonly<Record<OmpSettingsPageId, OmpSettingsP
     id: "routing",
     title: "Routing",
     description:
-      "Retries, fallback chains, round-robin credentials and path-scoped model lists. The model and provider lists are shown, not edited, here.",
+      "Retries, fallback chains, round-robin credentials and path-scoped model lists. Only the global model and provider lists are edited here; entries scoped to folders are kept as they are.",
     keys: [
       "retry.",
       "auth.accountPolicies",
@@ -263,8 +263,9 @@ export type OmpApprovalPolicy = (typeof OMP_APPROVAL_POLICIES)[number];
 /**
  * Arrays OMP lets hold path-scoped entries (`pathScoped` in `config/model-settings.ts`).
  * `config list` reports them already resolved for its working directory, so a write of the shown
- * value would drop every entry scoped to another path. The pages show them read-only; edit them in
- * OMP's config file.
+ * value would drop every entry scoped to another path. The pages mark them read-only; the web form
+ * edits a field that carries `globalEntries` (the global layer's own value) through its own
+ * control, and the settings engine keeps the scoped entries on every write.
  */
 export const OMP_PATH_SCOPED_KEYS: ReadonlyArray<string> = [
   "enabledModels",

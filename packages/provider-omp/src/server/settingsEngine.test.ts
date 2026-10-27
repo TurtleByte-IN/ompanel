@@ -36,16 +36,23 @@ const SETTINGS: Readonly<Record<string, FakeSetting>> = {
   "web_search.enabled": { type: "boolean", default: true, env: false },
   "browser.enabled": { type: "boolean", default: true },
   "computer.enabled": { type: "boolean", default: false },
+  enabledModels: { type: "array", default: [] },
 };
 
 const PROJECT = "/work/app";
 
 /**
  * A scripted `omp config` with OMP's layering (default < global < project < env) and redaction,
- * so a write is observable through the next `config list`.
+ * so a write is observable through the next `config list`. `enabledModels` resolves its
+ * `{ path, models }` entries for `--cwd`, as OMP does. `layerList` makes `config list --scope`
+ * list a layer as written (CLI contract 1.1.0); without it that call exits 1, like the pinned OMP.
+ * Layer listings are recorded in `layerLaunches`, apart from the other `config` calls.
  */
-function fakeOmpConfig(seed: { readonly global?: Record<string, unknown> } = {}) {
+function fakeOmpConfig(
+  seed: { readonly global?: Record<string, unknown>; readonly layerList?: boolean } = {},
+) {
   const launches: Array<ReadonlyArray<string>> = [];
+  const layerLaunches: Array<ReadonlyArray<string>> = [];
   const global: Record<string, unknown> = { ...seed.global };
   const projects = new Map<string, Record<string, unknown>>();
 
@@ -60,15 +67,44 @@ function fakeOmpConfig(seed: { readonly global?: Record<string, unknown> } = {})
     const [key, valueText] = separator === -1 ? [] : args.slice(separator + 1);
     const cwd = flag("--cwd") ?? "/";
     const project = projects.get(cwd) ?? {};
+    const resolve = (name: string, value: unknown) =>
+      name === "enabledModels" && Array.isArray(value)
+        ? value.flatMap((entry: unknown) =>
+            typeof entry === "string"
+              ? [entry]
+              : typeof entry === "object" &&
+                  entry !== null &&
+                  "path" in entry &&
+                  "models" in entry &&
+                  typeof entry.path === "string" &&
+                  `${cwd}/`.startsWith(`${entry.path}/`)
+                ? (entry.models as ReadonlyArray<string>)
+                : [],
+          )
+        : value;
     const effective = (name: string) => {
       const setting = SETTINGS[name]!;
       if (setting.env !== undefined) return { value: setting.env, source: "env" };
-      if (name in project) return { value: project[name], source: "project" };
-      if (name in global) return { value: global[name], source: "global" };
+      if (name in project) return { value: resolve(name, project[name]), source: "project" };
+      if (name in global) return { value: resolve(name, global[name]), source: "global" };
       return { value: setting.default, source: "default" };
     };
     switch (action) {
       case "list": {
+        const scope = flag("--scope");
+        if (scope !== undefined) {
+          if (seed.layerList !== true) return { stdout: "", code: 1 };
+          const layer = scope === "project" ? project : global;
+          const listed: Record<string, unknown> = {};
+          for (const [name, value] of Object.entries(layer)) {
+            const setting = SETTINGS[name]!;
+            listed[name] =
+              setting.credential === true && value
+                ? { type: setting.type, description: `${name} help`, redacted: true }
+                : { type: setting.type, description: `${name} help`, value };
+          }
+          return { stdout: `${JSON.stringify(listed)}\n`, code: 0 };
+        }
         const list: Record<string, unknown> = {};
         for (const [name, setting] of Object.entries(SETTINGS)) {
           const { value, source } = effective(name);
@@ -109,7 +145,10 @@ function fakeOmpConfig(seed: { readonly global?: Record<string, unknown> } = {})
 
   const spawner = ChildProcessSpawner.make((command) => {
     if (!ChildProcess.isStandardCommand(command)) return Effect.die("Unexpected pipeline");
-    launches.push(command.args);
+    (command.args.includes("--scope") && command.args.includes("list")
+      ? layerLaunches
+      : launches
+    ).push(command.args);
     const { stdout, code } = run(command.args);
     return Effect.succeed(
       ChildProcessSpawner.makeHandle({
@@ -128,7 +167,7 @@ function fakeOmpConfig(seed: { readonly global?: Record<string, unknown> } = {})
       }),
     );
   });
-  return { spawner, launches, global, projects };
+  return { spawner, launches, layerLaunches, global, projects };
 }
 
 const EMPTY_OVERLAY = "# Per-thread OMP settings written by Ompanel.\n{}\n";
@@ -415,6 +454,111 @@ describe("OmpSettingsEngine.write", () => {
       assert.isFalse(omp.launches.some((args) => args.some((arg) => arg.startsWith("sk-"))));
       assert.strictEqual(threads.overlays.get("thread-app"), EMPTY_OVERLAY);
     }),
+  );
+});
+
+describe("path-scoped arrays", () => {
+  const SCOPED = { path: "/work/other", models: ["lab/scoped"] };
+
+  it.effect("carry the global layer's own entries when OMP lists that layer", () =>
+    Effect.gen(function* () {
+      const omp = fakeOmpConfig({
+        layerList: true,
+        global: { enabledModels: ["lab/a", SCOPED], "memory.backend": "local" },
+      });
+      const form = yield* withEngine(omp, fakeThreads([]), (engine) => engine.read(TARGET));
+      const field = form.fields.find((candidate) => candidate.key === "enabledModels");
+      // The effective value is resolved for PROJECT; the global entries are as written.
+      assert.deepStrictEqual(field?.value, ["lab/a"]);
+      assert.deepStrictEqual(field?.globalEntries, ["lab/a", SCOPED]);
+      assert.isFalse(
+        form.fields.some(
+          (candidate) => candidate.key !== "enabledModels" && "globalEntries" in candidate,
+        ),
+      );
+      assert.deepStrictEqual(omp.layerLaunches, [
+        ["--profile", "work", "config", "list", "--scope", "global", "--json", "--cwd", PROJECT],
+      ]);
+    }),
+  );
+
+  it.effect("write only the global list and keep entries scoped to folders", () =>
+    Effect.gen(function* () {
+      const omp = fakeOmpConfig({ layerList: true, global: { enabledModels: ["lab/a", SCOPED] } });
+      const result = yield* withEngine(omp, fakeThreads([]), (engine) =>
+        engine.write(TARGET, { key: "enabledModels", value: ["lab/b", "lab/c"], scope: "global" }),
+      );
+      assert.deepStrictEqual(omp.global["enabledModels"], ["lab/b", "lab/c", SCOPED]);
+      const field = result.form.fields.find((candidate) => candidate.key === "enabledModels");
+      assert.deepStrictEqual(field?.globalEntries, ["lab/b", "lab/c", SCOPED]);
+    }),
+  );
+
+  it.effect("reset clears the global list but keeps entries scoped to folders", () =>
+    Effect.gen(function* () {
+      const scopedOnly = fakeOmpConfig({
+        layerList: true,
+        global: { enabledModels: ["lab/a", SCOPED] },
+      });
+      yield* withEngine(scopedOnly, fakeThreads([]), (engine) =>
+        engine.reset(TARGET, { key: "enabledModels", scope: "global" }),
+      );
+      assert.deepStrictEqual(scopedOnly.global["enabledModels"], [SCOPED]);
+      assert.isFalse(scopedOnly.launches.some((args) => configAction(args) === "reset"));
+
+      const plain = fakeOmpConfig({ layerList: true, global: { enabledModels: ["lab/a"] } });
+      yield* withEngine(plain, fakeThreads([]), (engine) =>
+        engine.reset(TARGET, { key: "enabledModels", scope: "global" }),
+      );
+      assert.isFalse("enabledModels" in plain.global);
+    }),
+  );
+
+  it.effect(
+    "refuse a project write, an OMP that cannot list the layer, and a list with scoped entries",
+    () =>
+      Effect.gen(function* () {
+        const supported = fakeOmpConfig({ layerList: true, global: { enabledModels: [SCOPED] } });
+        const [project, notStrings, projectReset] = yield* withEngine(
+          supported,
+          fakeThreads([]),
+          (engine) =>
+            Effect.all([
+              engine
+                .write(TARGET, { key: "enabledModels", value: ["lab/a"], scope: "project" })
+                .pipe(Effect.flip),
+              engine
+                .write(TARGET, { key: "enabledModels", value: [SCOPED], scope: "global" })
+                .pipe(Effect.flip),
+              engine.reset(TARGET, { key: "enabledModels", scope: "project" }).pipe(Effect.flip),
+            ]),
+        );
+        const pinned = fakeOmpConfig({ global: { enabledModels: [SCOPED] } });
+        const [form, old] = yield* withEngine(pinned, fakeThreads([]), (engine) =>
+          Effect.all([
+            engine.read(TARGET),
+            engine
+              .write(TARGET, { key: "enabledModels", value: ["lab/a"], scope: "global" })
+              .pipe(Effect.flip),
+          ]),
+        );
+
+        assert.deepStrictEqual(
+          [project, notStrings, projectReset, old].map((error) =>
+            error._tag === "OmpSettingsError" ? error.reason : error._tag,
+          ),
+          ["path_scoped", "invalid_value", "path_scoped", "path_scoped"],
+        );
+        assert.isFalse(
+          "globalEntries" in (form.fields.find((field) => field.key === "enabledModels") ?? {}),
+        );
+        for (const omp of [supported, pinned]) {
+          assert.isFalse(
+            omp.launches.some((args) => ["set", "reset"].includes(configAction(args)!)),
+          );
+          assert.deepStrictEqual(omp.global["enabledModels"], [SCOPED]);
+        }
+      }),
   );
 });
 

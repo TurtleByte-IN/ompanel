@@ -4,7 +4,11 @@ import type {
   OmpSettingsField,
   OmpSettingsForm as OmpSettingsFormModel,
 } from "@t3tools/contracts";
-import { ompConfigValueFits } from "@t3tools/provider-omp/configForm";
+import {
+  ompConfigValueFits,
+  ompScopedEntrySummary,
+  ompUnscopedEntries,
+} from "@t3tools/provider-omp/configForm";
 import { useState, type ReactNode } from "react";
 
 import { Badge } from "../ui/badge";
@@ -142,6 +146,59 @@ function FieldControl({
   }
 }
 
+/**
+ * A path-scoped array the running OMP reports the global layer of: its plain entries, one per line,
+ * edited in the global config; entries limited to folders are listed and kept as they are.
+ */
+function PathScopedListField({
+  field,
+  entries,
+  scope,
+  onWrite,
+}: {
+  readonly field: OmpSettingsField;
+  readonly entries: ReadonlyArray<unknown>;
+  readonly scope: OmpConfigScope;
+  readonly onWrite: (value: unknown) => void;
+}) {
+  const text = ompUnscopedEntries(entries).join("\n");
+  const scoped = entries.filter((entry) => typeof entry !== "string").map(ompScopedEntrySummary);
+  return (
+    <div className="flex flex-col gap-1.5">
+      <Textarea
+        key={text}
+        aria-label={field.key}
+        disabled={scope !== "global"}
+        rows={Math.min(Math.max(text.split("\n").length + 1, 3), 8)}
+        defaultValue={text}
+        placeholder="One entry per line"
+        onBlur={(event) => {
+          const next = event.target.value
+            .split("\n")
+            .map((line) => line.trim())
+            .filter((line) => line !== "");
+          if (next.join("\n") !== text) onWrite(next);
+        }}
+      />
+      {scoped.length === 0 ? null : (
+        <ul className="text-muted-foreground text-xs" aria-label={`${field.key} folder entries`}>
+          {scoped.map((entry, index) => (
+            // oxlint-disable-next-line react/no-array-index-key -- entries have no identity of their own
+            <li key={index}>
+              Only in {entry.paths.join(", ")}: {entry.values.join(", ") || "(none)"}
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="text-muted-foreground text-xs">
+        {scope === "global"
+          ? "Applies in every folder. Entries limited to folders are kept as they are; edit those in OMP's config file."
+          : "Edited in the global config only: its entries can be limited to folders."}
+      </p>
+    </div>
+  );
+}
+
 /** Renders the settings engine's form: one row per OMP setting, grouped by key prefix. */
 export function OmpSettingsForm({
   form,
@@ -163,46 +220,61 @@ export function OmpSettingsForm({
       {[...groups].map(([group, fields]) => (
         <section key={group} aria-label={group} className="flex flex-col gap-3">
           <h3 className="font-medium text-sm">{group}</h3>
-          {fields.map((field) => (
-            <div key={field.key} className="flex flex-col gap-1.5" data-setting={field.key}>
-              <div className="flex flex-wrap items-center gap-2">
-                <code className="text-xs">{field.key}</code>
-                <Badge variant="outline" size="sm">
-                  {SOURCE_LABEL[field.source]}
-                </Badge>
-                {field.launchScoped ? (
-                  <Badge variant="warning" size="sm">
-                    Restarts threads
+          {fields.map((field) => {
+            // A path-scoped list is editable only through its global entries, never its resolved value.
+            const globalEntries = field.source === "env" ? undefined : field.globalEntries;
+            return (
+              <div key={field.key} className="flex flex-col gap-1.5" data-setting={field.key}>
+                <div className="flex flex-wrap items-center gap-2">
+                  <code className="text-xs">{field.key}</code>
+                  <Badge variant="outline" size="sm">
+                    {SOURCE_LABEL[field.source]}
                   </Badge>
-                ) : null}
-                {field.source === scope && !field.readOnly && !noReset.includes(field.key) ? (
-                  <Button variant="ghost" size="compact" onClick={() => onReset(field.key)}>
-                    Reset
-                  </Button>
+                  {field.launchScoped ? (
+                    <Badge variant="warning" size="sm">
+                      Restarts threads
+                    </Badge>
+                  ) : null}
+                  {field.source === scope && !field.readOnly && !noReset.includes(field.key) ? (
+                    <Button variant="ghost" size="compact" onClick={() => onReset(field.key)}>
+                      Reset
+                    </Button>
+                  ) : null}
+                </div>
+                {field.description === "" ? null : (
+                  <p className="text-muted-foreground text-xs">{field.description}</p>
+                )}
+                <div className="max-w-xl">
+                  {globalEntries !== undefined ? (
+                    <PathScopedListField
+                      field={field}
+                      entries={globalEntries}
+                      scope={scope}
+                      onWrite={(value) => onWrite(field.key, value)}
+                    />
+                  ) : (
+                    ((field.credential ? undefined : controls?.[field.key])?.(field, (value) =>
+                      onWrite(field.key, value),
+                    ) ?? (
+                      <FieldControl field={field} onWrite={(value) => onWrite(field.key, value)} />
+                    ))
+                  )}
+                </div>
+                {globalEntries !== undefined ? null : field.readOnly ? (
+                  <p className="text-muted-foreground text-xs">
+                    {field.source === "env"
+                      ? "Set by an environment variable; change it where OMP is launched."
+                      : readOnlyNote}
+                  </p>
+                ) : field.credential ? (
+                  <p className="text-muted-foreground text-xs">
+                    Credential. Set it with OMP sign-in or an environment variable; Reset clears a
+                    stored one.
+                  </p>
                 ) : null}
               </div>
-              {field.description === "" ? null : (
-                <p className="text-muted-foreground text-xs">{field.description}</p>
-              )}
-              <div className="max-w-xl">
-                {(field.credential ? undefined : controls?.[field.key])?.(field, (value) =>
-                  onWrite(field.key, value),
-                ) ?? <FieldControl field={field} onWrite={(value) => onWrite(field.key, value)} />}
-              </div>
-              {field.readOnly ? (
-                <p className="text-muted-foreground text-xs">
-                  {field.source === "env"
-                    ? "Set by an environment variable; change it where OMP is launched."
-                    : readOnlyNote}
-                </p>
-              ) : field.credential ? (
-                <p className="text-muted-foreground text-xs">
-                  Credential. Set it with OMP sign-in or an environment variable; Reset clears a
-                  stored one.
-                </p>
-              ) : null}
-            </div>
-          ))}
+            );
+          })}
         </section>
       ))}
     </div>

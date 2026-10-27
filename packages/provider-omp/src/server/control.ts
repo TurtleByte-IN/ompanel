@@ -33,7 +33,12 @@ import type {
   OmpUpdateCheck,
 } from "@t3tools/contracts";
 
-import { OmpConfigList, OmpConfigResetResult, OmpConfigSetResult } from "../configForm.ts";
+import {
+  OmpConfigLayerList,
+  OmpConfigList,
+  OmpConfigResetResult,
+  OmpConfigSetResult,
+} from "../configForm.ts";
 import { OmpCatalogModel } from "./modelTraits.ts";
 import { OmpAnsi } from "./ompAnsi.ts";
 
@@ -166,6 +171,7 @@ export type OmpControlOperation =
   | "logout_accounts"
   | "logout"
   | "config_list"
+  | "config_layer"
   | "config_set"
   | "config_reset"
   | "config_path"
@@ -195,6 +201,7 @@ export class OmpControlError extends Schema.TaggedError<OmpControlError>()("OmpC
     "logout_accounts",
     "logout",
     "config_list",
+    "config_layer",
     "config_set",
     "config_reset",
     "config_path",
@@ -357,6 +364,7 @@ export const OmpStatsReport = Schema.Struct({
 export type OmpStatsReport = typeof OmpStatsReport.Type;
 const decodeStatsReport = Schema.decodeEffect(Schema.fromJsonString(OmpStatsReport));
 const decodeConfigList = Schema.decodeEffect(Schema.fromJsonString(OmpConfigList));
+const decodeConfigLayerList = Schema.decodeEffect(Schema.fromJsonString(OmpConfigLayerList));
 const decodeConfigSetResult = Schema.decodeEffect(Schema.fromJsonString(OmpConfigSetResult));
 const decodeConfigResetResult = Schema.decodeEffect(Schema.fromJsonString(OmpConfigResetResult));
 const encodeJsonValue = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
@@ -584,6 +592,15 @@ export interface OmpControlService {
   readonly invalidate: Effect.Effect<void>;
   /** `omp config list --json --cwd <target.cwd>` (10 s), uncached: every field with its source layer. */
   readonly configList: (target: OmpControlTarget) => Effect.Effect<OmpConfigList, OmpControlError>;
+  /**
+   * `omp config list --scope <scope> --json --cwd <target.cwd>` (10 s), uncached: only the keys
+   * that layer sets, as written. An OMP before CLI contract 1.1.0 refuses `--scope` here and
+   * fails `exit`.
+   */
+  readonly configLayer: (
+    target: OmpControlTarget,
+    scope: OmpConfigScope,
+  ) => Effect.Effect<OmpConfigLayerList, OmpControlError>;
   /**
    * `omp config set --scope <scope> --cwd <target.cwd> --json -- <key> <JSON value>` (10 s).
    * There is deliberately no `config get`: it prints credentials unmasked.
@@ -892,6 +909,18 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
           : Effect.fail(new OmpControlError({ operation, reason: "exit", exitCode: output.code })),
       ),
     );
+
+  const configLayer = Effect.fn("OmpControl.configLayer")(function* (
+    target: OmpControlTarget,
+    scope: OmpConfigScope,
+  ) {
+    return yield* runConfig(
+      "config_layer",
+      target,
+      ["list", "--scope", scope, "--json", "--cwd", target.cwd],
+      decodeConfigLayerList,
+    );
+  });
 
   const configList = Effect.fn("OmpControl.configList")(function* (target: OmpControlTarget) {
     return yield* runConfig(
@@ -1564,6 +1593,7 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
       ).pipe(Effect.catch(Effect.succeed)),
     invalidate,
     configList,
+    configLayer,
     configSet,
     configReset,
     configPath,
