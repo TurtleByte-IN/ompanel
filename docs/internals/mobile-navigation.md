@@ -33,7 +33,7 @@ and would unmount its header configuration, which hides the navigation bar.
 
 ## UIKit constraints
 
-The [react-native-screens patch](../../patches/react-native-screens@4.26.2.patch)
+The [react-native-screens build](../../apps/mobile/deps/react-native-screens-5.0.0-t3.44.tgz)
 preserves behavior that is easy to break when changing native headers:
 
 - The brand belongs in `headerTitle`. On iOS 26.5, UIKit morphs a background-free

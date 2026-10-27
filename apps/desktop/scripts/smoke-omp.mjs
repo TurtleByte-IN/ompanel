@@ -280,7 +280,7 @@ const settled = () =>
     return current?.status === "ready" || current?.status === "error" ? current : undefined;
   }, OMP_READY_TIMEOUT_MS);
 let row = await settled();
-// The very first `omp` start on a cold runner can miss the control process's 10 s ready budget
+// The very first `omp` start on a cold runner can miss the control process's 20 s ready budget
 // (ompanel#147). One re-check after the 30 s probe cache expires; any other error is final.
 if (row?.status === "error" && row.text.includes("did not answer within")) {
   record(`[smoke-omp] first check timed out (${row.text}); refreshing once`);

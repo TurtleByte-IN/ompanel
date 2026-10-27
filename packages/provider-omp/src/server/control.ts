@@ -545,7 +545,7 @@ export interface OmpControlService {
    * range; the pinned CLI has no range flag.
    */
   readonly stats: (target: OmpControlTarget) => Effect.Effect<OmpStatsReport, OmpControlError>;
-  /** RPC `get_login_providers` in a fresh server (10 s), uncached. */
+  /** RPC `get_login_providers` in a fresh server (20 s), uncached. */
   readonly loginProviders: (
     target: OmpControlTarget,
   ) => Effect.Effect<OmpLoginProviderList, OmpControlError>;
@@ -561,12 +561,12 @@ export interface OmpControlService {
     onUiRequest: OmpLoginUiHandler,
     options?: OmpLoginOptions,
   ) => Effect.Effect<void, OmpControlError>;
-  /** RPC `get_logout_accounts` (10 s): the stored credentials sign-out can remove. */
+  /** RPC `get_logout_accounts` (20 s): the stored credentials sign-out can remove. */
   readonly logoutAccounts: (
     target: OmpControlTarget,
     providerId: string,
   ) => Effect.Effect<ReadonlyArray<OmpLogoutAccount>, OmpControlError>;
-  /** RPC `logout` (10 s); drops this instance's cache. `remainingSource` names auth that still applies. */
+  /** RPC `logout` (20 s); drops this instance's cache. `remainingSource` names auth that still applies. */
   readonly logout: (
     target: OmpControlTarget,
     providerId: string,
@@ -1219,7 +1219,7 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
     yield* invalidate;
   });
 
-  /** One RPC command in a fresh server under the 10 s budget. */
+  /** One RPC command in a fresh server under the 20 s `ready` budget. */
   const rpcCommand = <A>(
     operation: "logout_accounts" | "logout",
     target: OmpControlTarget,

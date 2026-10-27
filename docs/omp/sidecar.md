@@ -149,14 +149,23 @@ Every short-lived `omp` process Ompanel starts outside a thread goes through
 `OmpControlService` (`packages/provider-omp/src/server/control.ts`). Each has a
 hard deadline from spawn to exit:
 
-| Operation                                              | Limit |
-| ------------------------------------------------------ | ----- |
-| `omp --version`                                        | 4 s   |
-| Status RPC server: `ready` + `get_login_providers`     | 10 s  |
-| `omp usage --json`                                     | 10 s  |
-| RPC `login` session                                    | 60 s  |
-| `omp skill list <dir> --json`                          | 10 s  |
-| Command RPC server: `ready` + `get_available_commands` | 10 s  |
+| Operation (`OMP_CONTROL_TIMEOUTS_MS` key)                                                       | Limit |
+| ------------------------------------------------------------------------------------------------ | ----- |
+| `omp --version` (`version`)                                                                      | 4 s   |
+| Status RPC server: `ready` + `get_login_providers`; `get_logout_accounts`, `logout` (`ready`)    | 20 s  |
+| `omp usage --json` (`usage`)                                                                     | 10 s  |
+| `omp stats --json` (`stats`)                                                                     | 60 s  |
+| RPC `login` session (`login`)                                                                    | 60 s  |
+| `omp config list\|set\|reset --json`, `omp config path` (`config`)                               | 10 s  |
+| `omp skill list <dir> --json`; command RPC server `ready` + `get_available_commands` (`catalog`) | 10 s  |
+| `models.yml` check server (`modelsCheck`)                                                        | 15 s  |
+| `omp agents unpack --user --json` (`agents`)                                                     | 10 s  |
+| `omp plugin list --json`, `plugin marketplace list`, `plugin discover` (`plugins`)               | 15 s  |
+| `omp plugin install\|uninstall\|enable\|disable`, `marketplace add\|remove` (`pluginCommand`)   | 180 s |
+| `omp update --check` (`update`)                                                                  | 20 s  |
+| `omp --export <session> <out.html>` (`export`)                                                   | 60 s  |
+| `gh auth status` (`ghAuth`)                                                                      | 10 s  |
+| `omp share --gist` (`share`)                                                                     | 120 s |
 
 On a deadline the process group gets SIGTERM and, 1 s later, SIGKILL, so a
 hung omp and its children never outlive the call. Probe and usage results are
