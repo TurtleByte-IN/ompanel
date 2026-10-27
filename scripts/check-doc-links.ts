@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - Reads Markdown files on disk.
+// @effect-diagnostics nodeBuiltinImport:off globalConsole:off - Reads Markdown files on disk.
 //
 // Validates relative links in README.md and docs/**/*.md: the target file or directory must
 // exist, and a `#fragment` pointing at a Markdown file must match one of its headings (GitHub
