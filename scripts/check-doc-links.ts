@@ -68,7 +68,8 @@ function anchors(file: string): Set<string> {
   return result;
 }
 
-const LINK = /!?\[(?:[^\][]|\[[^\]]*\])*\]\(\s*<?([^)\s>]+)>?(?:\s+"[^"]*")?\s*\)|^\s*\[[^\]]+\]:\s*<?(\S+?)>?(?:\s|$)/gm;
+const LINK =
+  /!?\[(?:[^\][]|\[[^\]]*\])*\]\(\s*<?([^)\s>]+)>?(?:\s+"[^"]*")?\s*\)|^\s*\[[^\]]+\]:\s*<?(\S+?)>?(?:\s|$)/gm;
 
 export function checkFile(file: string): string[] {
   const errors: string[] = [];

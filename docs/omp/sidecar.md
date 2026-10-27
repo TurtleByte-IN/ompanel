@@ -149,7 +149,7 @@ Every short-lived `omp` process Ompanel starts outside a thread goes through
 `OmpControlService` (`packages/provider-omp/src/server/control.ts`). Each has a
 hard deadline from spawn to exit:
 
-| Operation (`OMP_CONTROL_TIMEOUTS_MS` key)                                                       | Limit |
+| Operation (`OMP_CONTROL_TIMEOUTS_MS` key)                                                        | Limit |
 | ------------------------------------------------------------------------------------------------ | ----- |
 | `omp --version` (`version`)                                                                      | 4 s   |
 | Status RPC server: `ready` + `get_login_providers`; `get_logout_accounts`, `logout` (`ready`)    | 20 s  |
@@ -161,7 +161,7 @@ hard deadline from spawn to exit:
 | `models.yml` check server (`modelsCheck`)                                                        | 15 s  |
 | `omp agents unpack --user --json` (`agents`)                                                     | 10 s  |
 | `omp plugin list --json`, `plugin marketplace list`, `plugin discover` (`plugins`)               | 15 s  |
-| `omp plugin install\|uninstall\|enable\|disable`, `marketplace add\|remove` (`pluginCommand`)   | 180 s |
+| `omp plugin install\|uninstall\|enable\|disable`, `marketplace add\|remove` (`pluginCommand`)    | 180 s |
 | `omp update --check` (`update`)                                                                  | 20 s  |
 | `omp --export <session> <out.html>` (`export`)                                                   | 60 s  |
 | `gh auth status` (`ghAuth`)                                                                      | 10 s  |
