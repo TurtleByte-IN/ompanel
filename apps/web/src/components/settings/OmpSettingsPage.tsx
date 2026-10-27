@@ -20,7 +20,7 @@ import {
   ompSettingsPageHasSettings,
   type OmpSettingsPageId,
 } from "@t3tools/provider-omp/settingsPages";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { useProjects } from "../../state/entities";
 import {
@@ -294,8 +294,6 @@ export function OmpSettingsPageBody({
   const readSettings = useAtomCommand(serverEnvironment.readOmpSettings, { reportFailure: false });
   const writeSetting = useAtomCommand(serverEnvironment.writeOmpSetting, { reportFailure: false });
   const resetSetting = useAtomCommand(serverEnvironment.resetOmpSetting, { reportFailure: false });
-  const [form, setForm] = useState<OmpSettingsFormModel | null>(null);
-  const [loadFailed, setLoadFailed] = useState(false);
   const [pickedProjectId, setPickedProjectId] = useState<ProjectId | null>(null);
   // A project removed meanwhile falls back to the global layer.
   const projectId = projects.some((project) => project.id === pickedProjectId)
@@ -303,21 +301,30 @@ export function OmpSettingsPageBody({
     : null;
   const scope: OmpConfigScope = projectId === null ? "global" : "project";
   const layer = projectId === null ? {} : { projectId };
+  // Each layer's last read, so switching back and forth shows no stale layer's values.
+  const [loaded, setLoaded] = useState<
+    Readonly<
+      Record<string, { readonly form: OmpSettingsFormModel | null; readonly failed: boolean }>
+    >
+  >({});
+  const layerKey = projectId ?? GLOBAL_LAYER;
+  const form = loaded[layerKey]?.form ?? null;
+  const loadFailed = loaded[layerKey]?.failed === true;
 
   // The parent keys this body by environment and instance, so state starts fresh for each.
   useEffect(() => {
     if (!hasSettings) return;
     let cancelled = false;
-    setForm(null);
-    setLoadFailed(false);
+    const key = projectId ?? GLOBAL_LAYER;
     void readSettings({
       environmentId,
       input: { instanceId, ...(projectId === null ? {} : { projectId }) },
     }).then((result) => {
       if (cancelled) return;
-      if (result._tag === "Success") setForm(result.value);
-      else {
-        setLoadFailed(true);
+      if (result._tag === "Success") {
+        setLoaded((current) => ({ ...current, [key]: { form: result.value, failed: false } }));
+      } else {
+        setLoaded((current) => ({ ...current, [key]: { form: null, failed: true } }));
         reportFailure("Could not read OMP settings", result);
       }
     });
@@ -328,6 +335,7 @@ export function OmpSettingsPageBody({
 
   const applied = (
     key: string,
+    writtenLayer: string,
     result: AtomCommandResult<OmpSettingsWriteResult, unknown>,
     failureTitle: string,
   ) => {
@@ -335,7 +343,10 @@ export function OmpSettingsPageBody({
       reportFailure(failureTitle, result);
       return;
     }
-    setForm(result.value.form);
+    setLoaded((current) => ({
+      ...current,
+      [writtenLayer]: { form: result.value.form, failed: false },
+    }));
     const { overriddenBy, restartRequired } = result.value;
     if (overriddenBy !== undefined) {
       toastManager.add({
@@ -387,13 +398,13 @@ export function OmpSettingsPageBody({
             void writeSetting({
               environmentId,
               input: { instanceId, ...layer, scope, key, value },
-            }).then((result) => applied(key, result, `Could not save ${key}`))
+            }).then((result) => applied(key, layerKey, result, `Could not save ${key}`))
           }
           onReset={(key) =>
             void resetSetting({
               environmentId,
               input: { instanceId, ...layer, scope, key },
-            }).then((result) => applied(key, result, `Could not reset ${key}`))
+            }).then((result) => applied(key, layerKey, result, `Could not reset ${key}`))
           }
         />
       )}
@@ -420,13 +431,8 @@ export function OmpSettingsPanel({ pageId }: { readonly pageId: OmpSettingsPageI
     instances.find((provider) => provider.instanceId === picked)?.instanceId ??
     instances[0]?.instanceId;
   const page = OMP_SETTINGS_PAGES[pageId];
-  const allProjects = useProjects();
-  const projects = useMemo(
-    () =>
-      allProjects.filter(
-        (project) => project.environmentId === environmentId && project.isScratch !== true,
-      ),
-    [allProjects, environmentId],
+  const projects = useProjects().filter(
+    (project) => project.environmentId === environmentId && project.isScratch !== true,
   );
   return (
     <SettingsPageContainer>

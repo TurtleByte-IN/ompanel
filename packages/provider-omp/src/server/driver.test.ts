@@ -61,6 +61,8 @@ const UP_TO_DATE = "Current version: 18.12.6\n✔ Already up to date\n";
 
 const fakeOmp = (contractVersion: string | undefined, update = UP_TO_DATE) => {
   const launches: Array<ChildProcess.StandardCommand> = [];
+  /** Completed by the first thread (`--mode rpc-ui`) launch. */
+  const threadSpawned = Deferred.makeUnsafe<void>();
   const spawner = ChildProcessSpawner.make((command) => {
     if (!ChildProcess.isStandardCommand(command)) return Effect.die("Unexpected pipeline");
     launches.push(command);
@@ -98,7 +100,8 @@ const fakeOmp = (contractVersion: string | undefined, update = UP_TO_DATE) => {
           : Stream.concat(Stream.succeed(ready), responses).pipe(
               Stream.map((frame) => `${JSON.stringify(frame)}\n`),
             );
-    return Effect.succeed(
+    return Effect.as(
+      command.args.includes("rpc-ui") ? Deferred.succeed(threadSpawned, undefined) : Effect.void,
       ChildProcessSpawner.makeHandle({
         // Outside the valid PID range, so cleanup cannot signal a real process.
         pid: ChildProcessSpawner.ProcessId(999_999_997),
@@ -115,7 +118,7 @@ const fakeOmp = (contractVersion: string | undefined, update = UP_TO_DATE) => {
       }),
     );
   });
-  return { spawner, launches };
+  return { spawner, launches, threadSpawned };
 };
 
 /** An existing file to use as the explicit binary path. */
@@ -149,10 +152,7 @@ const THREAD_ID = ThreadId.make("thread-1");
  * Starts every kind of omp an instance runs: the probe (`--version`, `--mode rpc`), a workspace
  * catalog (`skill list` and `--mode rpc`), text generation (`-p`) and a thread (`--mode rpc-ui`).
  */
-const runEveryOmp = (
-  instance: OmpInstance,
-  launches: ReadonlyArray<ChildProcess.StandardCommand>,
-) =>
+const runEveryOmp = (instance: OmpInstance, threadSpawned: Deferred.Deferred<void>) =>
   Effect.gen(function* () {
     yield* instance.snapshot.refresh;
     yield* instance.snapshotForCwd!("/repo").pipe(Effect.exit);
@@ -177,10 +177,7 @@ const runEveryOmp = (
       })
       .pipe(Effect.scoped, Effect.exit, Effect.forkChild);
     // The fake never completes the thread handshake; the spawn is all this needs.
-    for (let attempt = 0; attempt < 500; attempt++) {
-      if (launches.some((launch) => launch.args.includes("rpc-ui"))) break;
-      yield* TestClock.withLive(Effect.sleep("10 millis"));
-    }
+    yield* Deferred.await(threadSpawned);
     yield* Fiber.interrupt(opening);
   });
 
@@ -463,7 +460,7 @@ it.layer(layerTest)("OmpDriver", (it) => {
         agentDir: "/srv/omp-work/agent",
         launchArgs: "--thinking high --no-lsp",
       }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, omp.spawner));
-      yield* runEveryOmp(instance, omp.launches);
+      yield* runEveryOmp(instance, omp.threadSpawned);
 
       const launches = ompLaunches(omp.launches, binaryPath);
       const kinds = new Set(launches.map(launchKind));
@@ -552,7 +549,7 @@ it.layer(layerTest)("OmpDriver", (it) => {
         const instance = yield* create({ binaryPath }, true, environment).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, omp.spawner),
         );
-        yield* runEveryOmp(instance, omp.launches);
+        yield* runEveryOmp(instance, omp.threadSpawned);
         const expected =
           environment.length === 0 ? userOtel : { ...userOtel, [exported.name]: exported.value };
         const launches = ompLaunches(omp.launches, binaryPath);

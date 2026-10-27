@@ -371,6 +371,7 @@
   "apps/web/src/components/settings/EasDeviceHostsSettings.tsx": 1,
   "apps/web/src/components/settings/FontFamilyPicker.tsx": 2,
   "apps/web/src/components/settings/OmpAgentFileEditor.tsx": 1,
+  "apps/web/src/components/settings/OmpAuthBrokerSection.tsx": 1,
   "apps/web/src/components/settings/OmpModelsConfigSection.tsx": 1,
   "apps/web/src/components/settings/OmpOnboardingSection.tsx": 1,
   "apps/web/src/components/settings/OmpPluginsSection.tsx": 1,

@@ -110,7 +110,8 @@ describe("OmpSettingsSummaryView", () => {
                 source: "env",
                 readOnly: true,
               }),
-              field({ key: "not.on.a.page", value: "hidden" }),
+              field({ key: "not.on.a.page", value: "shown" }),
+              field({ key: "auth.broker.url", value: "https://broker.example" }),
             ],
           }}
         />,
@@ -119,8 +120,15 @@ describe("OmpSettingsSummaryView", () => {
     const sections = Array.from(container.querySelectorAll("section"), (section) =>
       section.getAttribute("aria-label"),
     );
-    // A key shows on every page that lists it, as on web (Routing and Search reuse model keys).
-    expect(sections).toEqual(["Models & Roles", "Routing", "Sampling", "Search"]);
+    // A key shows on every page that lists it, as on web (Routing and Search reuse model keys);
+    // a key no page lists shows under All settings, one Accounts shows nowhere here.
+    expect(sections).toEqual([
+      "Models & Roles",
+      "Routing",
+      "Sampling",
+      "Search",
+      "All settings (advanced)",
+    ]);
     const rows = (page: string) =>
       Array.from(container.querySelectorAll(`section[aria-label="${page}"] > div`), (row) =>
         row.getAttribute("aria-label"),
@@ -135,7 +143,8 @@ describe("OmpSettingsSummaryView", () => {
     expect(container.querySelector('section[aria-label="Sampling"] footer')?.textContent).toContain(
       "Advanced sampling",
     );
-    expect(container.textContent).not.toContain("not.on.a.page");
+    expect(rows("All settings (advanced)")).toEqual(["not.on.a.page: shown. Default"]);
+    expect(container.textContent).not.toContain("auth.broker.url");
     expect(container.querySelector("input, button")).toBeNull();
   });
 });

@@ -2,11 +2,19 @@ import {
   EnvironmentId,
   OmpAgentFilesOperationError,
   type EditorId,
+  ProjectId,
   ProviderInstanceId,
   type OmpConfigType,
+  type OmpConfigSource,
 } from "@t3tools/contracts";
 import { buildOmpSettingsForm } from "@t3tools/provider-omp/configForm";
-import { OMP_MODEL_ROLES, OMP_SETTINGS_PAGES } from "@t3tools/provider-omp/settingsPages";
+import {
+  OMP_MODEL_ROLES,
+  OMP_SETTINGS_PAGES,
+  OMP_SETTINGS_SHOWN_ELSEWHERE,
+  ompSettingsPageHasSettings,
+  ompSettingsPagesListing,
+} from "@t3tools/provider-omp/settingsPages";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -22,7 +30,8 @@ import {
 import { render } from "../../../test/render";
 import { toastManager } from "../ui/toast";
 
-// What the pinned OMP registers for the pages, plus one key no page shows.
+// What the pinned OMP registers for the pages, plus keys only the advanced page shows and one
+// Accounts shows.
 const REGISTRY: Readonly<Record<string, { type: OmpConfigType; default: unknown; env?: true }>> = {
   modelRoles: { type: "record", default: { default: "anthropic/claude-sonnet-4-5" } },
   modelRoleStorage: { type: "enum", default: "global" },
@@ -96,22 +105,31 @@ const REGISTRY: Readonly<Record<string, { type: OmpConfigType; default: unknown;
   extensions: { type: "array", default: [] },
   "marketplace.autoUpdate": { type: "enum", default: "notify" },
   "skills.registryUrl": { type: "string", default: "https://skills.omp.sh" },
+  "telemetry.otlpExportEnabled": { type: "boolean", default: true },
+  "bash.enabled": { type: "boolean", default: true },
+  autoResume: { type: "boolean", default: false },
+  "auth.broker.url": { type: "string", default: "" },
 };
 
-/** The settings engine over an in-memory global layer: every write re-reads the list. */
-const engine = vi.hoisted(() => ({ global: new Map<string, unknown>() }));
-const engineForm = () =>
+/** The settings engine over in-memory global and project layers: every write re-reads the list. */
+const engine = vi.hoisted(() => ({
+  global: new Map<string, unknown>(),
+  project: new Map<string, unknown>(),
+}));
+/** `config list` outside any project, or in the project when `inProject`. */
+const engineForm = (inProject = false) =>
   buildOmpSettingsForm(
     Object.fromEntries(
-      Object.entries(REGISTRY).map(([key, setting]) => [
-        key,
-        {
-          type: setting.type,
-          description: `${key} help`,
-          source: setting.env ? "env" : engine.global.has(key) ? "global" : "default",
-          value: engine.global.has(key) ? engine.global.get(key) : setting.default,
-        },
-      ]),
+      Object.entries(REGISTRY).map(([key, setting]) => {
+        const [source, value]: readonly [OmpConfigSource, unknown] = setting.env
+          ? ["env", setting.default]
+          : inProject && engine.project.has(key)
+            ? ["project", engine.project.get(key)]
+            : engine.global.has(key)
+              ? ["global", engine.global.get(key)]
+              : ["default", setting.default];
+        return [key, { type: setting.type, description: `${key} help`, source, value }];
+      }),
     ),
   );
 const commands = vi.hoisted(() => ({
@@ -246,21 +264,40 @@ const MODELS_REFUSED = /api: carrier-pigeon/;
 /** Empties the global layer and the agent directory, and wires the commands to them. */
 function resetEngine() {
   engine.global.clear();
+  engine.project.clear();
   files.clear();
-  commands.read.mockReset().mockImplementation(async () => ({
-    _tag: "Success",
-    value: engineForm(),
-  }));
+  commands.read
+    .mockReset()
+    .mockImplementation(async ({ input }: { input: { projectId?: string } }) => ({
+      _tag: "Success",
+      value: engineForm(input.projectId !== undefined),
+    }));
   commands.write
     .mockReset()
-    .mockImplementation(async ({ input }: { input: { key: string; value: unknown } }) => {
-      engine.global.set(input.key, input.value);
-      return { _tag: "Success", value: { form: engineForm(), restartRequired: [] } };
-    });
-  commands.reset.mockReset().mockImplementation(async ({ input }: { input: { key: string } }) => {
-    engine.global.delete(input.key);
-    return { _tag: "Success", value: { form: engineForm(), restartRequired: [] } };
-  });
+    .mockImplementation(
+      async ({
+        input,
+      }: {
+        input: { key: string; value: unknown; scope: string; projectId?: string };
+      }) => {
+        (input.scope === "project" ? engine.project : engine.global).set(input.key, input.value);
+        return {
+          _tag: "Success",
+          value: { form: engineForm(input.projectId !== undefined), restartRequired: [] },
+        };
+      },
+    );
+  commands.reset
+    .mockReset()
+    .mockImplementation(
+      async ({ input }: { input: { key: string; scope: string; projectId?: string } }) => {
+        (input.scope === "project" ? engine.project : engine.global).delete(input.key);
+        return {
+          _tag: "Success",
+          value: { form: engineForm(input.projectId !== undefined), restartRequired: [] },
+        };
+      },
+    );
   commands.listFiles.mockReset().mockImplementation(async () => ({
     _tag: "Success",
     value: fileList(),
@@ -451,6 +488,97 @@ describe("OMP settings pages", () => {
       expect(commands.read).toHaveBeenCalledWith({ environmentId, input: { instanceId } });
     },
   );
+
+  it("All settings (advanced) shows every key no other page lists, in key order, and writes one", async () => {
+    resetEngine();
+    await using screen = await render(
+      <OmpSettingsPageBody environmentId={environmentId} instanceId={instanceId} pageId="all" />,
+    );
+    await expect.poll(() => document.querySelector("[data-setting]")).not.toBeNull();
+    const shown = [...document.querySelectorAll("[data-setting]")].map((element) =>
+      element.getAttribute("data-setting"),
+    );
+    const expected = Object.keys(REGISTRY)
+      .filter(
+        (key) =>
+          ompSettingsPagesListing(key).length === 0 && !(key in OMP_SETTINGS_SHOWN_ELSEWHERE),
+      )
+      .toSorted((a, b) => a.localeCompare(b));
+    expect(shown).toEqual(expected);
+    expect(shown).toContain("bash.enabled");
+    // Accounts shows the broker settings; the advanced page leaves them out.
+    expect(shown).not.toContain("auth.broker.url");
+
+    await userEvent.click(screen.getByRole("switch", { name: "autoResume" }));
+    expect(commands.write).toHaveBeenCalledExactlyOnceWith({
+      environmentId,
+      input: { instanceId, scope: "global", key: "autoResume", value: true },
+    });
+    await expect.poll(() => row("autoResume")?.textContent).toContain("Global");
+  });
+
+  it("the layer switch reads and writes a project's .omp/config.yml and resets it there", async () => {
+    resetEngine();
+    engine.global.set("retry.maxRetries", 4);
+    const projectId = ProjectId.make("project-app");
+    await using screen = await render(
+      <OmpSettingsPageBody
+        environmentId={environmentId}
+        instanceId={instanceId}
+        pageId="routing"
+        projects={[{ id: projectId, title: "app", workspaceRoot: "/work/app" }]}
+      />,
+    );
+    const retries = screen.getByRole("textbox", { name: "retry.maxRetries" });
+    await expect.element(retries).toHaveValue("4");
+    expect(document.querySelector("[data-omp-settings-layer]")?.textContent).toContain(
+      "global config.yml",
+    );
+
+    await userEvent.click(screen.getByRole("combobox", { name: "OMP config layer" }));
+    await userEvent.click(screen.getByRole("option", { name: "Project: app" }));
+    await expect
+      .poll(() => document.querySelector("[data-omp-settings-layer]")?.textContent)
+      .toContain("/work/app/.omp/config.yml");
+    expect(commands.read).toHaveBeenLastCalledWith({
+      environmentId,
+      input: { instanceId, projectId },
+    });
+    // The global value still applies in the project until the project layer sets one; only
+    // the layer being edited offers Reset.
+    await expect.element(retries).toHaveValue("4");
+    expect(row("retry.maxRetries")?.querySelector("button")).toBeNull();
+
+    await userEvent.clear(retries);
+    await userEvent.type(retries, "6{Enter}");
+    expect(commands.write).toHaveBeenCalledExactlyOnceWith({
+      environmentId,
+      input: { instanceId, projectId, scope: "project", key: "retry.maxRetries", value: 6 },
+    });
+    await expect.poll(() => row("retry.maxRetries")?.textContent).toContain("Project");
+    expect(engine.global.get("retry.maxRetries")).toBe(4);
+
+    await userEvent.click(screen.getByRole("button", { name: "Reset" }));
+    expect(commands.reset).toHaveBeenCalledWith({
+      environmentId,
+      input: { instanceId, projectId, scope: "project", key: "retry.maxRetries" },
+    });
+    await expect.element(retries).toHaveValue("4");
+    expect(engine.project.has("retry.maxRetries")).toBe(false);
+  });
+
+  it("offers no layer switch without a project", async () => {
+    resetEngine();
+    await using _routing = await render(
+      <OmpSettingsPageBody
+        environmentId={environmentId}
+        instanceId={instanceId}
+        pageId="routing"
+      />,
+    );
+    await expect.poll(() => row("retry.maxRetries")).not.toBeNull();
+    expect(document.querySelector("[data-omp-settings-layer]")).toBeNull();
+  });
 
   it("Models & Roles edits one role and keeps the others", async () => {
     resetEngine();
@@ -1298,7 +1426,7 @@ describe("OMP settings pages", () => {
     await expect.element(plan).not.toBeChecked();
   });
 
-  it("Runtime turns Python eval off and shows PTY read-only", async () => {
+  it("Runtime turns Python eval off, shows PTY read-only and OMP's OTLP export writable", async () => {
     resetEngine();
     await using screen = await renderK04c("runtime");
     await expect
@@ -1317,6 +1445,17 @@ describe("OMP settings pages", () => {
     });
     await expect.poll(() => row("eval.py")?.textContent).toContain("Global");
     await expect.element(python).not.toBeChecked();
+
+    // OMP's own telemetry stays OMP's setting: the user turns its OTLP export off here.
+    const otlp = screen.getByRole("switch", { name: "telemetry.otlpExportEnabled" });
+    await expect.element(otlp).toBeChecked();
+    expect(row("telemetry.otlpExportEnabled")?.textContent).toContain("Restarts threads");
+    await userEvent.click(otlp);
+    expect(commands.write).toHaveBeenLastCalledWith({
+      environmentId,
+      input: { instanceId, scope: "global", key: "telemetry.otlpExportEnabled", value: false },
+    });
+    await expect.element(otlp).not.toBeChecked();
   });
 
   it("Search edits the web role and its fallback chain, keeping other roles and chains", async () => {
@@ -1460,7 +1599,7 @@ describe("OMP settings pages at phone width", () => {
       );
       await expect
         .poll(() =>
-          page.keys.length > 0
+          ompSettingsPageHasSettings(page)
             ? document.querySelector("[data-setting]")
             : document.querySelector("[data-omp-files]"),
         )

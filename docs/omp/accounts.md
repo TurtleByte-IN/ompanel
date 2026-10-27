@@ -49,8 +49,26 @@ The login process has the 60 s control budget.
   offers no key entry (`apiKeySignIn: false`).
 - Ompanel sets `secretInput: true` only for OMP 1.6.0+, so secret prompts are masked; older OMP
   fails such logins instead of prompting in clear text.
-- The broker token (`auth.broker.token`) is never entered in Ompanel; OMP reads it from
-  `OMP_AUTH_BROKER_TOKEN` or its token file. `auth.broker.url` is an ordinary OMP setting.
+- The broker token (`auth.broker.token`) itself is never entered in Ompanel. See below.
+
+## Auth broker
+
+Under the provider list, the Accounts section shows OMP's auth broker settings (web and
+desktop; mobile shows neither). OMP keeps credentials on a remote `omp auth-broker serve` host
+when `auth.broker.url` is set, and reads both settings from its global config only, so the section
+always reads and writes the global layer through the settings engine (`omp config set --scope
+global`, `omp config reset`):
+
+- `auth.broker.url`: an ordinary setting, shown with its source and a Reset.
+- `auth.broker.token`: shown only as stored or not. The field takes where OMP reads the token,
+  never the token: an upper-case environment variable name (`BROKER_TOKEN`) or a `!command` whose
+  stdout is the token (`!op read op://vault/broker/token`). OMP resolves either at startup
+  (`resolveConfigValue`). The form and the engine both refuse anything else
+  (`isOmpSecretReference`), so a token never reaches `omp`'s argv. Without a source OMP uses
+  `OMP_AUTH_BROKER_TOKEN` or the token file `omp auth-broker token` writes.
+- Either one set by `OMP_AUTH_BROKER_URL` / `OMP_AUTH_BROKER_TOKEN` is read-only.
+
+The OMP settings pages leave both keys out (`OMP_SETTINGS_SHOWN_ELSEWHERE`).
 
 ## Signing out
 

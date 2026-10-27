@@ -214,16 +214,26 @@ with a full page load:
    the provider shows Signed in and the vendor's token endpoint got the code;
 4. one non-credential key on every OMP settings page that `omp config set`
    writes (Models & Roles, Routing, Thinking, Advisor & Agents, Sampling,
-   Approvals & Tools, Memory, Context, Modes, Runtime, Search, Discovery, MCP,
-   Customization), read back with `omp config get <key> --json` from the
-   stack's OMP home;
-5. Custom providers: a provider and model added in the form and saved (OMP
+   Approvals & Tools, Memory, Context, Modes, Runtime incl.
+   `telemetry.otlpExportEnabled`, Search, Discovery, MCP, Customization, All
+   settings), read back with `omp config get <key> --json` from the stack's
+   OMP home;
+5. every key the real `omp config list` reports is on a page, on All settings
+   (advanced) (its row count matches) or shown elsewhere (the auth broker keys);
+6. the layer switch on Routing writes `retry.maxRetries` to the workspace
+   project's `.omp/config.yml`: `config list` reports it with source `project`
+   in the workspace and the global value outside it; Reset removes it;
+7. Custom providers: a provider and model added in the form and saved (OMP
    checks the file first); `omp models <provider> --json` lists the model;
-6. Terminal prefs stay read-only, and `omp config get` is unchanged;
-7. Plugins: a marketplace on disk added, its plugin installed, disabled and
+8. Terminal prefs stay read-only, and `omp config get` is unchanged;
+9. Plugins: a marketplace on disk added, its plugin installed, disabled and
    enabled again, each after the confirmation that shows the command; `omp
    plugin list --json` agrees; Skills lists the plugin's skill, as `omp skill
-   list` does. Nothing needs the network.
+   list` does. Nothing needs the network;
+10. Accounts → Auth broker: the broker URL written and read back with `omp
+    config get`, a literal token refused in the form with nothing written, an
+    environment variable name accepted (`config list` reports it stored and
+    redacted), then both reset so later steps run without a broker.
 
 `apps/web/e2e/omp/omp-onboarding.spec.ts` is P-07's [onboarding](onboarding.md)
 on a fresh OMP home (`freshOmpHome`: no `config.yml`, no `models.yml`), so the
