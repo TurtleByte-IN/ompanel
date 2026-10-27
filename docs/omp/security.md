@@ -73,8 +73,9 @@ command, outside the thread's approvals (`/mcp add … ` then `/mcp test` starts
 on the machine). The adapter resolves aliases as OMP does (`/plugin` is `/plugins`,
 `/models` is `/model`, `/worktree` is `/wt`) and sends only builtins that change nothing
 but this session's model knobs, context, todos or view: `advisor`, `changelog`,
-`compact`, `context`, `effort`, `fast`, `force`, `forget-approvals`, `fresh`, `jobs`,
-`prewalk`, `rename`, `retry`, `slow`, `todo` (only no subcommand, `append`, `start`,
+`compact`, `context`, `effort`, `fast`, `force`, `forget-approvals`, `fresh`, `handoff`,
+`jobs`, `prewalk`, `rename`, `retry`, `security` (only no subcommand, `scans`, `show`,
+`compare` and `validate`), `slow`, `todo` (only no subcommand, `append`, `start`,
 `done`, `drop`, `rm` and `help`; `export` and `import` write and read any path, `copy`
 uses the host's clipboard), `usage` (only no subcommand or `show`; `reset` spends a
 provider rate-limit reset), `wt` (handled by Ompanel's host), plus `/computer status`.
@@ -83,6 +84,24 @@ authentication on whatever `--host` it is given and opens a browser. Every other
 builtin is refused (`builtin_command_refused`; `/share` with `share_command_refused`,
 since it would upload past the Share as gist checks) and is not offered in the `/` menu.
 Skills (`/skill:…`) and prompt templates are prompts and go through.
+
+`/handoff [focus]` makes one request to the thread's model with its own credentials, as
+`/compact` does, and writes the result as a compaction entry in the same session file. It
+runs no tools, writes no other file and keeps the session id.
+
+`/security` (off unless OMP's `security.enabled` is on) is sent only to read OMP's stored
+scans for the project (in OMP's state directory, `~/.omp/security` by default): list
+(`scans`, the default), `show` and `compare`. `validate` becomes a normal prompt, so the
+model's tool calls go through the thread's approvals. The rest are refused:
+
+- `scan` starts a separate scan agent with `autoApprove`, outside the thread's approvals.
+- `plan` creates any `--output` directory outside the repository and reads any
+  `--knowledge-base` file; `import` reads any path; `export --output` writes any path.
+- `cloud` calls Codex Security with the user's OpenAI Codex sign-in; `cloud start` spends
+  its scan allowance.
+- `status` and `cancel` first mark every running scan this `omp` did not start as failed,
+  removing a diff scan's git worktree, including a scan running in the user's own terminal.
+- `disposition` writes a finding's status to the store.
 
 The builtin table is taken from the pinned source (`toolGuards.ts`) and must be
 re-derived on every re-pin. The adapter also refuses any builtin, or alias, that the

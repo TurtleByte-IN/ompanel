@@ -24,7 +24,7 @@ import type {
   OmpSkillList,
 } from "./control.ts";
 import type { OmpSidecarError } from "./sidecar.ts";
-import { ompBuiltinAllowed, ompReportedBuiltins } from "./toolGuards.ts";
+import { ompAllowedSubcommands, ompBuiltinAllowed, ompReportedBuiltins } from "./toolGuards.ts";
 
 /** How long a discovered command list or skill list is reused for one directory. */
 export const OMP_COMMAND_CATALOG_TTL_MS = 60_000;
@@ -72,7 +72,9 @@ export const ompSlashCommands = (
     // `/goal` itself.
     if (name !== GOAL_COMMAND.name && !ompBuiltinAllowed(name, "", reported)) continue;
     const description = nonEmpty(command.description);
-    const hint = nonEmpty(command.input?.hint);
+    // A builtin sent only in part shows the subcommands that go through, not OMP's own hint.
+    const verbs = ompAllowedSubcommands(name, reported);
+    const hint = verbs === undefined ? nonEmpty(command.input?.hint) : `[${verbs.join("|")}]`;
     result.push({
       name,
       ...(description === undefined ? {} : { description }),

@@ -129,7 +129,8 @@ const OMP_RPC_BUILTINS: Readonly<Record<string, string>> = {
 /**
  * Safe builtins by canonical name, with their allowed subcommands (first word, lowercased, as OMP
  * parses it) where only some are safe: no commands, file reads or writes, network, host
- * clipboard or config changes (docs/omp/security.md lists what is left out and why).
+ * clipboard or config changes (docs/omp/security.md lists what is left out and why). `/security`
+ * keeps only the forms that read OMP's stored scans or become a normal prompt.
  */
 const OMP_SAFE_BUILTINS: Readonly<Record<string, true | Readonly<Record<string, true>>>> = {
   advisor: true,
@@ -141,10 +142,12 @@ const OMP_SAFE_BUILTINS: Readonly<Record<string, true | Readonly<Record<string, 
   force: true,
   "forget-approvals": true,
   fresh: true,
+  handoff: true,
   jobs: true,
   prewalk: true,
   rename: true,
   retry: true,
+  security: { "": true, scans: true, show: true, compare: true, validate: true },
   slow: true,
   todo: {
     "": true,
@@ -217,6 +220,20 @@ export const ompBuiltinAllowed = (
   if (verbs === true) return true;
   const verb = args.trim().split(/\s/, 1)[0]!.toLowerCase();
   return Object.hasOwn(verbs, verb);
+};
+
+/**
+ * The subcommands Ompanel sends for a builtin it sends only in part (`/todo`, `/usage`,
+ * `/security`), for the `/` menu's hint; `undefined` for any other command.
+ */
+export const ompAllowedSubcommands = (
+  name: string,
+  reported: OmpReportedBuiltins = {},
+): ReadonlyArray<string> | undefined => {
+  const canonical = builtinFor(name, reported);
+  if (canonical === undefined || !Object.hasOwn(OMP_SAFE_BUILTINS, canonical)) return undefined;
+  const verbs = OMP_SAFE_BUILTINS[canonical]!;
+  return verbs === true ? undefined : Object.keys(verbs).filter((verb) => /^[a-z]/.test(verb));
 };
 
 /**

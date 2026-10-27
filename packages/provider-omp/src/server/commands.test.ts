@@ -106,11 +106,39 @@ describe("OMP command mapping", () => {
       { name: "computer", source: "builtin", description: "Toggle computer use" },
       { name: "share", source: "builtin", description: "Share session" },
       { name: "mcp", source: "builtin", description: "Manage MCP servers" },
+      { name: "stats", source: "builtin", description: "Usage dashboard" },
       { name: "fresh", source: "builtin", description: "Start a fresh session" },
     ]);
     assert.deepStrictEqual(
       commands.map((command) => command.name),
       ["fresh", "goal"],
+    );
+  });
+
+  it("offers /handoff, and /security with only the subcommands Ompanel sends", () => {
+    const commands = ompSlashCommands([
+      {
+        name: "handoff",
+        source: "builtin",
+        description: "Summarize the session into a handoff document and compact in place",
+        input: { hint: "[focus instructions]" },
+      },
+      {
+        name: "security",
+        source: "builtin",
+        description: "Plan, run, inspect, import, and compare OMP-native security scans",
+        input: { hint: "<plan|scan|status|cancel|scans|show|import|export|validate|compare>" },
+      },
+      { name: "usage", source: "builtin", input: { hint: "[show|reset [provider/active]]" } },
+    ]);
+    assert.deepStrictEqual(
+      commands.map((command) => [command.name, command.input?.hint ?? null]),
+      [
+        ["handoff", "[focus instructions]"],
+        ["security", "[scans|show|compare|validate]"],
+        ["usage", "[show]"],
+        ["goal", "[objective | show | pause | resume | drop]"],
+      ],
     );
   });
 
