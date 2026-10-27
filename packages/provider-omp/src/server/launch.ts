@@ -169,11 +169,9 @@ export const resolveOmpLaunchArgs = (launchArgs: string): OmpLaunchArgsResolutio
 };
 
 /**
- * Launch arguments an `omp -p` run keeps. Titles and commit messages run `-p --no-tools
- * --no-extensions` on untrusted text (messages, diffs); `--tools` overrides `--no-tools`, and
- * `-e`/`--extension`, `--hook`, `--plugin-dir` or an extension's own flag load code despite
- * `--no-extensions`. So only flags that change how the model answers, never what it can run,
- * pass; the rest still reach the instance's threads.
+ * Flags an `omp -p` run (untrusted messages, diffs) keeps: `--tools` overrides `--no-tools`, and
+ * `-e`, `--hook`, `--plugin-dir` or an extension's flag load code despite `--no-extensions`, so
+ * only flags that change how the model answers pass.
  */
 const OMP_PRINT_VALUE_FLAGS: Readonly<Record<string, true>> = {
   "--thinking": true,
