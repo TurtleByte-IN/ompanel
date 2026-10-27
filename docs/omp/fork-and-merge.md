@@ -128,7 +128,7 @@ gate fails until the adoption PR bumps the contract version ([contract-bump.md](
 ## Tags
 
 O release tags are `v<upstream-version>-ompanel.<n>`: the upstream version the fork is based on,
-then a fork counter, for example `v18.12.6-ompanel.3`. They match upstream's `v*` release trigger
+then a fork counter, for example `v18.12.6-ompanel.4`. They match upstream's `v*` release trigger
 and sort after the upstream base.
 
 - Only repository and organization admins can create, move or delete `v*` tags (the "Release
