@@ -8,22 +8,50 @@ function repositoryDefaultBranch(context) {
   return branch;
 }
 
-async function assertCommitOnDefaultBranch({ github, context, sha }) {
+async function isCommitOnDefaultBranch({ github, context, sha }) {
   const defaultBranch = repositoryDefaultBranch(context);
   const { data: comparison } = await github.rest.repos.compareCommitsWithBasehead({
     ...context.repo,
     basehead: `${sha}...${defaultBranch}`,
     per_page: 1,
   });
-  if (comparison.status !== "ahead" && comparison.status !== "identical") {
+  return {
+    contained: comparison.status === "ahead" || comparison.status === "identical",
+    comparison,
+    defaultBranch,
+  };
+}
+
+async function assertCommitOnDefaultBranch({ github, context, sha }) {
+  const { contained, comparison, defaultBranch } = await isCommitOnDefaultBranch({
+    github,
+    context,
+    sha,
+  });
+  if (!contained) {
     throw new Error(
       `Release commit ${sha} is not contained in ${defaultBranch} (${comparison.status}).`,
     );
   }
 }
 
+// A pushed prerelease tag (`v1.2.3-rc.1`) is a release candidate: like a preview it may come
+// from any commit, never becomes the latest release, and is never what a stable or nightly
+// install updates to. Plain `vX.Y.Z` tags still have to be on the default branch.
+const isPrereleaseTagPush = (context) =>
+  context.eventName === "push" && /^refs\/tags\/v\d+\.\d+\.\d+-[0-9A-Za-z.-]+$/.test(context.ref);
+
+// Only reviewed code is signed or published to npm: a build of a commit on the default branch.
+// Previews and release candidates cut from other commits build unsigned. The `release`
+// environment's required reviewers are the real guard, since a tagged commit can edit this check.
+async function mayReleaseSign({ github, context, releaseChannel, sha }) {
+  if (releaseChannel === "preview") return false;
+  return (await isCommitOnDefaultBranch({ github, context, sha })).contained;
+}
+
 async function assertReleaseSource({ github, context, releaseChannel }) {
   if (releaseChannel === "preview") return;
+  if (releaseChannel === "stable" && isPrereleaseTagPush(context)) return;
   if (releaseChannel !== "stable" && releaseChannel !== "nightly") {
     throw new Error(`Unsupported release channel: ${releaseChannel}`);
   }
@@ -99,6 +127,7 @@ async function resolveLatestNightlyCommit({ github, context, core }) {
 module.exports = {
   assertCommitOnDefaultBranch,
   assertReleaseSource,
+  mayReleaseSign,
   shouldReleaseNightly,
   resolveLatestNightlyCommit,
 };

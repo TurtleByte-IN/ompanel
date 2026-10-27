@@ -82,20 +82,21 @@ notice ([testing.md](testing.md#live-suite)).
 ## Jobs that run only upstream
 
 These jobs need secrets or infrastructure that only `pingdotgg/t3code` has.
-On the fork they are skipped, not failed:
+On the fork they are skipped, not failed. `release.yml` runs on the fork
+itself and skips only the jobs whose credentials are missing
+([release.md](release.md#optional-jobs)).
 
-| Workflow                            | Job(s)                                                           | Gate                                                 |
-| ----------------------------------- | ---------------------------------------------------------------- | ---------------------------------------------------- |
-| `release.yml`                       | all (via `resolve_commit`)                                       | `github.repository == 'pingdotgg/t3code'` (upstream) |
-| `deploy-relay.yml`                  | `deploy_relay`                                                   | repository (upstream)                                |
-| `mobile-android-apk.yml`            | `mirror`                                                         | repository (upstream)                                |
-| `mobile-eas-production.yml`         | `production`                                                     | repository (upstream)                                |
-| `publish-aur.yml`                   | `publish`                                                        | repository (upstream)                                |
-| `mobile-eas-preview.yml`            | `preview`                                                        | `EXPO_TOKEN` presence check and a label (upstream)   |
-| `relay-preview.yml`                 | `deploy_preview`                                                 | repository (added for the fork)                      |
-| `relay-preview-cleanup.yml`         | `cleanup_pr`, `list_closed_previews` (and `sweep_pr` through it) | repository (added for the fork)                      |
-| `web-preview.yml`                   | `deploy`                                                         | repository (added for the fork)                      |
-| `desktop-macos-preview-publish.yml` | `resolve` (and the signed `build` and `publish` through it)      | repository (added for the fork)                      |
+| Workflow                            | Job(s)                                                           | Gate                                               |
+| ----------------------------------- | ---------------------------------------------------------------- | -------------------------------------------------- |
+| `deploy-relay.yml`                  | `deploy_relay`                                                   | repository (upstream)                              |
+| `mobile-android-apk.yml`            | `mirror`                                                         | repository (upstream)                              |
+| `mobile-eas-production.yml`         | `production`                                                     | repository (upstream)                              |
+| `publish-aur.yml`                   | `publish`                                                        | repository (upstream)                              |
+| `mobile-eas-preview.yml`            | `preview`                                                        | `EXPO_TOKEN` presence check and a label (upstream) |
+| `relay-preview.yml`                 | `deploy_preview`                                                 | repository (added for the fork)                    |
+| `relay-preview-cleanup.yml`         | `cleanup_pr`, `list_closed_previews` (and `sweep_pr` through it) | repository (added for the fork)                    |
+| `web-preview.yml`                   | `deploy`                                                         | repository (added for the fork)                    |
+| `desktop-macos-preview-publish.yml` | `resolve` (and the signed `build` and `publish` through it)      | repository (added for the fork)                    |
 
 The `cleanup` job in `desktop-macos-preview-publish.yml` stays ungated. It runs
 when a pull request closes or loses the `preview:mac` label. It only deletes

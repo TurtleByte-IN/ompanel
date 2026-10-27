@@ -58,6 +58,10 @@ const packExecutableTargets = packExecutableTarget
       },
     ]
   : undefined;
+// An executable resolves ESM imports of builtins only. The bundled MCP SDK imports zod that way,
+// so the executable carries its own zod; @cursor/sdk still requires the staged copy beside it.
+const bundledInExecutable = (id: string) =>
+  packExecutable && (id === "zod" || id.startsWith("zod/"));
 
 // The root config's `projects` route repo-root runs to package configs,
 // including this one. Inheriting them would make this config a container.
@@ -96,8 +100,8 @@ export default mergeConfig(
         : {}),
       deps: {
         // alwaysBundle=false has no opinion; neverBundle must retain transitive native acceleration.
-        alwaysBundle: shouldBundleCliDependency,
-        neverBundle: (id: string) => isExternalCliDependency(id),
+        alwaysBundle: (id: string) => bundledInExecutable(id) || shouldBundleCliDependency(id),
+        neverBundle: (id: string) => !bundledInExecutable(id) && isExternalCliDependency(id),
         onlyBundle: false,
       },
       banner: {

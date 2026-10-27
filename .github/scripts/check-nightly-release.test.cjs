@@ -3,6 +3,7 @@ const test = require("node:test");
 const {
   assertCommitOnDefaultBranch,
   assertReleaseSource,
+  mayReleaseSign,
   shouldReleaseNightly,
 } = require("./check-nightly-release.cjs");
 
@@ -49,6 +50,52 @@ function releaseSourceFixture({
 test("allows preview releases from any branch without consulting main", async () => {
   const { options, calls } = releaseSourceFixture({ ref: "refs/heads/feature" });
   await assertReleaseSource({ ...options, releaseChannel: "preview" });
+  assert.equal(calls.length, 0);
+});
+
+test("allows a pushed prerelease tag from any commit without consulting main", async () => {
+  const { options, calls } = releaseSourceFixture({
+    comparisonStatus: "diverged",
+    eventName: "push",
+    ref: "refs/tags/v0.0.0-ompanel-rc.1",
+  });
+  await assertReleaseSource({ ...options, releaseChannel: "stable" });
+  assert.equal(calls.length, 0);
+});
+
+test("rejects a pushed plain version tag that is not on main", async () => {
+  const { options } = releaseSourceFixture({
+    comparisonStatus: "diverged",
+    eventName: "push",
+    ref: "refs/tags/v1.2.3",
+  });
+  await assert.rejects(
+    assertReleaseSource({ ...options, releaseChannel: "stable" }),
+    /not contained in main \(diverged\)/,
+  );
+});
+
+for (const [comparisonStatus, expected] of [
+  ["ahead", true],
+  ["identical", true],
+  ["diverged", false],
+  ["behind", false],
+]) {
+  test(`signs a stable build only from main (${comparisonStatus})`, async () => {
+    const { options } = releaseSourceFixture({ comparisonStatus, eventName: "push" });
+    assert.equal(
+      await mayReleaseSign({ ...options, releaseChannel: "stable", sha: "candidate" }),
+      expected,
+    );
+  });
+}
+
+test("never signs a preview build, even from main", async () => {
+  const { options, calls } = releaseSourceFixture();
+  assert.equal(
+    await mayReleaseSign({ ...options, releaseChannel: "preview", sha: "candidate" }),
+    false,
+  );
   assert.equal(calls.length, 0);
 });
 
