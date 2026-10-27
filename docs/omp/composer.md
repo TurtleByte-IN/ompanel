@@ -105,7 +105,11 @@ Below that contract the composer does not offer the trait and the adapter never 
 command; `/vibe` stays in OMP's TUI.
 
 Each worker is an OMP subagent, shown in the thread's Agents panel tree under the `vibe_spawn`
-call that started it (see [subagents.md](./subagents.md#vibe-workers)).
+call that started it (see [subagents.md](./subagents.md#vibe-workers)), not as a delegated child
+thread: a worker lives inside the director's OMP session and process, and only OMP can steer,
+revive or end it, which the panel's controls do over RPC. A child thread would need its own
+sidecar and session that the worker does not have. `omp-composer.spec.ts` spawns one worker
+against the pinned sidecar and finds its row in the panel while the sidebar's threads stay the same.
 
 ## Role chip
 

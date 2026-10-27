@@ -11,7 +11,8 @@ import {
 } from "./work-log-layout";
 import { QuestionAnswerHistory } from "./QuestionAnswerHistory";
 import { ThreadCommandOutput, useCommandOutputStreaming } from "./thread-command-output";
-import { OmpToolCard } from "./OmpToolCard";
+import { OmpProposalActions } from "./OmpProposalActions";
+import { OmpToolCard, ompProposalToolCallId } from "./OmpToolCard";
 import { WorkLogOutputImages } from "./WorkLogOutputImages";
 import {
   getQuestionAnswerPreview,
@@ -1240,6 +1241,16 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
               <OmpToolCard
                 card={ompCard}
                 renderAudio={(path) => props.renderImage({ href: path, alt: null, title: null })}
+                renderProposalActions={() => {
+                  const toolCallId = ompProposalToolCallId(shownItem);
+                  return toolCallId === undefined ? undefined : (
+                    <OmpProposalActions
+                      environmentId={props.environmentId}
+                      threadId={shownItem.threadId}
+                      toolCallId={toolCallId}
+                    />
+                  );
+                }}
               />
             ) : fullDetail ? (
               <Text selectable className="font-mono text-2xs leading-normal text-foreground-muted">

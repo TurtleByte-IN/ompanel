@@ -4,7 +4,7 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import { ProviderSessionId, ThreadId } from "@t3tools/contracts";
+import { ProviderSessionId, readOmpToolCard, ThreadId } from "@t3tools/contracts";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as DateTime from "effect/DateTime";
@@ -14,19 +14,21 @@ import * as Fiber from "effect/Fiber";
 import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
 import * as References from "effect/References";
+import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 
 import { makeOmpAdapter } from "./adapter.ts";
 import { makeOmpControlService, parseOmpShareOutput } from "./control.ts";
-import { ompJournalPath } from "./journal.ts";
+import { ompJournalPath, parseOmpJournal, replayOmpJournal } from "./journal.ts";
 import { writeOmpThreadSessionRecord } from "./ompSessions.ts";
 import { makeOmpPidfiles } from "./pidfiles.ts";
+import { OMP_RESOLVE_PROPOSAL_CONTRACT, requestResolveProposal } from "./proposals.ts";
 import { OmpRpcCommandError } from "./rpcProcess.ts";
 import { ompStateDirs } from "./session.ts";
 import { makeOmpThreadMenuController, OMP_COLLAB_CONTRACT } from "./threadMenuController.ts";
 import type { OmpThreadSession } from "./threadSessions.ts";
 import { makeOmpThreadSessions } from "./threadSessions.ts";
-import { fakeOmpFrames, makeFakeOmpState, waitUntil } from "./testing/fakeOmp.ts";
+import { type FakeOmpStep, fakeOmpFrames, makeFakeOmpState, waitUntil } from "./testing/fakeOmp.ts";
 import {
   makeFakeOmpControl,
   type FakeOmpControl,
@@ -75,6 +77,8 @@ const runningSession = (
     process: { request: request as unknown as OmpThreadSession["process"]["request"] },
     onRestartRequired: () => Effect.void,
     isBusy: () => false,
+    resolveProposal: (request) =>
+      requestResolveProposal(session.process, request, { timeoutMs: 1_000 }),
   };
   return { session, sent };
 };
@@ -515,5 +519,215 @@ posixOnly("OMP collab links stay out of the journal and the logs", () => {
         assert.isFalse(logs.lines.some((line) => line.includes(token)));
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer), logs.provide);
     },
+  );
+});
+
+posixOnly("Accept and Reject on a staged ast_edit card (FR-18b)", () => {
+  const STAGED_RESULT = {
+    content: [{ type: "text", text: "Staged as a proposal — files NOT modified yet.\n-1:a\n+1:b" }],
+    details: {
+      totalReplacements: 1,
+      filesTouched: 1,
+      applied: false,
+      fileReplacements: [{ path: "src/x.ts", count: 1 }],
+    },
+  };
+
+  const proposalCards = (events: ReadonlyArray<Record<string, unknown>>) =>
+    events.flatMap((event) => {
+      if (event["type"] !== "turn_item.updated") return [];
+      const item = event["turnItem"] as { status: string; type: string; output?: unknown };
+      const card = item.type === "dynamic_tool" ? readOmpToolCard(item.output) : null;
+      return card?.kind === "proposed_edit" ? [{ status: item.status, card }] : [];
+    });
+
+  const APPLIED: FakeOmpStep = {
+    respond: {
+      action: "apply",
+      sourceToolName: "ast_edit",
+      toolCallId: "call-ast-1",
+      text: "Applied 1 replacement in 1 file.",
+      isError: false,
+      details: { applied: true, totalReplacements: 1 },
+    },
+  };
+
+  const run = (contract: string, resolveStep: FakeOmpStep = APPLIED) =>
+    Effect.gen(function* () {
+      const state = yield* makeFakeOmpState;
+      const path = yield* Path.Path;
+      const dirs = ompStateDirs(path, NodePath.join(state.dir, "state"));
+      const threadSessions = makeOmpThreadSessions();
+      const adapter = yield* makeOmpAdapter({
+        instanceId: JOURNAL_INSTANCE_ID,
+        profile: "",
+        environment: state.env({
+          ...state.sessionStore(),
+          FAKE_OMP_CONTRACT: contract,
+          ...state.script({
+            commands: {
+              prompt: [
+                ...fakeOmpFrames.promptTurn({
+                  text: ["Staged a rename."],
+                  tool: {
+                    toolCallId: "call-ast-1",
+                    toolName: "ast_edit",
+                    args: { ops: [{ pat: "a", out: "b" }], paths: ["src"] },
+                    result: STAGED_RESULT,
+                  },
+                }),
+              ],
+              resolve_proposal: [resolveStep],
+            },
+          }),
+        }),
+        platform,
+        defaultCwd: state.dir,
+        resolveBinary: Effect.succeed(state.executable()),
+        dirs,
+        pidfiles: yield* makeOmpPidfiles({ dir: dirs.pidfiles, platform }),
+        expectedContractVersion: contract,
+        threadSessions,
+        sessions: state.sessions,
+      }).pipe(
+        Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
+          offer: () => Effect.void,
+          take: Effect.never,
+        }),
+      );
+      const menu = makeOmpThreadMenuController({
+        control: yield* makeOmpControlService(),
+        target: () => Effect.die("no CLI in this test"),
+        globalCwd: state.dir,
+        exportsDir: NodePath.join(state.dir, "exports"),
+        threadsDir: dirs.threads,
+        sessionsLocation: state.sessions,
+        sessions: threadSessions,
+        contractVersion: contract,
+        ompVersion: "test",
+        fileSystem: yield* FileSystem.FileSystem,
+        path,
+      });
+
+      const events: Array<Record<string, unknown>> = [];
+      const outer = yield* Effect.scope;
+      const outcome = yield* Effect.gen(function* () {
+        const session = yield* adapter.openSession({
+          threadId: JOURNAL_THREAD_ID,
+          providerSessionId: ProviderSessionId.make("session-proposal"),
+          modelSelection: journalModelSelection,
+          runtimePolicy: journalRuntimePolicy,
+        });
+        yield* session.events.pipe(
+          Stream.runForEach((event) =>
+            Effect.sync(() => events.push(event as unknown as Record<string, unknown>)),
+          ),
+          Effect.forkIn(outer),
+        );
+        const providerThread = yield* session.ensureThread({
+          threadId: JOURNAL_THREAD_ID,
+          modelSelection: journalModelSelection,
+          runtimePolicy: journalRuntimePolicy,
+        });
+        yield* session.startTurn(journalTurnInput(providerThread, 1, yield* DateTime.now));
+        assert.isTrue(
+          yield* waitUntil(() => events.some((event) => event["type"] === "turn.terminal")),
+        );
+        // Accept after the turn ended, as a user reading the card would.
+        return yield* menu
+          .resolveProposal({
+            threadId: JOURNAL_THREAD_ID,
+            toolCallId: "call-ast-1",
+            action: "apply",
+          })
+          .pipe(Effect.result);
+      }).pipe(Effect.scoped);
+      const journal = replayOmpJournal(
+        parseOmpJournal(
+          NodeFS.readFileSync(ompJournalPath(path, dirs.threads, JOURNAL_THREAD_ID), "utf8"),
+        ).entries,
+      );
+      return {
+        outcome,
+        live: proposalCards(events),
+        replayed: proposalCards(
+          journal.events as unknown as ReadonlyArray<Record<string, unknown>>,
+        ),
+        commands: state.commands().map((command) => command["type"]),
+      };
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
+
+  it.live(
+    "on contract 1.10.0, Accept applies the proposal and the card follows, after a reload too",
+    () =>
+      Effect.gen(function* () {
+        const { outcome, live, replayed, commands } = yield* run(OMP_RESOLVE_PROPOSAL_CONTRACT);
+        assert.isTrue(Result.isSuccess(outcome));
+        if (Result.isSuccess(outcome)) {
+          assert.deepStrictEqual(outcome.success, {
+            state: "applied",
+            stale: false,
+            text: "Applied 1 replacement in 1 file.",
+          });
+        }
+        assert.include(commands, "resolve_proposal");
+        const staged = live.find((entry) => entry.card.state === "proposed");
+        assert.strictEqual(staged?.status, "waiting");
+        assert.isTrue(staged?.card.kind === "proposed_edit" && staged.card.resolvable);
+        const settled = live.at(-1);
+        assert.strictEqual(settled?.status, "completed");
+        assert.strictEqual(settled?.card.state, "applied");
+        assert.notProperty(settled?.card, "resolvable");
+        // The journal holds the click, so a reloaded thread shows the same applied card.
+        assert.deepStrictEqual(replayed.at(-1), settled);
+      }),
+  );
+
+  it.live(
+    "a click the agent is already resolving: no buttons, still staged, same after reload",
+    () =>
+      Effect.gen(function* () {
+        const { outcome, live, replayed } = yield* run(OMP_RESOLVE_PROPOSAL_CONTRACT, {
+          fail: "Proposal is already being resolved.",
+        });
+        assert.isTrue(Result.isFailure(outcome));
+        if (Result.isFailure(outcome)) assert.strictEqual(outcome.failure.reason, "not_pending");
+        const withdrawn = live.find(
+          (entry) => entry.card.state === "proposed" && !("resolvable" in entry.card),
+        );
+        // Still waiting for the agent's result; only the session's end discards it.
+        assert.strictEqual(withdrawn?.status, "waiting");
+        assert.deepStrictEqual(
+          replayed.find((entry) => !("resolvable" in entry.card)),
+          withdrawn,
+        );
+      }),
+  );
+
+  it.live("a click OMP has no preview for: the card leaves the staged list", () =>
+    Effect.gen(function* () {
+      const { outcome, live } = yield* run(OMP_RESOLVE_PROPOSAL_CONTRACT, {
+        fail: "No staged proposal from tool call call-ast-1 is pending.",
+      });
+      if (Result.isFailure(outcome)) assert.strictEqual(outcome.failure.reason, "not_pending");
+      const last = live.at(-1);
+      assert.strictEqual(last?.status, "completed");
+      assert.strictEqual(last?.card.state, "proposed");
+      assert.notProperty(last?.card, "resolvable");
+    }),
+  );
+
+  it.live("on the pinned contract 1.8.0, the card offers nothing and the menu says why", () =>
+    Effect.gen(function* () {
+      const { outcome, live, commands } = yield* run("1.8.0");
+      assert.isTrue(Result.isFailure(outcome));
+      if (Result.isFailure(outcome)) assert.strictEqual(outcome.failure.reason, "needs_newer_omp");
+      assert.notInclude(commands, "resolve_proposal");
+      const staged = live.find((entry) => entry.card.state === "proposed");
+      assert.strictEqual(staged?.status, "completed");
+      assert.notProperty(staged?.card, "resolvable");
+      // Closing the session drops the preview: the card ends discarded, not pending forever.
+      assert.strictEqual(live.at(-1)?.card.state, "discarded");
+    }),
   );
 });

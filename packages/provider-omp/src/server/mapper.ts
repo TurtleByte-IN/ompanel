@@ -11,10 +11,12 @@ import {
   type OrchestrationV2AppThread,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2PlanStep,
+  type OrchestrationV2ProviderExtensionStatus,
   type OrchestrationV2ProviderFailure,
   type OrchestrationV2ProviderRef,
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
+  type OrchestrationV2ProviderThreadNativeMetadata,
   type OrchestrationV2ProviderTurn,
   type OrchestrationV2ProviderTurnTokenUsage,
   type OrchestrationV2TurnItem,
@@ -22,6 +24,7 @@ import {
   type ThreadTokenUsageSnapshot,
   type ToolActivitySource,
   type TurnTokenUsage,
+  type OmpProposalState,
 } from "@t3tools/contracts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -182,8 +185,6 @@ interface ActiveTurn {
   noticeCount: number;
   /** The compaction card while OMP compacts, so its end updates the same item. */
   compaction: { readonly nativeItemId: string; readonly startedAt: DateTime.Utc } | null;
-  /** Staged `ast_edit` proposals, re-emitted once the agent resolves or rejects them. */
-  readonly proposals: Map<string, { readonly startedAt: DateTime.Utc; readonly body: ItemBody }>;
   /** After `agent_end`: the agent loop is done and only background work can wake it again. */
   agentEnded: boolean;
   /** The queue card while OMP holds messages for this turn, so each snapshot updates it. */
@@ -249,6 +250,89 @@ const stringField = (value: unknown, key: string): string | undefined => {
   const field = asRecord(value)?.[key];
   return typeof field === "string" ? field : undefined;
 };
+
+/** Caps on the status strip: OMP forwards whatever an extension asks it to show. */
+const EXTENSION_STATUS_MAX_ENTRIES = 16;
+const EXTENSION_STATUS_MAX_LINES = 10;
+const EXTENSION_STATUS_MAX_LINE_LENGTH = 240;
+const EXTENSION_STATUS_MAX_KEY_LENGTH = 80;
+
+/** `setStatus` / `setWidget`: an extension's keyed status line or widget, set or cleared. */
+export const isOmpExtensionStatusRequest = (frame: { readonly type: string }): boolean => {
+  const method = (frame as Record<string, unknown>)["method"];
+  return (
+    frame.type === "extension_ui_request" && (method === "setStatus" || method === "setWidget")
+  );
+};
+
+/**
+ * Plain lines of status text OMP styled for its TUI: ANSI sequences and control characters
+ * dropped, blank lines at either end trimmed, each line and the count capped.
+ */
+function extensionStatusLines(texts: ReadonlyArray<string>): Array<string> {
+  const lines = texts
+    .flatMap((text) => text.split(/\r?\n/))
+    .map((line) =>
+      OmpAnsi.strip(line)
+        .replaceAll("\t", " ")
+        // oxlint-disable-next-line no-control-regex -- strips control characters.
+        .replace(/[\u0000-\u001f\u007f-\u009f]/g, "")
+        .trimEnd()
+        .slice(0, EXTENSION_STATUS_MAX_LINE_LENGTH),
+    );
+  const first = lines.findIndex((line) => line.trim().length > 0);
+  if (first === -1) return [];
+  const last = lines.findLastIndex((line) => line.trim().length > 0);
+  return lines.slice(first, last + 1).slice(0, EXTENSION_STATUS_MAX_LINES);
+}
+
+/**
+ * The status entries after `frame`: set or replaced by key and kind (keeping the order first
+ * set), removed when the text or lines are absent or blank. `null` when `frame` is no
+ * `setStatus` / `setWidget` request with a key.
+ */
+function ompExtensionStatus(
+  current: ReadonlyArray<OrchestrationV2ProviderExtensionStatus>,
+  frame: { readonly type: string },
+): ReadonlyArray<OrchestrationV2ProviderExtensionStatus> | null {
+  if (!isOmpExtensionStatusRequest(frame)) return null;
+  const f = frame as Record<string, unknown>;
+  const kind = f["method"] === "setStatus" ? "status" : "widget";
+  const key = stringField(f, kind === "status" ? "statusKey" : "widgetKey")
+    ?.trim()
+    .slice(0, EXTENSION_STATUS_MAX_KEY_LENGTH);
+  if (key === undefined || key.length === 0) return null;
+  const widgetLines = f["widgetLines"];
+  const lines = extensionStatusLines(
+    kind === "status"
+      ? [stringField(f, "statusText") ?? ""]
+      : Array.isArray(widgetLines)
+        ? widgetLines.filter((line): line is string => typeof line === "string")
+        : [],
+  );
+  const index = current.findIndex((entry) => entry.key === key && entry.kind === kind);
+  if (lines.length === 0) {
+    return index === -1 ? current : current.filter((_, i) => i !== index);
+  }
+  const placement = kind === "widget" ? f["widgetPlacement"] : undefined;
+  const entry: OrchestrationV2ProviderExtensionStatus = {
+    key,
+    kind,
+    lines,
+    ...(placement === "aboveEditor" || placement === "belowEditor" ? { placement } : {}),
+  };
+  if (index !== -1) return current.map((existing, i) => (i === index ? entry : existing));
+  return current.length >= EXTENSION_STATUS_MAX_ENTRIES ? current : [...current, entry];
+}
+
+/** `metadata` without its extension status entries. */
+function withoutExtensionStatus(
+  metadata: OrchestrationV2ProviderThreadNativeMetadata | null,
+): OrchestrationV2ProviderThreadNativeMetadata | null {
+  if (metadata === null || metadata.extensionStatus === undefined) return metadata;
+  const { extensionStatus: _cleared, ...rest } = metadata;
+  return rest;
+}
 
 const count = (value: unknown): number =>
   typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 0;
@@ -534,6 +618,11 @@ const BACKGROUND_COMMAND = /^\/(?:compact|handoff)(?:[\s:]|$)/;
 export interface OmpThreadMapperOptions {
   readonly instanceId: OrchestrationV2ProviderSession["providerInstanceId"];
   readonly providerSession: OrchestrationV2ProviderSession;
+  /**
+   * The sidecar takes `resolve_proposal` (contract 1.10.0): a staged `ast_edit` card offers
+   * Accept and Reject and stays `waiting` until it is resolved, so its run keeps listening.
+   */
+  readonly proposalsResolvable?: boolean;
 }
 
 export class OmpThreadMapper {
@@ -543,10 +632,75 @@ export class OmpThreadMapper {
   /** OMP's last queue snapshot; the queue belongs to the session and can outlive a turn. */
   #queue: OmpQueueSnapshot = EMPTY_QUEUE;
   readonly #instanceId: OmpThreadMapperOptions["instanceId"];
+  readonly #proposalsResolvable: boolean;
+  /**
+   * Staged `ast_edit` cards by tool call, oldest first, as last emitted: OMP keeps a preview
+   * across turns (and a Stop) until the agent or the user resolves it, or the session ends.
+   */
+  readonly #staged = new Map<string, OrchestrationV2TurnItem>();
 
   constructor(options: OmpThreadMapperOptions) {
     this.#instanceId = options.instanceId;
     this.#session = options.providerSession;
+    this.#proposalsResolvable = options.proposalsResolvable === true;
+  }
+
+  /** Whether tool call `toolCallId` staged a proposal that is still pending here. */
+  isProposalStaged(toolCallId: string): boolean {
+    return this.#staged.has(toolCallId);
+  }
+
+  /**
+   * The user resolved the proposal `toolCallId` staged (`resolve_proposal`), or the agent did:
+   * its card shows the outcome and no longer offers Accept and Reject. `state` "proposed" means
+   * OMP holds no preview for it any more ("No staged proposal"): the card keeps its state.
+   */
+  resolveProposal(toolCallId: string, state: OmpProposalState, now: DateTime.Utc): Array<Event> {
+    const item = this.#staged.get(toolCallId);
+    if (item === undefined) return [];
+    this.#staged.delete(toolCallId);
+    const output = item.type === "dynamic_tool" ? asRecord(item.output) : undefined;
+    const card = readOmpToolCard(output);
+    if (output === undefined || card?.kind !== "proposed_edit") return [];
+    const { resolvable: _offered, ...settled } = card;
+    return [
+      {
+        type: "turn_item.updated",
+        driver: OMP_PROVIDER,
+        turnItem: {
+          ...item,
+          status: "completed",
+          updatedAt: now,
+          completedAt: now,
+          output: { ...output, [OMP_CARD_OUTPUT_KEY]: { ...settled, state } },
+        } as OrchestrationV2TurnItem,
+      },
+    ];
+  }
+
+  /**
+   * A click OMP did not settle (another resolve holds the preview, or no answer came): the card
+   * stops offering Accept and Reject but stays staged, so the agent's result still settles it.
+   */
+  withdrawProposalOffer(toolCallId: string, now: DateTime.Utc): Array<Event> {
+    const item = this.#staged.get(toolCallId);
+    const output = item?.type === "dynamic_tool" ? asRecord(item.output) : undefined;
+    const card = readOmpToolCard(output);
+    if (item === undefined || output === undefined || card?.kind !== "proposed_edit") return [];
+    if (card.resolvable !== true) return [];
+    const { resolvable: _offered, ...rest } = card;
+    const turnItem = {
+      ...item,
+      updatedAt: now,
+      output: { ...output, [OMP_CARD_OUTPUT_KEY]: rest },
+    } as OrchestrationV2TurnItem;
+    this.#staged.set(toolCallId, turnItem);
+    return [{ type: "turn_item.updated", driver: OMP_PROVIDER, turnItem }];
+  }
+
+  /** The session ended (closed, replaced or crashed): OMP dropped every staged preview. */
+  settleProposals(now: DateTime.Utc): Array<Event> {
+    return [...this.#staged.keys()].flatMap((id) => this.resolveProposal(id, "discarded", now));
   }
 
   get providerSession(): OrchestrationV2ProviderSession {
@@ -635,7 +789,8 @@ export class OmpThreadMapper {
 
   /** The bound thread now runs session `sessionId`: a rewind moved it onto a new session file. */
   adoptSession(sessionId: string, now: DateTime.Utc): Array<Event> {
-    return this.#sessionInfo(sessionId, undefined, now);
+    // OMP drops staged previews when it leaves a session (`branch`, `switch_session`).
+    return [...this.settleProposals(now), ...this.#sessionInfo(sessionId, undefined, now)];
   }
 
   /** Binds the app thread to the live OMP session described by `get_state`. */
@@ -649,10 +804,12 @@ export class OmpThreadMapper {
   ): { readonly providerThread: OrchestrationV2ProviderThread; readonly events: Array<Event> } {
     const { state, existing } = input;
     const sessionTitle = state.sessionName?.trim();
+    // A new OMP process starts with no extension status; whatever the last one showed is gone.
+    const carried = withoutExtensionStatus(existing?.nativeMetadata ?? null);
     const nativeMetadata =
       sessionTitle === undefined || sessionTitle.length === 0
-        ? (existing?.nativeMetadata ?? null)
-        : { ...existing?.nativeMetadata, title: sessionTitle };
+        ? carried
+        : { ...carried, title: sessionTitle };
     const contextUsage = this.#contextSnapshot(state.contextUsage, undefined, existing);
     const providerThread: OrchestrationV2ProviderThread =
       existing !== undefined
@@ -718,6 +875,52 @@ export class OmpThreadMapper {
     ];
   }
 
+  /**
+   * An extension set or cleared a status line (`setStatus`) or widget (`setWidget`). Both are
+   * session state, not turn output: the thread's status strip shows them whether or not a turn
+   * runs. A frame that changes nothing emits nothing.
+   */
+  applyExtensionStatus(frame: { readonly type: string }, now: DateTime.Utc): Array<Event> {
+    const thread = this.#thread;
+    if (thread === null) return [];
+    const metadata = thread.providerThread.nativeMetadata ?? null;
+    const current = metadata?.extensionStatus ?? [];
+    const next = ompExtensionStatus(current, frame);
+    if (next === null || JSON.stringify(next) === JSON.stringify(current)) return [];
+    const rest = withoutExtensionStatus(metadata) ?? {};
+    thread.providerThread = {
+      ...thread.providerThread,
+      nativeMetadata: next.length > 0 ? { ...rest, extensionStatus: next } : rest,
+      updatedAt: now,
+    };
+    return [
+      {
+        type: "provider_thread.updated",
+        driver: OMP_PROVIDER,
+        providerThread: thread.providerThread,
+      },
+    ];
+  }
+
+  /** The session ended: its extension status lines and widgets went with it. */
+  clearExtensionStatus(now: DateTime.Utc): Array<Event> {
+    const thread = this.#thread;
+    const metadata = thread?.providerThread.nativeMetadata ?? null;
+    if (thread === null || (metadata?.extensionStatus ?? []).length === 0) return [];
+    thread.providerThread = {
+      ...thread.providerThread,
+      nativeMetadata: withoutExtensionStatus(metadata) ?? {},
+      updatedAt: now,
+    };
+    return [
+      {
+        type: "provider_thread.updated",
+        driver: OMP_PROVIDER,
+        providerThread: thread.providerThread,
+      },
+    ];
+  }
+
   startTurn(input: ProviderAdapter.ProviderAdapterV2TurnInput, now: DateTime.Utc): Array<Event> {
     const thread = this.#thread;
     if (thread === null) throw new Error("OMP turn started before a thread was bound");
@@ -749,7 +952,6 @@ export class OmpThreadMapper {
       promptId: null,
       noticeCount: 0,
       compaction: null,
-      proposals: new Map(),
       agentEnded: false,
       queueCard: null,
       stopping: false,
@@ -1072,8 +1274,12 @@ export class OmpThreadMapper {
             );
           }
         }
-        // `setStatus`, `setWidget` and `setTitle` style OMP's own TUI (footer, widgets, terminal
-        // title); T has no such surface and keeps its own thread title. Dialogs are the adapter's.
+        // Extension status lines and widgets feed the thread's status strip, in or out of a turn
+        // (the adapter routes them to `applyExtensionStatus` before any run buffering).
+        if (isOmpExtensionStatusRequest(frame))
+          events.push(...this.applyExtensionStatus(frame, now));
+        // `setTitle` sets OMP's terminal title; T keeps its own thread title. Dialogs are the
+        // adapter's.
         break;
       case "rpc_frame_error":
         // OMP dropped an event too large for the transport; only the fact is kept.
@@ -1678,35 +1884,53 @@ export class OmpThreadMapper {
     }
 
     const status: TurnItemStatus = completed ? (isError ? "failed" : "completed") : "running";
-    const card = ompToolCard({ toolName: call.toolName, args: call.args, result, isError });
+    let card = ompToolCard({ toolName: call.toolName, args: call.args, result, isError });
+    const proposal = card.type === "dynamic_tool" ? readOmpToolCard(card.output) : null;
+    const staging =
+      completed && proposal?.kind === "proposed_edit" && proposal.state === "proposed";
+    if (staging && this.#proposalsResolvable && card.type === "dynamic_tool") {
+      card = {
+        ...card,
+        // `persistent`: like a monitor, the waiting card neither holds the thread as background
+        // work nor ends with Stop (OMP keeps a preview across a Stop).
+        input: { ...asRecord(card.input), persistent: true },
+        output: {
+          ...asRecord(card.output),
+          [OMP_CARD_OUTPUT_KEY]: { ...proposal, resolvable: true },
+        },
+      };
+    }
+    // A resolvable proposal waits for Accept or Reject: its run keeps listening for the outcome.
+    const itemStatus: TurnItemStatus = staging && this.#proposalsResolvable ? "waiting" : status;
+    const item = this.#item(turn, toolCallId, itemStatus, call.startedAt, now, card);
     const events: Array<Event> = [
       this.#node(turn, toolCallId, "tool_call", status, call.startedAt, completed ? now : null),
-      this.#item(turn, toolCallId, status, call.startedAt, now, card),
+      item,
     ];
-    const proposal = card.type === "dynamic_tool" ? readOmpToolCard(card.output) : null;
-    if (completed && proposal?.kind === "proposed_edit") {
-      if (proposal.state === "proposed") {
-        turn.proposals.set(toolCallId, { startedAt: call.startedAt, body: card });
-      } else if (
-        card.type === "dynamic_tool" &&
-        (card.toolName === "xd://resolve" || card.toolName === "xd://reject")
-      ) {
-        // OMP applies or discards every staged proposal at once; their cards follow.
-        for (const [proposalId, staged] of turn.proposals) {
-          const output = asRecord(staged.body.type === "dynamic_tool" ? staged.body.output : null);
-          const stagedCard = readOmpToolCard(output);
-          if (output === undefined || stagedCard?.kind !== "proposed_edit") continue;
-          events.push(
-            this.#item(turn, proposalId, "completed", staged.startedAt, now, {
-              ...staged.body,
-              output: {
-                ...output,
-                [OMP_CARD_OUTPUT_KEY]: { ...stagedCard, state: proposal.state },
-              },
-            } as ItemBody),
-          );
-        }
-        turn.proposals.clear();
+    if (staging && item.type === "turn_item.updated") {
+      this.#staged.set(toolCallId, item.turnItem);
+    } else if (
+      completed &&
+      card.type === "dynamic_tool" &&
+      (card.toolName === "xd://resolve" || card.toolName === "xd://reject")
+    ) {
+      // OMP names the staging call (contract 1.10.0); older ones resolve the latest preview.
+      const inner = asRecord(
+        asRecord(asRecord(asRecord(result)?.["details"])?.["xdev"])?.["inner"],
+      );
+      const named = inner?.["toolCallId"];
+      const settled = proposal?.kind === "proposed_edit" && proposal.state !== "proposed";
+      // An errored resolve that names its preview still consumed it (a stale apply, a refusal).
+      const target =
+        typeof named === "string" ? named : settled ? [...this.#staged.keys()].at(-1) : undefined;
+      if (target !== undefined) {
+        const state = settled
+          ? proposal.state
+          : (inner?.["action"] ?? (card.toolName === "xd://resolve" ? "apply" : "discard")) ===
+              "apply"
+            ? "applied"
+            : "discarded";
+        events.push(...this.resolveProposal(target, state, now));
       }
     }
     return events;

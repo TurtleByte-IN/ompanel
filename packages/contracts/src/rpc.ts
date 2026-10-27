@@ -104,6 +104,8 @@ import {
   OmpCollabStatus,
   OmpCollabStopResult,
   OmpExportHtmlResult,
+  OmpResolveProposalInput,
+  OmpResolveProposalResult,
   OmpShareGistResult,
   OmpThreadMenuInput,
   OmpThreadMenuOperationError,
@@ -592,6 +594,7 @@ export const WS_METHODS = {
   serverStopOmpThreadCollab: "server.stopOmpThreadCollab",
   serverGetOmpThreadCollab: "server.getOmpThreadCollab",
   serverGetOmpThreadBranchTree: "server.getOmpThreadBranchTree",
+  serverResolveOmpProposal: "server.resolveOmpProposal",
   serverListOmpAgentFiles: "server.listOmpAgentFiles",
   serverReadOmpAgentFile: "server.readOmpAgentFile",
   serverWriteOmpAgentFile: "server.writeOmpAgentFile",
@@ -1105,6 +1108,12 @@ const WsServerGetOmpThreadCollabRpc = Rpc.make(WS_METHODS.serverGetOmpThreadColl
 const WsServerGetOmpThreadBranchTreeRpc = Rpc.make(WS_METHODS.serverGetOmpThreadBranchTree, {
   payload: OmpThreadMenuInput,
   success: OmpBranchTree,
+  error: OmpThreadMenuRpcError,
+});
+
+const WsServerResolveOmpProposalRpc = Rpc.make(WS_METHODS.serverResolveOmpProposal, {
+  payload: OmpResolveProposalInput,
+  success: OmpResolveProposalResult,
   error: OmpThreadMenuRpcError,
 });
 
@@ -2332,6 +2341,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerStopOmpThreadCollabRpc,
   WsServerGetOmpThreadCollabRpc,
   WsServerGetOmpThreadBranchTreeRpc,
+  WsServerResolveOmpProposalRpc,
   WsServerListOmpAgentFilesRpc,
   WsServerReadOmpAgentFileRpc,
   WsServerWriteOmpAgentFileRpc,

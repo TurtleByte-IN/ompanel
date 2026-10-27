@@ -43,6 +43,8 @@ import type {
   OmpCollabStatus,
   OmpCollabStopResult,
   OmpExportHtmlResult,
+  OmpProposalAction,
+  OmpResolveProposalResult,
   OmpShareGistResult,
   OmpThreadMenuOperationError,
   ThreadId,
@@ -164,6 +166,15 @@ export interface ProviderOmpThreadMenuController {
   readonly branchTree: (
     threadId: ThreadId,
   ) => Effect.Effect<OmpBranchTree, OmpThreadMenuOperationError>;
+  /**
+   * RPC `resolve_proposal`: Accept (`apply`) or Reject (`discard`) the `ast_edit` proposal the
+   * tool call staged, in the running session; needs a sidecar with it (contract 1.10.0).
+   */
+  readonly resolveProposal: (input: {
+    readonly threadId: ThreadId;
+    readonly toolCallId: string;
+    readonly action: OmpProposalAction;
+  }) => Effect.Effect<OmpResolveProposalResult, OmpThreadMenuOperationError>;
 }
 
 /**

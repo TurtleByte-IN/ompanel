@@ -1,13 +1,19 @@
 // @effect-diagnostics nodeBuiltinImport:off - an end-to-end test writing artifacts.
 // Composer extras on an OMP thread (PHASES P-05): goal mode through the composer chip and the Goal
 // panel, magic-keyword chips, and the traits menu (boolean traits, role chip, Vibe Mode over
-// `set_vibe_mode`). A real `omp` from the omp.lock tag and the scripted model.
+// `set_vibe_mode`, and a vibe worker in the Agents panel). A real `omp` from the omp.lock tag and
+// the scripted model.
 import * as NodePath from "node:path";
 
 import { expect, test } from "@playwright/test";
 
 import { useOmpSuite } from "./ompSuite.ts";
-import { GOAL_DONE_MARKER, STREAMED_PARAGRAPHS, TOOL_REPLY_PREFIX } from "./scriptedModel.ts";
+import {
+  GOAL_DONE_MARKER,
+  STREAMED_PARAGRAPHS,
+  TOOL_REPLY_PREFIX,
+  VIBE_SPAWN_PREFIX,
+} from "./scriptedModel.ts";
 
 const ARTIFACTS =
   process.env.OMPANEL_E2E_ARTIFACTS_DIR ??
@@ -21,6 +27,18 @@ const OBJECTIVE = "Write the composer extras marker";
 const composer = () => suite.current().page.getByRole("textbox", { name: /^Message / });
 const goalChip = () => suite.current().page.locator("[data-composer-goal-chip]");
 const goalPanel = () => suite.current().page.locator("[data-goal-panel]");
+/** Sets the composer's Vibe Mode trait; the adapter applies it before the next prompt. */
+const setVibeMode = async (vibe: "On" | "Off") => {
+  const { page } = suite.current();
+  await page.locator('[data-composer-shortcut="composer.effort"]').click();
+  await page
+    .getByRole("menu")
+    .getByRole("group")
+    .filter({ has: page.getByText("Vibe Mode", { exact: true }) })
+    .last()
+    .getByRole("menuitemradio", { name: vibe, exact: true })
+    .click();
+};
 
 test("creates an OMP thread; its composer has the goal chip", async () => {
   const { assistantSays, createOmpThread, screenshot, sendAndSettle } = suite.current();
@@ -132,18 +150,11 @@ test("shows OMP's boolean traits, Vibe Mode and the role chip", async () => {
 });
 
 test("Vibe Mode gives the agent OMP's worker tools, and turning it off takes them away", async () => {
-  const { page, screenshot, sendAndSettle, stack } = suite.current();
+  const { screenshot, sendAndSettle, stack } = suite.current();
   // The adapter sends `set_vibe_mode` before the next prompt; the tools OMP then offers the model
   // show the mode it runs in: vibe mode keeps `read` and adds the `vibe_*` tools.
   const turnTools = async (vibe: "On" | "Off", text: string) => {
-    await page.locator('[data-composer-shortcut="composer.effort"]').click();
-    await page
-      .getByRole("menu")
-      .getByRole("group")
-      .filter({ has: page.getByText("Vibe Mode", { exact: true }) })
-      .last()
-      .getByRole("menuitemradio", { name: vibe, exact: true })
-      .click();
+    await setVibeMode(vibe);
     const before = stack.model.calls.length;
     await sendAndSettle(text);
     return stack.model.calls.slice(before).find((entry) => entry.lastRole === "user")?.tools;
@@ -157,4 +168,33 @@ test("Vibe Mode gives the agent OMP's worker tools, and turning it off takes the
   const tools = await turnTools("Off", "hello after vibe mode");
   expect(tools).toContain("terminal");
   expect(tools).not.toContain("vibe_spawn");
+});
+
+test("a Vibe Mode worker is a row in the Agents panel, not a new thread", async () => {
+  const { page, screenshot, sendAndSettle, stack } = suite.current();
+  const threads = page.locator("[data-thread-item]");
+  const threadCount = await threads.count();
+  await setVibeMode("On");
+  await sendAndSettle(`${VIBE_SPAWN_PREFIX}vibe-alpha`);
+  // The worker runs in the background: its own model call carries the brief the agent sent.
+  await expect
+    .poll(() => stack.model.calls.some((call) => call.lastText.includes("vibe-alpha-done")))
+    .toBe(true);
+
+  // OMP runs the worker as a subagent whose frames name the `vibe_spawn` call; Ompanel lists it in
+  // the Agents panel under that call (docs/omp/subagents.md#vibe-workers).
+  await page.getByRole("button", { name: "Toggle agents panel" }).click();
+  const worker = page
+    .getByRole("navigation", { name: "Agents" })
+    .getByRole("button", { name: /^vibe-alpha: Vibe good worker, / });
+  await expect(worker).toBeVisible();
+  await screenshot("z05-vibe-worker");
+  await worker.click();
+  await expect(
+    page.getByRole("region", { name: "vibe-alpha: Vibe good worker details" }),
+  ).toContainText("Reply with vibe-alpha-done.");
+  await screenshot("z05-vibe-worker-details");
+  // The worker is not a delegated child thread: the sidebar holds as many threads as before.
+  await expect(threads).toHaveCount(threadCount);
+  await page.getByRole("button", { name: "Toggle agents panel" }).click();
 });

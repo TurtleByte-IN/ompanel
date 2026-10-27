@@ -1,17 +1,55 @@
 // Cards for OMP tool calls (packages/provider-omp/src/server/ompCards.ts). Images arrive as the
 // item's own tool-output images and audio as a local media file; nothing is fetched remotely.
-import type { EnvironmentId, OmpToolCard as OmpToolCardModel, ThreadId } from "@t3tools/contracts";
-import type { ReactNode } from "react";
+import type {
+  EnvironmentId,
+  OmpProposalAction,
+  OmpToolCard as OmpToolCardModel,
+  ThreadId,
+} from "@t3tools/contracts";
+import { useState, type ReactNode } from "react";
 
 import { useAssetUrlState } from "../../assets/assetUrls";
 import { cn } from "../../lib/utils";
 import { AudioPreview } from "../files/AudioPreview";
+import { Button } from "../ui/button";
 
 const PROPOSAL_LABEL = {
   proposed: "Proposed: files not modified yet. The agent applies or discards it.",
   applied: "Applied",
   discarded: "Discarded",
 } as const;
+
+/** A staged proposal the user can resolve from the card (OMP sidecar with `resolve_proposal`). */
+const RESOLVABLE_LABEL = "Proposed: files not modified yet. Accept or reject it.";
+
+/**
+ * Accept and Reject on a staged edit. Both stay disabled while one is on its way; the card's
+ * state then comes from the thread, whoever resolved the proposal first.
+ */
+function ProposalActions(props: {
+  readonly onResolve: (action: OmpProposalAction) => Promise<void>;
+}) {
+  const [pending, setPending] = useState<OmpProposalAction | null>(null);
+  const resolve = (action: OmpProposalAction) => {
+    setPending(action);
+    void props.onResolve(action).finally(() => setPending(null));
+  };
+  return (
+    <div className="flex gap-2">
+      <Button size="compact" disabled={pending !== null} onClick={() => resolve("apply")}>
+        {pending === "apply" ? "Accepting…" : "Accept"}
+      </Button>
+      <Button
+        size="compact"
+        variant="outline"
+        disabled={pending !== null}
+        onClick={() => resolve("discard")}
+      >
+        {pending === "discard" ? "Rejecting…" : "Reject"}
+      </Button>
+    </div>
+  );
+}
 
 function Section(props: { readonly label: string; readonly children: ReactNode }) {
   return (
@@ -56,6 +94,8 @@ export function OmpToolCard(props: {
   readonly threadId: ThreadId;
   /** The item's inline images (eval cells, generated pictures). */
   readonly images?: ReactNode;
+  /** Resolves this card's staged proposal; absent where the card is read-only. */
+  readonly onResolveProposal?: (action: OmpProposalAction) => Promise<void>;
 }) {
   const { card } = props;
   const body = (() => {
@@ -80,7 +120,11 @@ export function OmpToolCard(props: {
             ))}
           </ul>
         );
-      case "proposed_edit":
+      case "proposed_edit": {
+        const resolvable =
+          card.state === "proposed" &&
+          card.resolvable === true &&
+          props.onResolveProposal !== undefined;
         return (
           <>
             <div
@@ -93,7 +137,8 @@ export function OmpToolCard(props: {
                     : "text-success",
               )}
             >
-              {PROPOSAL_LABEL[card.state]} · {card.replacements} replacement
+              {resolvable ? RESOLVABLE_LABEL : PROPOSAL_LABEL[card.state]} · {card.replacements}{" "}
+              replacement
               {card.replacements === 1 ? "" : "s"}
             </div>
             {card.files.length > 0 ? (
@@ -109,8 +154,12 @@ export function OmpToolCard(props: {
               <div className="text-muted-foreground">Reason: {card.reason}</div>
             ) : null}
             <Pre text={card.diff} />
+            {resolvable && props.onResolveProposal !== undefined ? (
+              <ProposalActions onResolve={props.onResolveProposal} />
+            ) : null}
           </>
         );
+      }
       case "conflict_resolution":
         return (
           <div>

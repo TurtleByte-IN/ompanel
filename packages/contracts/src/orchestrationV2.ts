@@ -939,6 +939,19 @@ export const OrchestrationV2PendingBackgroundTask = kindUnionWithFallback(
 );
 export type OrchestrationV2PendingBackgroundTask = typeof OrchestrationV2PendingBackgroundTask.Type;
 
+/**
+ * One status line (`kind: "status"`) or widget (`kind: "widget"`) an agent extension shows,
+ * keyed by the extension's own key. `placement` is where the extension asked for a widget.
+ */
+export const OrchestrationV2ProviderExtensionStatus = Schema.Struct({
+  key: Schema.String,
+  kind: Schema.Literals(["status", "widget"]),
+  lines: Schema.Array(Schema.String),
+  placement: Schema.optional(Schema.Literals(["aboveEditor", "belowEditor"])),
+});
+export type OrchestrationV2ProviderExtensionStatus =
+  typeof OrchestrationV2ProviderExtensionStatus.Type;
+
 export const OrchestrationV2ProviderThreadNativeMetadata = Schema.Struct({
   modelSelection: Schema.optional(ModelSelection),
   title: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
@@ -948,6 +961,11 @@ export const OrchestrationV2ProviderThreadNativeMetadata = Schema.Struct({
   claudeAttachmentBudget: Schema.optional(
     Schema.Struct({ bytesUsed: NonNegativeInt, pagesUsed: NonNegativeInt }),
   ),
+  /**
+   * Extension status lines and widgets the live provider session shows, keyed by the
+   * extension's key, in the order first set (OMP `setStatus` / `setWidget`).
+   */
+  extensionStatus: Schema.optional(Schema.Array(OrchestrationV2ProviderExtensionStatus)),
 });
 export type OrchestrationV2ProviderThreadNativeMetadata =
   typeof OrchestrationV2ProviderThreadNativeMetadata.Type;

@@ -1,7 +1,20 @@
 import { AudioPreview } from "../files/AudioPreview";
 import { onTestFinished } from "vite-plus/test";
 import { stubGlobal } from "../../../test/render";
-import { EnvironmentId, MessageId, RunId, ScheduledTaskId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  MessageId,
+  NodeId,
+  type OrchestrationV2ProjectedTurnItem,
+  ProviderDriverKind,
+  ProviderThreadId,
+  ProviderTurnId,
+  RunId,
+  ScheduledTaskId,
+  ThreadId,
+  TurnItemId,
+} from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import type { LegendListRef } from "@legendapp/list/react";
 import { createRef, Profiler, type ComponentProps, type ReactElement } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -619,4 +632,182 @@ it("renders automatic compaction as one live divider that finishes with its reas
     .toBeVisible();
   expect(container.querySelectorAll('[role="separator"]')).toHaveLength(1);
   expect(container.textContent).not.toContain("Compacting before");
+});
+
+// FR-18f: OmpThreadMapper's `#compactionEvent` turns `auto_compaction_*` and
+// `manual_compaction_*` frames into one `compaction` item per run. These items copy its output
+// (mapperCards.test.ts "compaction: auto and manual runs share one card from start to end").
+describe("OMP compaction", () => {
+  const OMP_RUN = RunId.make("run:omp:1");
+  const OMP_THREAD = ThreadId.make("thread:omp");
+  const ompTime = (second: number) =>
+    DateTime.makeUnsafe(Date.parse("2026-10-26T10:00:00.000Z") + second * 1000);
+  const ompPrompt = (text: string): OrchestrationV2ProjectedTurnItem => {
+    const id = TurnItemId.make("turn-item:omp:user");
+    return {
+      position: 0,
+      visibility: "local",
+      sourceThreadId: OMP_THREAD,
+      sourceItemId: id,
+      item: {
+        id,
+        threadId: OMP_THREAD,
+        runId: OMP_RUN,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 100,
+        status: "completed",
+        title: null,
+        startedAt: ompTime(0),
+        completedAt: ompTime(0),
+        updatedAt: ompTime(0),
+        type: "user_message",
+        messageId: MessageId.make("message:omp:1"),
+        text,
+        attachments: [],
+        inputIntent: "turn_start",
+        createdBy: "user",
+        creationSource: "web",
+      },
+    };
+  };
+  // The mapper's card for the `card`-th compaction of the turn, as of `second`.
+  const ompCompaction = (
+    card: number,
+    second: number,
+    end: {
+      status: "interrupted" | "failed" | "completed";
+      summary?: string;
+      before?: number;
+    } | null,
+  ): OrchestrationV2ProjectedTurnItem => {
+    const nativeId = `compaction:provider-turn:provider:omp:native-turn:provider-thread%3Aprovider%3Aomp%3Anative-thread%3As%3Aattempt%3Arun-attempt%3Aomp%3A1:${card}`;
+    const encoded = encodeURIComponent(nativeId);
+    const id = TurnItemId.make(`turn-item:provider:omp:native-item:${encoded}`);
+    return {
+      position: card,
+      visibility: "local",
+      sourceThreadId: OMP_THREAD,
+      sourceItemId: id,
+      item: {
+        id,
+        threadId: OMP_THREAD,
+        runId: OMP_RUN,
+        nodeId: NodeId.make(`node:provider:omp:native-item:${encoded}`),
+        providerThreadId: ProviderThreadId.make("provider-thread:provider:omp:native-thread:s"),
+        providerTurnId: ProviderTurnId.make(
+          "provider-turn:provider:omp:native-turn:provider-thread%3Aprovider%3Aomp%3Anative-thread%3As%3Aattempt%3Arun-attempt%3Aomp%3A1",
+        ),
+        nativeItemRef: { driver: ProviderDriverKind.make("omp"), nativeId, strength: "strong" },
+        parentItemId: null,
+        ordinal: 100 + card,
+        startedAt: ompTime(second),
+        updatedAt: ompTime(end === null ? second : second + 1),
+        status: end?.status ?? "running",
+        completedAt: end === null ? null : ompTime(second + 1),
+        title: null,
+        type: "compaction",
+        driver: ProviderDriverKind.make("omp"),
+        ...(end?.summary === undefined ? {} : { summary: end.summary }),
+        ...(end?.before === undefined ? {} : { beforeTokenCount: end.before }),
+      },
+    };
+  };
+  const ompTimeline = (
+    props: Omit<TimelineProps, "timelineEntries">,
+    items: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
+    running: boolean,
+  ) => (
+    <MessagesTimeline
+      {...props}
+      timelineEntries={deriveTimelineEntriesFromVisibleTurnItems({
+        visibleTurnItems: items,
+        optimisticMessages: [],
+      })}
+      isWorking={running}
+      isCompacting={running}
+      activeTurnInProgress={running}
+      activeTurnStartedAt={DateTime.formatIso(ompTime(0))}
+      latestRun={{
+        runId: OMP_RUN,
+        status: running ? "running" : "completed",
+        startedAt: DateTime.formatIso(ompTime(0)),
+        completedAt: running ? null : DateTime.formatIso(ompTime(9)),
+      }}
+    />
+  );
+  const separators = (container: HTMLElement) =>
+    [...container.querySelectorAll('[role="separator"]')].map((node) =>
+      node.getAttribute("aria-label"),
+    );
+
+  it("runs an automatic compaction as one divider from start to end", async () => {
+    setup();
+    const props = baseProps();
+    const prompt = ompPrompt("Summarize the repository");
+    await using screen = await renderElement(
+      ompTimeline(props, [prompt, ompCompaction(1, 1, null)], true),
+    );
+    await expect
+      .element(screen.getByRole("separator", { name: "Compacting context" }))
+      .toBeVisible();
+    expect(screen.text()).toContain("Summarize the repository");
+    await screen.rerender(
+      ompTimeline(
+        props,
+        [
+          prompt,
+          ompCompaction(1, 1, { status: "completed", summary: "Compacted", before: 90_000 }),
+        ],
+        false,
+      ),
+    );
+    await expect
+      .element(screen.getByRole("separator", { name: "Context compacted" }))
+      .toBeVisible();
+    expect(separators(screen.container)).toEqual(["Context compacted"]);
+  });
+
+  it("runs a manual /compact as one divider that ends stopped or failed", async () => {
+    setup();
+    const props = baseProps();
+    const prompt = ompPrompt("/compact");
+    await using screen = await renderElement(
+      ompTimeline(props, [prompt, ompCompaction(2, 3, null)], true),
+    );
+    await expect
+      .element(screen.getByRole("separator", { name: "Compacting context" }))
+      .toBeVisible();
+    expect(screen.text()).not.toContain("/compact");
+    await screen.rerender(
+      ompTimeline(props, [prompt, ompCompaction(2, 3, { status: "interrupted" })], false),
+    );
+    await expect
+      .element(screen.getByRole("separator", { name: "Context compaction stopped" }))
+      .toBeVisible();
+    expect(separators(screen.container)).toEqual(["Context compaction stopped"]);
+    await screen.rerender(
+      ompTimeline(
+        props,
+        [
+          prompt,
+          ompCompaction(3, 5, { status: "failed", summary: "Compaction model unavailable" }),
+        ],
+        false,
+      ),
+    );
+    await expect
+      .element(
+        screen.getByRole("separator", {
+          name: "Context compaction failed: Compaction model unavailable",
+        }),
+      )
+      .toBeVisible();
+    expect(separators(screen.container)).toEqual([
+      "Context compaction failed: Compaction model unavailable",
+    ]);
+  });
 });
