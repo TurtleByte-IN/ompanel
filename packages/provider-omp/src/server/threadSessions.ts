@@ -47,6 +47,23 @@ export interface OmpThreadSessions {
   ) => Effect.Effect<void>;
 }
 
+/** Every OMP instance's running threads, by instance id: owned by the process, not the instance. */
+const INSTANCE_THREAD_SESSIONS = new Map<string, OmpThreadSessions>();
+
+/**
+ * The running threads of OMP instance `instanceId`. A settings change rebuilds the provider
+ * instance while its threads keep running in the old adapter's scope, so the registry outlives
+ * any one build: the rebuilt instance's settings engine still finds and marks those threads.
+ * Each session leaves the registry when its own scope closes.
+ */
+export const ompInstanceThreadSessions = (instanceId: string): OmpThreadSessions => {
+  const existing = INSTANCE_THREAD_SESSIONS.get(instanceId);
+  if (existing !== undefined) return existing;
+  const created = makeOmpThreadSessions();
+  INSTANCE_THREAD_SESSIONS.set(instanceId, created);
+  return created;
+};
+
 export const makeOmpThreadSessions = (): OmpThreadSessions => {
   const sessions = new Map<string, OmpThreadSession>();
   // Cleared with the session: its replacement starts with the current settings.

@@ -43,7 +43,7 @@ import { resolveOmpInstanceLaunch } from "./launch.ts";
 import { ompStateDirs } from "./session.ts";
 import { makeOmpSettingsController } from "./settingsController.ts";
 import { makeOmpSettingsEngine } from "./settingsEngine.ts";
-import { makeOmpThreadSessions, makeOmpThreadSettingsHost } from "./threadSessions.ts";
+import { makeOmpThreadSettingsHost, ompInstanceThreadSessions } from "./threadSessions.ts";
 import { OMP_BUNDLED_SIDECAR_ENV, OmpSidecarError } from "./sidecar.ts";
 import { makeOmpSidecarProvisioner } from "./sidecarInstall.ts";
 import {
@@ -241,8 +241,9 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv, OmpUsageReader
       ),
       Effect.forkDetach,
     );
-    // Running threads, shared by the adapter (which registers them) and the settings engine.
-    const threadSessions = makeOmpThreadSessions();
+    // Running threads, shared by the adapter (which registers them) and the settings engine; they
+    // outlive a rebuild of this instance, so the registry is the instance id's, not this build's.
+    const threadSessions = ompInstanceThreadSessions(instanceId);
     // Threads map 1:1 to OMP's own session files, so terminal and Ompanel share them.
     const sessionsLocation = yield* resolveOmpSessionsLocation({
       environment: processEnv,
