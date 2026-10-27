@@ -275,7 +275,6 @@ function extensionStatusLines(texts: ReadonlyArray<string>): Array<string> {
     .map((line) =>
       OmpAnsi.strip(line)
         .replaceAll("\t", " ")
-        // oxlint-disable-next-line no-control-regex -- strips control characters.
         .replace(/[\u0000-\u001f\u007f-\u009f]/g, "")
         .trimEnd()
         .slice(0, EXTENSION_STATUS_MAX_LINE_LENGTH),

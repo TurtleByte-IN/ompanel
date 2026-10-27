@@ -438,6 +438,7 @@ describe("OmpControlService deadlines", () => {
     {
       budget: "login",
       behaviour: { rpc: { rpc: () => [] } },
+      // @effect-diagnostics-next-line effectSucceedWithVoid:off - A UI response is undefined, not void.
       run: (c) => c.login(TARGET, "anthropic", () => Effect.succeed(undefined)),
     },
     { budget: "config", behaviour: { config: "hang" }, run: (c) => c.configList(TARGET) },
@@ -710,6 +711,7 @@ describe("OmpControlService.login", () => {
         },
       });
       const error = yield* withControl(omp, (control) =>
+        // @effect-diagnostics-next-line effectSucceedWithVoid:off - A UI response is undefined, not void.
         control.login(TARGET, "nope", () => Effect.succeed(undefined)).pipe(Effect.flip),
       );
       assert.strictEqual(error.reason, "rejected");
@@ -769,6 +771,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       { budget: "usage", run: (c, t) => c.usage(t) },
       { budget: "stats", run: (c, t) => c.stats(t) },
       { budget: "ready", run: (c, t) => c.loginProviders(t) },
+      // @effect-diagnostics-next-line effectSucceedWithVoid:off - A UI response is undefined, not void.
       { budget: "login", run: (c, t) => c.login(t, "anthropic", () => Effect.succeed(undefined)) },
     ];
 

@@ -210,9 +210,9 @@ const runSession = (input: {
         host_cwd_change_result: [],
       },
     });
-    const mcpSessions = yield* Effect.gen(function* () {
-      return yield* McpProviderSessions.McpProviderSessions;
-    }).pipe(Effect.provide(McpProviderSessions.layer));
+    const mcpSessions = yield* McpProviderSessions.McpProviderSessions.pipe(
+      Effect.provide(McpProviderSessions.layer),
+    );
     const issueMcpCredential = mcpSessions.set({
       environmentId: EnvironmentId.make("env-local"),
       threadId: THREAD_ID,

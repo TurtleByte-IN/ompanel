@@ -120,7 +120,6 @@ const preview = (text: string | null): string | null => {
     .map((part) => part.trim())
     .find((part) => part !== "");
   if (line === undefined) return null;
-  // oxlint-disable-next-line no-control-regex -- titles must not carry terminal controls
   const clean = line.replace(/[\u0000-\u001F\u007F-\u009F]/g, "");
   return clean.length > PREVIEW_CHARS ? `${clean.slice(0, PREVIEW_CHARS - 1)}…` : clean;
 };

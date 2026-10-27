@@ -2558,28 +2558,27 @@ export const stageOmpSidecar = Effect.fn("stageOmpSidecar")(function* (input: {
               new OmpSidecarBundleError({ sidecarPlatform: target, detail: cause.message, cause }),
           ),
         ),
-      onSome: (sourceDir) =>
-        Effect.gen(function* () {
-          const candidate = path.join(sourceDir, pinned.asset);
-          const bytes = yield* fs.readFile(candidate).pipe(
-            Effect.mapError(
-              (cause) =>
-                new OmpSidecarBundleError({
-                  sidecarPlatform: target,
-                  detail: `cannot read ${candidate}.`,
-                  cause,
-                }),
-            ),
-          );
-          const digest = NodeCrypto.createHash("sha256").update(bytes).digest("hex");
-          if (digest !== pinned.sha256.toLowerCase()) {
-            return yield* new OmpSidecarBundleError({
-              sidecarPlatform: target,
-              detail: `${candidate} has sha256 ${digest}; omp.lock pins ${pinned.sha256}.`,
-            });
-          }
-          return candidate;
-        }),
+      onSome: Effect.fn("stageOmpSidecar.readPinnedSource")(function* (sourceDir: string) {
+        const candidate = path.join(sourceDir, pinned.asset);
+        const bytes = yield* fs.readFile(candidate).pipe(
+          Effect.mapError(
+            (cause) =>
+              new OmpSidecarBundleError({
+                sidecarPlatform: target,
+                detail: `cannot read ${candidate}.`,
+                cause,
+              }),
+          ),
+        );
+        const digest = NodeCrypto.createHash("sha256").update(bytes).digest("hex");
+        if (digest !== pinned.sha256.toLowerCase()) {
+          return yield* new OmpSidecarBundleError({
+            sidecarPlatform: target,
+            detail: `${candidate} has sha256 ${digest}; omp.lock pins ${pinned.sha256}.`,
+          });
+        }
+        return candidate;
+      }),
     });
     const destination = path.join(
       destinationRoot,

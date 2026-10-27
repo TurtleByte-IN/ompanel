@@ -19,7 +19,10 @@ import {
   isProviderNativeImageAttachment,
   providerMessageTextWithAttachmentPaths,
 } from "@t3tools/provider-core/server/attachmentPrompt";
-import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
+import {
+  type ProviderSelectionTransitionInput,
+  turnScopedSelectionTransition,
+} from "@t3tools/provider-core/server/selectionTransition";
 import type * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -284,6 +287,10 @@ export interface OmpAdapterOptions {
   readonly commands?: OmpCommandHooks;
   /** Where T3 saved a message's attachment; absent, attachments are named but not sent. */
   readonly resolveAttachmentPath?: (attachment: ChatAttachment) => string | null;
+  /** The text the host extracted from a saved document, named in the prompt next to it. */
+  readonly resolveExtractedTextPath?:
+    | ((path: string) => Effect.Effect<string | undefined>)
+    | undefined;
 }
 
 const protocolError = (detail: string, reason?: ProviderAdapter.ProviderAdapterFailureReason) =>
@@ -485,7 +492,10 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       cwd,
       hostTools,
       readMcpSession:
-        mcpSessions === undefined ? Effect.succeed(undefined) : mcpSessions.read(input.threadId),
+        mcpSessions === undefined
+          ? // @effect-diagnostics-next-line effectSucceedWithVoid:off - A missing MCP session is undefined, not void.
+            Effect.succeed(undefined)
+          : mcpSessions.read(input.threadId),
     });
     const now = yield* DateTime.now;
     const mapper = new OmpJournaledMapper(
@@ -789,9 +799,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
         detail: null,
         // A user turn may have taken the run meanwhile; then nothing is left to continue.
         dispatchIfCurrent: (dispatch) =>
-          wake === current && detached.pending
-            ? Effect.map(dispatch, Option.some)
-            : Effect.succeed(Option.none()),
+          wake === current && detached.pending ? Effect.asSome(dispatch) : Effect.succeedNone,
         clearIfCurrent: () =>
           Effect.sync(() => {
             if (wake === current) wake = null;
@@ -1309,10 +1317,11 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
           mimeType: attachment.mimeType,
         });
       }
-      const message = providerMessageTextWithAttachmentPaths({
+      const message = yield* providerMessageTextWithAttachmentPaths({
         text,
         attachments,
         resolveAttachmentPath: resolvePath,
+        resolveExtractedTextPath: options.resolveExtractedTextPath,
       });
       return images.length === 0 ? { message } : { message, images };
     });
@@ -2222,17 +2231,22 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: options.instanceId,
     driver: OMP_PROVIDER,
-    getCapabilities: () => Effect.succeed(OMP_PROVIDER_CAPABILITIES),
+    getCapabilities: Effect.fn("OmpAdapter.getCapabilities")(function () {
+      return Effect.succeed(OMP_PROVIDER_CAPABILITIES);
+    }),
     // A session that must restart for changed settings is restarted on the selection change.
     // The role chip is read only at startup (openSession writes it to the overlay first).
-    planSelectionTransition: (input) =>
-      Effect.succeed(
+    planSelectionTransition: Effect.fn("OmpAdapter.planSelectionTransition")(function (
+      input: ProviderSelectionTransitionInput,
+    ) {
+      return Effect.succeed(
         input.providerSessionId !== undefined &&
           (options.threadSessions.restartRequired(input.providerSessionId).length > 0 ||
             readOmpTraitSelection(input.current).role !== readOmpTraitSelection(input.target).role)
           ? ({ type: "restart_session" } as const)
           : turnScopedSelectionTransition(),
-      ),
+      );
+    }),
     openSession,
   });
 });

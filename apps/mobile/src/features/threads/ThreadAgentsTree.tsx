@@ -165,6 +165,7 @@ function Transcript(props: {
       {view.entries.map((entry, index) => (
         <View
           // Entries only append (or reset wholesale), so their position is stable.
+          // oxlint-disable-next-line react/no-array-index-key
           key={index}
           className={cn(
             "gap-0.5 rounded-lg px-2.5 py-1.5",

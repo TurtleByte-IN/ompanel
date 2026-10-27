@@ -1,6 +1,5 @@
 // CSI (`ESC [ … final`), OSC (`ESC ] … BEL|ST`), and two-byte escapes; C1 CSI (0x9b) too.
 const ANSI_PATTERN =
-  // oxlint-disable-next-line no-control-regex -- terminal escapes are control characters.
   /\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)|[\u001b\u009b][[()#;?]*(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]|\u001b[@-Z\\-_]/g;
 
 /** Terminal escape handling for text read from an `omp` process. */

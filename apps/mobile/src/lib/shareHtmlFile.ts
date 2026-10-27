@@ -4,7 +4,6 @@ const HTML_EXPORT_DIRECTORY = "html-exports";
 
 /** A file name safe to write: path separators and control characters become dashes. */
 function safeFileName(fileName: string): string {
-  // oxlint-disable-next-line no-control-regex -- control characters are what this strips.
   const cleaned = fileName.replace(/[/\\:\u0000-\u001f]/g, "-").trim();
   return cleaned === "" ? "export.html" : cleaned;
 }

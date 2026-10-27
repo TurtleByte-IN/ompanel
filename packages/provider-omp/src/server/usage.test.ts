@@ -119,6 +119,8 @@ describe("ompUsageFormat", () => {
   });
 });
 
+const decodeOmpSettings = Schema.decodeSync(OmpSettings);
+
 describe("ompUsageReader", () => {
   const directories = (
     config: { readonly profile?: string; readonly agentDir?: string },
@@ -128,7 +130,7 @@ describe("ompUsageReader", () => {
     return ompUsageReader
       .directories({
         instanceId: ProviderInstanceId.make("omp"),
-        config: Schema.decodeSync(OmpSettings)(config),
+        config: decodeOmpSettings(config),
         environment,
         configured: true,
       })

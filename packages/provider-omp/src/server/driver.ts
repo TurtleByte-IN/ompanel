@@ -269,6 +269,7 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv, OmpUsageReader
       sessions: sessionsLocation,
       commands: catalog,
       resolveAttachmentPath: host.resolveAttachmentPath,
+      resolveExtractedTextPath: host.resolveExtractedTextPath,
     });
     // Text generation runs in its own empty directory, never the checkout or `launcher`.
     const textGenerationCwd = path.join(stateDirs.launcher, "text-generation");
