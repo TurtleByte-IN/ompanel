@@ -2,14 +2,14 @@
 
 Six layers, from fastest to most faithful.
 
-| Layer           | Where                                                                                                                      | Drives                                                           |
-| --------------- | -------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| Unit            | `packages/provider-omp/src/**/*.test.ts`                                                                                   | Pure functions: launch arguments, approval-mode mapping, frames  |
-| Adapter         | `packages/provider-omp/src/server/adapter.test.ts` (and the process-layer tests next to it)                                | The adapter and thread process against the scripted fake `omp`   |
-| Control plane   | `packages/provider-omp/src/server/controlBinary.test.ts`                                                                   | `OmpControlService` against the scripted control fake `omp`      |
-| Replay fixtures | `apps/server/src/orchestration-v2/testkit/OmpReplayFixtures.integration.test.ts`, fixtures in `testkit/fixtures/omp_*`     | The process layer against stdout recorded from the pinned fork   |
-| End-to-end      | `apps/web/e2e/omp/omp-thread.spec.ts`, `omp-settings.spec.ts`, `omp-onboarding.spec.ts`, `omp-notify.spec.ts` (Playwright) | The web app and server against a real `omp` and a scripted model |
-| Live            | `apps/web/e2e/omp/omp-live.spec.ts` (Playwright, `OMPANEL_LIVE=1`)                                                         | The web app and server against a real `omp` and a real model     |
+| Layer           | Where                                                                                                                                                | Drives                                                           |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| Unit            | `packages/provider-omp/src/**/*.test.ts`                                                                                                             | Pure functions: launch arguments, approval-mode mapping, frames  |
+| Adapter         | `packages/provider-omp/src/server/adapter.test.ts` (and the process-layer tests next to it)                                                          | The adapter and thread process against the scripted fake `omp`   |
+| Control plane   | `packages/provider-omp/src/server/controlBinary.test.ts`                                                                                             | `OmpControlService` against the scripted control fake `omp`      |
+| Replay fixtures | `apps/server/src/orchestration-v2/testkit/OmpReplayFixtures.integration.test.ts`, fixtures in `testkit/fixtures/omp_*`                               | The process layer against stdout recorded from the pinned fork   |
+| End-to-end      | `apps/web/e2e/omp/omp-thread.spec.ts`, `omp-settings.spec.ts`, `omp-onboarding.spec.ts`, `omp-notify.spec.ts`, `omp-host-tools.spec.ts` (Playwright) | The web app and server against a real `omp` and a scripted model |
+| Live            | `apps/web/e2e/omp/omp-live.spec.ts` (Playwright, `OMPANEL_LIVE=1`)                                                                                   | The web app and server against a real `omp` and a real model     |
 
 The first four run in CI with the rest of the suite; none needs a model, an
 account or a built `omp`. The end-to-end test has its own CI job, `OMP E2E`,
@@ -180,6 +180,41 @@ another commit. For each scenario it:
    the process layer, and only then writes the fixture. A failed live run
    leaves what it saw in `$TMPDIR/omp-record-<name>.failed.ndjson`.
 
+## RPC wire contract
+
+`packages/provider-omp/src/contract.test.ts` validates frames against the vendored
+`packages/provider-omp/contract/rpc-wire.schema.json` with Ajv (2020-12, strict): every
+`emit_inbound`/`expect_outbound` frame in
+`apps/server/src/orchestration-v2/testkit/fixtures/omp_*/omp_transcript.ndjson`, the `fakeOmpFrames`
+builders, and what `fakeOmp.fixture.mjs` writes (handshake, `get_state`, collab, unsupported, a
+scripted turn, `rpc_chunk` reassembled, the session-store answers). Host commands are checked against
+their `params`, OMP frames against `RpcServerFrame`, and successful response `data` against the
+command's `result` (absent `data` is allowed, as `RpcResponse` declares). An unknown frame `type`,
+malformed frames and mismatched response data are rejected. The schema closes no object, so
+undeclared properties pass until a pin closes one; a re-pin whose recorded frames stop conforming
+fails here.
+
+```sh
+cd packages/provider-omp && pnpm exec vp test run --config ../../vite.config.ts --dir . src/contract.test.ts
+```
+
+## Component checks
+
+- Share gist: `apps/web/src/components/chat/OmpShareGistDialog.browser.test.tsx` ("uploads only
+  after the confirm, then shows the share link and its gist"; "shows the trim note when OMP trimmed
+  large content"; "shows the refusal when gh is missing, with no link, and lets the user retry";
+  "Cancel closes the dialog without uploading"). Server side:
+  `threadMenuController.test.ts` › "refuses Share gist before anything uploads unless gh is signed in".
+- OMP instance Profile field:
+  `apps/web/src/components/settings/ProviderSettingsForm.omp.browser.test.tsx` shows Profile after
+  Binary path (placeholder "default"), stores a valid name and omits it when cleared; invalid names
+  ("Work Space", "../work", "-work", "con") fail `OmpSettings`, the schema the server decodes instance
+  config with (`settings.test.ts` › "OmpSettings.profile").
+
+```sh
+cd apps/web && pnpm exec vp test run --project browser src/components/chat/OmpShareGistDialog.browser.test.tsx src/components/settings/ProviderSettingsForm.omp.browser.test.tsx
+```
+
 ## End-to-end
 
 `apps/web/e2e/omp/omp-thread.spec.ts` is gate G1: one OMP thread through the
@@ -275,6 +310,33 @@ agent-activity publish and 404s every other route. Its steps:
 3. turn Agent messages off; the next notify still reaches the relay (phones
    decide per device) but shows no toast.
 
+`apps/web/e2e/omp/omp-host-tools.spec.ts` covers T3's MCP tools in an OMP
+thread ([host-tools.md](host-tools.md)). Ompanel issues the thread an MCP
+credential, the driver gives OMP every tool of Ompanel's MCP server with
+`set_host_tools`, and the scripted model calls them by name. The first two
+steps run on one Full access thread, so no tool asks for approval:
+
+1. `tool: t3_preview_list {"limit":5}`: OMP offered the model `terminal` as a
+   tool and T3's MCP tools (`t3_preview_list`, `preview_open`,
+   `delegate_task`, …) as `xd://` devices in its system prompt. The model
+   calls the device with `write xd://t3_preview_list`, which goes through
+   Ompanel's MCP server. The result (the thread's preview tabs, none here)
+   comes back in the model's next request. The turn's work log shows the
+   `xd://t3_preview_list` entry, and the reply is `ran: …`.
+   `t3_preview_list` needs no browser to host a preview, so it runs headless;
+2. `tool: delegate_task {"task":…,"mode":"wait"}`: T3 starts a child thread on
+   the same OMP instance. The child's turn runs on the scripted model and
+   completes. The parent's tool result says `completed` and holds the child's
+   reply, and the parent's reply links the child. The child is listed in the
+   parent's Lineage panel and opens from there as a subagent thread with the
+   task and the reply.
+3. `/move` from the composer, on a new Full access thread. The test adds a git
+   worktree of the workspace on a new branch, plus an empty folder beside it.
+   `/move <folder>` reaches OMP, OMP asks the host, and the thread shows
+   `Move rejected by host: … is not a checkout of the project`. `/move <worktree>`
+   is accepted: OMP reports `Moved to …`, the thread shows the worktree's
+   branch, and the next message starts `omp` with `--cwd` at the worktree.
+
 `e2e/omp/ompSuite.ts` holds what the Playwright specs share: the hooks that
 start one stack and one paired page per file and record a trace per step, and
 the page helpers the steps use. `e2e/omp/ompStack.ts` starts everything in a
@@ -285,13 +347,18 @@ the OMP instance pointed at the given binary, and the scripted model
 (`e2e/omp/scriptedModel.ts`, adapted from the fork's
 `fake-openai-server.ts`). OMP's agent directory gets the model's
 `models.yml` and `modelRoles.default: fake/fake-model`. The model answers by
-the last message: `run: <command>` calls the shell tool, a tool result gets
-`ran: <first line>`, Ompanel's text generation prompts get the JSON they ask
-for, and anything else gets two streamed paragraphs. OMP's `collab.relayUrl`
+the last message: `run: <command>` calls the shell tool, a line
+`tool: <name> <json-args>` calls the offered tool `<name>` with those
+arguments, or writes them to its `xd://<name>` device when OMP mounted it
+there (T3's MCP tools; the reply `scripted model cannot call <name>: …` says
+it was offered neither way or the arguments are not a JSON object), a
+tool result gets `ran: <first line>`, Ompanel's text generation prompts get
+the JSON they ask for, and anything else gets two streamed paragraphs. OMP's
+`collab.relayUrl`
 is a loopback relay (`e2e/omp/collabRelay.ts`, cut down from the fork's
 `packages/collab-web/scripts/local-relay.ts`), so Share live opens and stops a
-real room without the internet. That step runs untraced and without
-screenshots, and its two links join the teardown secrets scan. Nothing reads
+real room without the internet. That step runs untraced; the parity spec's QR
+screenshot masks the code and both links, and its two links join the teardown secrets scan. Nothing reads
 the developer's `~/.omp` or Ompanel home, and no API key is used.
 
 Run it locally (the Node version in `package.json` `engines`, `bun`, and a
@@ -318,6 +385,34 @@ In CI, `OMP E2E` caches the binary by the pinned commit, so only the first
 run after a re-pin builds it; it uploads the screenshots, traces and report as
 the `omp-e2e` artifact. The build and the Chromium install are the composite
 action `.github/actions/setup-omp-e2e`, shared with `OMP live`.
+
+### Parity checks
+
+`apps/web/e2e/omp/omp-parity.spec.ts` runs in the same stack as the G1 thread suite and is part of
+`test:e2e`. Steps, in order:
+
+1. "opens the Agents panel and lists fanned-out subagents": `fanout: parity-alpha, parity-beta` in
+   Full access; the Agents panel lists both as Completed.
+2. "shows T3's checkpoint summary under an OMP turn that changed a file": a turn rewrites
+   `README.md`; the summary under it reads "1 changed file", +2 −1, `README.md`, Open diff.
+3. "shows the Share live browser link as a QR code, outside the trace": untraced; the QR code
+   rendered in the dialog encodes exactly the browser link (compared module by module with
+   `@t3tools/shared/qrCode`); the screenshot masks the QR code and both links, and both links join
+   the teardown secrets scan.
+4. "launches an OMP thread on the instance's named profile": the profile `parity-work` gets the
+   scripted model's `config.yml` and `models.yml`. The step sets Profile on the OMP instance in
+   Settings → Providers and starts a new thread. The thread's `omp` runs with
+   `--profile parity-work`, and its session file is under
+   `~/.omp/profiles/parity-work/agent/sessions`, not the default agent directory.
+
+Artifacts go to `apps/web/.playwright/omp-parity-artifacts/`, or to `parity/` under
+`OMPANEL_E2E_ARTIFACTS_DIR`. Run it alone with
+`pnpm --filter @t3tools/web exec playwright test e2e/omp/omp-parity.spec.ts` (after `vp build`,
+with `OMPANEL_E2E_OMP_BINARY` set).
+
+In CI, `OMP E2E` also runs the live suite against the scripted model after `Test`
+(`test:e2e:live:prebuilt`: `OMPANEL_LIVE=1`, without rebuilding the web app) and uploads it as the
+`omp-e2e-live` artifact.
 
 ## Live suite
 
@@ -370,8 +465,8 @@ In CI, `.github/workflows/omp-live.yml` (`OMP live`) runs the suite nightly,
 on pull requests that change it, and on demand (`workflow_dispatch`, with an
 optional `model` input; `scripted` needs no key). The key is the repository
 secret `OMPANEL_LIVE_ANTHROPIC_API_KEY`, passed to the test step's
-environment only. Without it the job passes, runs nothing, and posts the
-notice "OMP live suite skipped" on the run and in its summary. The run
+environment only. Without it the job runs the suite against the scripted model
+and posts the notice "OMP live suite ran scripted" on the run and in its summary. The run
 uploads the `omp-live` artifact. `OMP live` is not a required check.
 
 ## What the recordings show (pinned tag)
@@ -388,4 +483,11 @@ uploads the `omp-live` artifact. `OMP live` is not a required check.
 - `/compact` acks `{ agentInvoked: false }`, then sends
   `manual_compaction_start` and `manual_compaction_end` (with the compaction
   `result`, or `aborted`), then a `command_output` summary.
+- `/handoff [focus]` acks `{ agentInvoked: false }`, then sends one
+  `command_output` ("Context handed off and compacted in place.") once the
+  model wrote the document. There are no compaction frames and no
+  `session_info_update`; `get_state` keeps the session id and file, and
+  `get_entries` holds a new `compaction` entry.
+- `/security` with OMP's default `security.enabled: false` writes its
+  "Security is disabled" `command_output` before the ack.
 - `/context` output contains ANSI colour escapes.

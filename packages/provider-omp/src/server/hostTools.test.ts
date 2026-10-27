@@ -21,6 +21,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { makeOmpAdapter } from "./adapter.ts";
@@ -29,6 +30,9 @@ import {
   formatTerminalResult,
   OMP_HOST_CWD_CHANGE_CONTRACT,
   OMP_HOST_TERMINAL_TOOL,
+  OMP_T3_URI_SCHEME,
+  t3UriContent,
+  t3UriToolCall,
 } from "./hostTools.ts";
 import { makeOmpPidfiles } from "./pidfiles.ts";
 import { ompStateDirs } from "./session.ts";
@@ -37,6 +41,7 @@ import { fakeOmpFrames, type FakeOmpStep, makeFakeOmpState, waitUntil } from "./
 
 const platform = HostProcess.Platform.defaultValue();
 const posixOnly = describe.skipIf(platform === "win32");
+const isProtocolError = Schema.is(ProviderAdapter.ProviderAdapterProtocolError);
 
 const INSTANCE_ID = ProviderInstanceId.make("omp-host");
 const THREAD_ID = ThreadId.make("thread/host-tools");
@@ -53,9 +58,26 @@ const MCP_TOOLS: ReadonlyArray<ProviderHostTools.ProviderHostMcpTool> = [
     inputSchema: { type: "object", properties: { prompt: { type: "string" } } },
   },
 ];
+/** The T3 MCP tools behind `t3://` (without `t3_project_read`, so `t3://project/<id>` is off). */
+const T3_MCP_TOOLS: ReadonlyArray<ProviderHostTools.ProviderHostMcpTool> = [
+  ...MCP_TOOLS,
+  { name: "t3_thread_list", description: "List threads", inputSchema: { type: "object" } },
+  { name: "t3_thread_read", description: "Read a thread", inputSchema: { type: "object" } },
+  { name: "t3_project_list", description: "List projects", inputSchema: { type: "object" } },
+];
+/** Checkouts of the thread's project, as T3 resolves `/move` targets. */
+const CHECKOUTS: Readonly<Record<string, ProviderHostTools.ProviderHostThreadWorkspace>> = {
+  "/repo": { path: "/repo", branch: "main", worktreePath: null, current: true },
+  "/worktrees/repo-review": {
+    path: "/worktrees/repo-review",
+    branch: "review",
+    worktreePath: "/worktrees/repo-review",
+    current: false,
+  },
+};
 
 /** A `ProviderHostTools` that records every call and answers like T3 would. */
-const recordingHostTools = () => {
+const recordingHostTools = (mcpTools: ReadonlyArray<ProviderHostTools.ProviderHostMcpTool>) => {
   const calls = {
     terminal: [] as Array<ProviderHostTools.ProviderHostTerminalCommandInput>,
     created: [] as Array<{ readonly threadId: ThreadId; readonly branch: string }>,
@@ -63,7 +85,18 @@ const recordingHostTools = () => {
       readonly threadId: ThreadId;
       readonly worktree: ProviderHostTools.ProviderHostWorktree;
     }>,
-    mcp: [] as Array<{ readonly endpoint: string; readonly tool?: string }>,
+    resolved: [] as Array<{ readonly threadId: ThreadId; readonly path: string }>,
+    moved: [] as Array<{
+      readonly threadId: ThreadId;
+      readonly workspace: ProviderHostTools.ProviderHostThreadWorkspace;
+    }>,
+    mcp: [] as Array<{
+      readonly endpoint: string;
+      readonly tool?: string;
+      readonly args?: Readonly<Record<string, unknown>>;
+    }>,
+    /** MCP calls interrupted before they answered. */
+    interrupted: [] as Array<string>,
   };
   const service = ProviderHostTools.ProviderHostTools.of({
     runTerminalCommand: (input) =>
@@ -83,15 +116,45 @@ const recordingHostTools = () => {
         return WORKTREE;
       }),
     bindThreadWorktree: (input) => Effect.sync(() => void calls.bound.push(input)),
+    resolveThreadWorkspace: (input) =>
+      Effect.suspend(() => {
+        calls.resolved.push(input);
+        const workspace = CHECKOUTS[input.path];
+        return workspace === undefined
+          ? Effect.fail(
+              new ProviderHostTools.ProviderHostToolError({
+                operation: "worktree",
+                detail: `'${input.path}' is not a checkout of the project 'repo'. To work in '${input.path}', add it as a project in T3 and start a thread there.`,
+              }),
+            )
+          : Effect.succeed(workspace);
+      }),
+    moveThreadWorkspace: (input) => Effect.sync(() => void calls.moved.push(input)),
     connectMcp: (session) =>
       Effect.sync(() => {
         calls.mcp.push({ endpoint: session.endpoint });
         return {
-          tools: MCP_TOOLS,
-          call: (name) =>
-            Effect.sync(() => {
-              calls.mcp.push({ endpoint: session.endpoint, tool: name });
-              return { content: [{ type: "text" as const, text: `${name} done` }], isError: false };
+          tools: mcpTools,
+          call: (name, args) =>
+            Effect.suspend((): Effect.Effect<ProviderHostTools.ProviderHostMcpCallResult> => {
+              calls.mcp.push({ endpoint: session.endpoint, tool: name, args });
+              if (name === "t3_project_list") {
+                // Never answers: only a cancel ends it.
+                return Effect.never.pipe(
+                  Effect.onInterrupt(() => Effect.sync(() => void calls.interrupted.push(name))),
+                );
+              }
+              if (name === "t3_thread_list") {
+                return Effect.succeed({
+                  content: [{ type: "text" as const, text: "No project for this thread." }],
+                  isError: true,
+                });
+              }
+              const text =
+                name === "t3_thread_read"
+                  ? `{"threadId":${JSON.stringify(args["threadId"])},"messages":[]}`
+                  : `${name} done`;
+              return Effect.succeed({ content: [{ type: "text" as const, text }], isError: false });
             }),
         };
       }),
@@ -119,37 +182,47 @@ const runSession = (input: {
   readonly setHostTools?: FakeOmpStep;
   /** Without T3's host services (outside the T3 server) the bridge registers nothing. */
   readonly withoutHostServices?: boolean;
+  /** The tools the thread's T3 MCP server lists; `MCP_TOOLS` by default. */
+  readonly mcpTools?: ReadonlyArray<ProviderHostTools.ProviderHostMcpTool>;
+  /** T3 issues the MCP credential only after the session opened (a late or rotated credential). */
+  readonly mcpCredentialAfterOpen?: boolean;
+  /** The composer message the turn sends; "go" by default. */
+  readonly text?: string;
+  /** How OMP answers `set_host_cwd_change`; it accepts by default. */
+  readonly setHostCwdChange?: FakeOmpStep;
 }) =>
   Effect.gen(function* () {
     const state = yield* makeFakeOmpState;
-    const host = recordingHostTools();
+    const host = recordingHostTools(input.mcpTools ?? MCP_TOOLS);
     const ack = { respond: { agentInvoked: true } } satisfies FakeOmpStep;
     const script = state.script({
       commands: {
         set_tool_enabled: [{ respond: { enabled: false } }],
         set_host_tools: [input.setHostTools ?? { respond: { toolNames: ["$id"] } }],
-        set_host_cwd_change: [{ respond: { enabled: true } }],
+        set_host_uri_schemes: [{ respond: { schemes: [OMP_T3_URI_SCHEME] } }],
+        set_host_cwd_change: [input.setHostCwdChange ?? { respond: { enabled: true } }],
         set_session_name: [{ respond: null }],
         prompt: [ack, ...input.promptSteps],
         // Host replies are frames, not commands: the fake must not answer them.
         host_tool_result: [],
         host_tool_update: [],
+        host_uri_result: [],
         host_cwd_change_result: [],
       },
     });
     const mcpSessions = yield* Effect.gen(function* () {
-      const sessions = yield* McpProviderSessions.McpProviderSessions;
-      yield* sessions.set({
-        environmentId: EnvironmentId.make("env-local"),
-        threadId: THREAD_ID,
-        providerSessionId: "session-host",
-        providerInstanceId: INSTANCE_ID,
-        endpoint: "http://127.0.0.1:4100/mcp",
-        authorizationHeader: "Bearer secret-token",
-        browserToolsAvailable: true,
-      });
-      return sessions;
+      return yield* McpProviderSessions.McpProviderSessions;
     }).pipe(Effect.provide(McpProviderSessions.layer));
+    const issueMcpCredential = mcpSessions.set({
+      environmentId: EnvironmentId.make("env-local"),
+      threadId: THREAD_ID,
+      providerSessionId: "session-host",
+      providerInstanceId: INSTANCE_ID,
+      endpoint: "http://127.0.0.1:4100/mcp",
+      authorizationHeader: "Bearer secret-token",
+      browserToolsAvailable: true,
+    });
+    if (input.mcpCredentialAfterOpen !== true) yield* issueMcpCredential;
     const path = yield* Path.Path;
     const dirs = ompStateDirs(path, NodePath.join(state.dir, "state"));
     const makeAdapter = makeOmpAdapter({
@@ -169,7 +242,7 @@ const runSession = (input: {
       ? makeAdapter
       : makeAdapter.pipe(Effect.provideService(ProviderHostTools.ProviderHostTools, host.service));
 
-    const events = yield* Effect.gen(function* () {
+    const run = yield* Effect.gen(function* () {
       const policy = runtimePolicy(input.runtimeMode);
       const session = yield* adapter.openSession({
         threadId: THREAD_ID,
@@ -177,6 +250,7 @@ const runSession = (input: {
         modelSelection: { instanceId: INSTANCE_ID, model: "default" },
         runtimePolicy: policy,
       });
+      if (input.mcpCredentialAfterOpen === true) yield* issueMcpCredential;
       const providerThread = yield* session.ensureThread({
         threadId: THREAD_ID,
         modelSelection: { instanceId: INSTANCE_ID, model: "default" },
@@ -206,34 +280,38 @@ const runSession = (input: {
         lastVisitedAt: null,
         deletedAt: null,
       };
-      yield* session.startTurn({
-        appThread,
-        threadId: THREAD_ID,
-        runId: RunId.make("run:host:1"),
-        runOrdinal: 1,
-        providerTurnOrdinal: 1,
-        attemptId: RunAttemptId.make("run-attempt:host:1"),
-        rootNodeId: NodeId.make("node:host:root"),
-        providerThread,
-        message: {
-          messageId: "message:host:1" as never,
-          text: "go",
-          attachments: [],
-          createdBy: "user",
-          creationSource: "web",
-        },
-        modelSelection: { instanceId: INSTANCE_ID, model: "default" },
-        runtimePolicy: policy,
-      });
+      const started = yield* session
+        .startTurn({
+          appThread,
+          threadId: THREAD_ID,
+          runId: RunId.make("run:host:1"),
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId: RunAttemptId.make("run-attempt:host:1"),
+          rootNodeId: NodeId.make("node:host:root"),
+          providerThread,
+          message: {
+            messageId: "message:host:1" as never,
+            text: input.text ?? "go",
+            attachments: [],
+            createdBy: "user",
+            creationSource: "web",
+          },
+          modelSelection: { instanceId: INSTANCE_ID, model: "default" },
+          runtimePolicy: policy,
+        })
+        .pipe(Effect.result);
+      // A turn the adapter refused before its prompt has no events.
+      if (started._tag === "Failure") return { events: [], startError: started.failure };
       const collected = yield* session.events.pipe(
         Stream.takeUntil((event) => event.type === "turn.terminal"),
         Stream.runCollect,
       );
       // Host replies are written beside the frame loop; let them reach the fake.
       yield* waitUntil(() => state.commands().some((frame) => frame["type"] === "prompt"));
-      return collected;
+      return { events: collected, startError: undefined };
     }).pipe(Effect.scoped);
-    return { state, host, events };
+    return { state, host, ...run };
   });
 
 /** The frames the fake read from stdin that have `type`. */
@@ -415,6 +493,7 @@ posixOnly("OMP host tools", () => {
       assert.deepInclude(host.calls.mcp, {
         endpoint: "http://127.0.0.1:4100/mcp",
         tool: "preview_open",
+        args: { url: "http://localhost:3000" },
       });
       assert.deepStrictEqual(framesOfType(state.commands(), "host_tool_result"), [
         {
@@ -426,7 +505,7 @@ posixOnly("OMP host tools", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.live("answers /wt with a T3 worktree and refuses /move", () =>
+  it.live("answers /wt with a T3 worktree", () =>
     Effect.gen(function* () {
       const { state, host } = yield* runSession({
         contract: OMP_HOST_CWD_CHANGE_CONTRACT,
@@ -441,32 +520,304 @@ posixOnly("OMP host tools", () => {
               branch: "feature/x",
             },
           },
-          {
-            emit: {
-              type: "host_cwd_change_request",
-              id: "cwd-move",
-              reason: "move",
-              cwd: "/repo",
-              path: "/elsewhere",
-            },
-          },
           { sleepMs: 300 },
           ...fakeOmpFrames.promptTurn({ text: ["ok"] }).slice(1),
         ],
       });
       assert.deepStrictEqual(host.calls.created, [{ threadId: THREAD_ID, branch: "feature/x" }]);
       assert.deepStrictEqual(host.calls.bound, [{ threadId: THREAD_ID, worktree: WORKTREE }]);
-      const answers = framesOfType(state.commands(), "host_cwd_change_result");
-      assert.deepInclude(answers, {
+      assert.deepInclude(framesOfType(state.commands(), "host_cwd_change_result"), {
         type: "host_cwd_change_result",
         id: "cwd-wt",
         accepted: true,
         cwd: WORKTREE.path,
       });
-      const move = answers.find((answer) => answer["id"] === "cwd-move");
-      assert.strictEqual(move?.["accepted"], false);
-      assert.match(String(move?.["error"]), /stays in its project or worktree/);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("moves the thread to another checkout of its project on /move", () =>
+    Effect.gen(function* () {
+      const move = (id: string, path: string): FakeOmpStep => ({
+        emit: { type: "host_cwd_change_request", id, reason: "move", cwd: "/repo", path },
+      });
+      const { state, host } = yield* runSession({
+        contract: OMP_HOST_CWD_CHANGE_CONTRACT,
+        runtimeMode: "full-access",
+        promptSteps: [
+          move("move-worktree", "/worktrees/repo-review"),
+          { sleepMs: 200 },
+          // The T3 terminal now opens in the checkout the thread moved to.
+          {
+            emit: {
+              type: "host_tool_call",
+              id: "host-call-after-move",
+              toolCallId: "call-terminal",
+              toolName: OMP_HOST_TERMINAL_TOOL,
+              arguments: { command: "pwd" },
+            },
+          },
+          move("move-outside", "/elsewhere"),
+          move("move-same", "/repo"),
+          { sleepMs: 300 },
+          ...fakeOmpFrames.promptTurn({ text: ["ok"] }).slice(1),
+        ],
+      });
+      assert.deepStrictEqual(host.calls.resolved, [
+        { threadId: THREAD_ID, path: "/worktrees/repo-review" },
+        { threadId: THREAD_ID, path: "/elsewhere" },
+        { threadId: THREAD_ID, path: "/repo" },
+      ]);
+      // Only the real move re-points the thread: no worktree is created or bound.
+      assert.deepStrictEqual(host.calls.moved, [
+        { threadId: THREAD_ID, workspace: CHECKOUTS["/worktrees/repo-review"] },
+      ]);
+      assert.deepStrictEqual(host.calls.created, []);
+      assert.deepStrictEqual(host.calls.bound, []);
+      assert.strictEqual(host.calls.terminal[0]?.cwd, "/worktrees/repo-review");
+
+      const answers = framesOfType(state.commands(), "host_cwd_change_result");
+      assert.deepInclude(answers, {
+        type: "host_cwd_change_result",
+        id: "move-worktree",
+        accepted: true,
+        cwd: "/worktrees/repo-review",
+      });
+      assert.deepInclude(answers, {
+        type: "host_cwd_change_result",
+        id: "move-same",
+        accepted: true,
+        cwd: "/repo",
+      });
+      const outside = answers.find((answer) => answer["id"] === "move-outside");
+      assert.strictEqual(outside?.["accepted"], false);
+      assert.match(String(outside?.["error"]), /add it as a project in T3/);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("sends the composer's /move to OMP and moves the thread into a project worktree", () =>
+    Effect.gen(function* () {
+      const { state, host, startError } = yield* runSession({
+        contract: OMP_HOST_CWD_CHANGE_CONTRACT,
+        runtimeMode: "approval-required",
+        text: "/move /worktrees/repo-review",
+        promptSteps: [
+          {
+            emit: {
+              type: "host_cwd_change_request",
+              id: "composer-move",
+              reason: "move",
+              cwd: "/repo",
+              path: "/worktrees/repo-review",
+            },
+          },
+          { sleepMs: 200 },
+          ...fakeOmpFrames.promptTurn({ text: ["Moved"] }).slice(1),
+        ],
+      });
+      assert.isUndefined(startError);
+      assert.deepStrictEqual(
+        framesOfType(state.commands(), "prompt").map((frame) => frame["message"]),
+        ["/move /worktrees/repo-review"],
+      );
+      assert.deepStrictEqual(host.calls.moved, [
+        { threadId: THREAD_ID, workspace: CHECKOUTS["/worktrees/repo-review"] },
+      ]);
+      assert.deepInclude(framesOfType(state.commands(), "host_cwd_change_result"), {
+        type: "host_cwd_change_result",
+        id: "composer-move",
+        accepted: true,
+        cwd: "/worktrees/repo-review",
+      });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("refuses the composer's /move into a folder outside the project", () =>
+    Effect.gen(function* () {
+      const { state, host } = yield* runSession({
+        contract: OMP_HOST_CWD_CHANGE_CONTRACT,
+        runtimeMode: "full-access",
+        text: "/move /elsewhere",
+        promptSteps: [
+          {
+            emit: {
+              type: "host_cwd_change_request",
+              id: "composer-move-outside",
+              reason: "move",
+              cwd: "/repo",
+              path: "/elsewhere",
+            },
+          },
+          { sleepMs: 200 },
+          ...fakeOmpFrames.promptTurn({ text: ["Move rejected by host"] }).slice(1),
+        ],
+      });
+      assert.deepStrictEqual(host.calls.moved, []);
+      const answer = framesOfType(state.commands(), "host_cwd_change_result")[0];
+      assert.strictEqual(answer?.["id"], "composer-move-outside");
+      assert.strictEqual(answer?.["accepted"], false);
+      assert.match(String(answer?.["error"]), /add it as a project in T3/);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("keeps /move from OMP when OMP would change directory without asking T3", () =>
+    Effect.gen(function* () {
+      for (const setup of [
+        // A pinned contract before host-owned directory changes.
+        { contract: "1.0.0" },
+        // OMP turned host-owned directory changes down.
+        { contract: OMP_HOST_CWD_CHANGE_CONTRACT, answer: { respond: { enabled: false } } },
+        { contract: OMP_HOST_CWD_CHANGE_CONTRACT, answer: { fail: "not now" } },
+      ] as const) {
+        const { state, host, startError } = yield* runSession({
+          contract: setup.contract,
+          runtimeMode: "full-access",
+          text: "/move /elsewhere",
+          promptSteps: [],
+          ...("answer" in setup ? { setHostCwdChange: setup.answer } : {}),
+        });
+        assert.strictEqual(startError?._tag, "ProviderAdapterTurnStartError", setup.contract);
+        const cause = startError !== undefined && "cause" in startError ? startError.cause : null;
+        assert.isTrue(isProtocolError(cause));
+        if (isProtocolError(cause)) assert.strictEqual(cause.reason, "builtin_command_refused");
+        assert.deepStrictEqual(framesOfType(state.commands(), "prompt"), []);
+        assert.deepStrictEqual(host.calls.moved, []);
+      }
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("registers the read-only t3:// scheme only when the T3 MCP tools back it", () =>
+    Effect.gen(function* () {
+      const without = yield* runSession({
+        contract: OMP_HOST_CWD_CHANGE_CONTRACT,
+        runtimeMode: "full-access",
+        promptSteps: fakeOmpFrames.promptTurn({ text: ["ok"] }).slice(1),
+      });
+      assert.deepStrictEqual(framesOfType(without.state.commands(), "set_host_uri_schemes"), []);
+
+      const withTools = yield* runSession({
+        contract: OMP_HOST_CWD_CHANGE_CONTRACT,
+        runtimeMode: "full-access",
+        mcpTools: T3_MCP_TOOLS,
+        promptSteps: fakeOmpFrames.promptTurn({ text: ["ok"] }).slice(1),
+      });
+      const registered = framesOfType(withTools.state.commands(), "set_host_uri_schemes");
+      assert.lengthOf(registered, 1);
+      const schemes = registered[0]?.["schemes"] as ReadonlyArray<Record<string, unknown>>;
+      assert.deepStrictEqual(
+        schemes.map(({ description: _description, ...rest }) => rest),
+        [{ scheme: "t3", writable: false, immutable: false }],
+      );
+      const description = String(schemes[0]?.["description"]);
+      assert.include(description, "t3://thread/<threadId>");
+      // No `t3_project_read` tool, so no `t3://project/<projectId>` path.
+      assert.notInclude(description, "t3://project/<projectId>");
+      const order = withTools.state.commands().map((command) => command["type"]);
+      assert.isBelow(order.indexOf("set_host_uri_schemes"), order.indexOf("prompt"));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("answers t3:// reads from the T3 MCP tools and refuses the rest", () =>
+    Effect.gen(function* () {
+      const uri = (id: string, url: string, operation: "read" | "write" = "read"): FakeOmpStep => ({
+        emit: {
+          type: "host_uri_request",
+          id,
+          operation,
+          url,
+          ...(operation === "write" ? { content: "x" } : {}),
+        },
+      });
+      const { state, host } = yield* runSession({
+        contract: OMP_HOST_CWD_CHANGE_CONTRACT,
+        runtimeMode: "full-access",
+        mcpTools: T3_MCP_TOOLS,
+        promptSteps: [
+          uri("uri-thread", "t3://thread/thread-1"),
+          uri("uri-threads", "t3://threads"),
+          uri("uri-unknown", "t3://nope"),
+          uri("uri-no-tool", "t3://project/project-1"),
+          uri("uri-write", "t3://threads", "write"),
+          { sleepMs: 300 },
+          ...fakeOmpFrames.promptTurn({ text: ["ok"] }).slice(1),
+        ],
+      });
+      assert.deepInclude(host.calls.mcp, {
+        endpoint: "http://127.0.0.1:4100/mcp",
+        tool: "t3_thread_read",
+        args: { threadId: "thread-1" },
+      });
+      const results = framesOfType(state.commands(), "host_uri_result");
+      const byId = (id: string) => results.find((result) => result["id"] === id);
+      assert.deepStrictEqual(byId("uri-thread"), {
+        type: "host_uri_result",
+        id: "uri-thread",
+        content: '{"threadId":"thread-1","messages":[]}',
+        contentType: "application/json",
+      });
+      // An MCP tool error is a read error with the tool's text.
+      assert.deepStrictEqual(byId("uri-threads"), {
+        type: "host_uri_result",
+        id: "uri-threads",
+        isError: true,
+        error: "No project for this thread.",
+      });
+      assert.strictEqual(byId("uri-unknown")?.["isError"], true);
+      assert.match(String(byId("uri-unknown")?.["error"]), /Unknown T3 URI t3:\/\/nope/);
+      assert.strictEqual(byId("uri-no-tool")?.["isError"], true);
+      assert.strictEqual(byId("uri-write")?.["isError"], true);
+      assert.match(String(byId("uri-write")?.["error"]), /read-only/);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("interrupts a t3:// read OMP cancels", () =>
+    Effect.gen(function* () {
+      const { state, host } = yield* runSession({
+        contract: OMP_HOST_CWD_CHANGE_CONTRACT,
+        runtimeMode: "full-access",
+        mcpTools: T3_MCP_TOOLS,
+        promptSteps: [
+          {
+            emit: {
+              type: "host_uri_request",
+              id: "uri-slow",
+              operation: "read",
+              url: "t3://projects",
+            },
+          },
+          { sleepMs: 200 },
+          { emit: { type: "host_uri_cancel", id: "uri-cancel", targetId: "uri-slow" } },
+          { sleepMs: 300 },
+          ...fakeOmpFrames.promptTurn({ text: ["ok"] }).slice(1),
+        ],
+      });
+      assert.deepStrictEqual(host.calls.interrupted, ["t3_project_list"]);
+      assert.deepStrictEqual(framesOfType(state.commands(), "host_uri_result"), []);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live(
+    "connects the T3 MCP tools before the first turn when T3 issues the credential late",
+    () =>
+      Effect.gen(function* () {
+        const { state, host } = yield* runSession({
+          contract: OMP_HOST_CWD_CHANGE_CONTRACT,
+          runtimeMode: "full-access",
+          mcpCredentialAfterOpen: true,
+          promptSteps: fakeOmpFrames.promptTurn({ text: ["ok"] }).slice(1),
+        });
+        const commands = state.commands();
+        const registrations = framesOfType(commands, "set_host_tools").map((frame) =>
+          (frame["tools"] as ReadonlyArray<{ readonly name: string }>).map((tool) => tool.name),
+        );
+        // The session opened with only the terminal; the first turn added the MCP tools.
+        assert.deepStrictEqual(registrations, [
+          [OMP_HOST_TERMINAL_TOOL],
+          [OMP_HOST_TERMINAL_TOOL, "preview_open", "delegate_task"],
+        ]);
+        assert.deepStrictEqual(host.calls.mcp, [{ endpoint: "http://127.0.0.1:4100/mcp" }]);
+        const order = commands.map((command) => command["type"]);
+        assert.isBelow(order.lastIndexOf("set_host_tools"), order.indexOf("prompt"));
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.live("leaves bash and /wt to OMP when the pinned contract predates them", () =>
@@ -576,5 +927,55 @@ describe("host tool helpers", () => {
     assert.deepStrictEqual(timedOut.content, [
       { type: "text", text: "(no output)\n\nCommand timed out after 30 s and was interrupted." },
     ]);
+  });
+
+  it("maps t3:// URLs to the T3 MCP tool that answers them", () => {
+    const all = new Set(["t3_thread_list", "t3_thread_read", "t3_project_list", "t3_project_read"]);
+    assert.deepStrictEqual(t3UriToolCall("t3://threads", all), {
+      tool: "t3_thread_list",
+      args: {},
+    });
+    assert.deepStrictEqual(t3UriToolCall("t3://thread/abc/", all), {
+      tool: "t3_thread_read",
+      args: { threadId: "abc" },
+    });
+    // Ids may hold slashes, raw or encoded.
+    assert.deepStrictEqual(t3UriToolCall("t3://thread/thread/host-tools", all)?.args, {
+      threadId: "thread/host-tools",
+    });
+    assert.deepStrictEqual(t3UriToolCall("t3://thread/thread%2Fx", all)?.args, {
+      threadId: "thread/x",
+    });
+    assert.deepStrictEqual(t3UriToolCall("t3://projects", all), {
+      tool: "t3_project_list",
+      args: {},
+    });
+    assert.deepStrictEqual(t3UriToolCall("t3://project/p1", all), {
+      tool: "t3_project_read",
+      args: { projectId: "p1" },
+    });
+    assert.isUndefined(t3UriToolCall("t3://thread", all));
+    assert.isUndefined(t3UriToolCall("t3://threads/abc", all));
+    assert.isUndefined(t3UriToolCall("t3://nope", all));
+    assert.isUndefined(t3UriToolCall("t3://thread/%E0%A4%A", all));
+    assert.isUndefined(t3UriToolCall("t3://thread/abc", new Set(["t3_thread_list"])));
+  });
+
+  it("reads a T3 MCP result as JSON or text", () => {
+    assert.deepStrictEqual(t3UriContent([{ type: "text", text: '{"a":1}' }]), {
+      content: '{"a":1}',
+      contentType: "application/json",
+    });
+    assert.deepStrictEqual(
+      t3UriContent([
+        { type: "text", text: "{not json" },
+        { type: "image", data: "AA==", mimeType: "image/png" },
+      ]),
+      {
+        content: "{not json",
+        contentType: "text/plain",
+        notes: ["1 image block(s) omitted"],
+      },
+    );
   });
 });

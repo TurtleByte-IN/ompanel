@@ -30,10 +30,23 @@ Every list ends with `/goal` unless OMP lists one itself: OMP runs `/goal` only
 in its TUI, and the adapter runs it over RPC (see
 [composer.md](./composer.md#goal-mode)).
 
+Builtins the adapter refuses are left out of the menu (see
+[security.md](./security.md#omp-builtins-from-the-composer)). A builtin sent
+only in part shows the subcommands that go through as its hint instead of
+OMP's: `/security [scans|show|compare|validate]`, `/usage [show]`,
+`/todo [append|start|done|drop|rm|help]`.
+
 A picked command is sent as the prompt text. OMP runs builtins itself and
 answers on the frame stream; commands that ask (the `/review` mode and PR
 pickers) open `extension_ui_request` dialogs, shown as question cards (see
 [frames.md](./frames.md#dialogs)).
+
+`/compact` and `/handoff` run in the background in OMP: it acknowledges the
+prompt first, then sends the compaction frames (`/compact` only) and one
+closing `command_output`. Their turn stays open until that output and shows
+it. `/handoff [focus]` asks the thread's model for a handoff document and
+keeps it as a compaction entry in the same session file; the session id does
+not change. Stop cancels either command and ends the turn as interrupted.
 
 ## `$` skills
 

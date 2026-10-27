@@ -307,6 +307,9 @@ import {
 } from "./preparingComposerImages";
 import { ComposerControlsBar } from "./ComposerControlsBar";
 import { useComposerCommandKey } from "./useComposerCommandKey";
+import { nextComposerCycleModel } from "./composerModelCycle";
+import { useEnvironmentModelPreferences } from "../../hooks/useSettings";
+import { providerModelKey } from "../../modelOrdering";
 
 function consumePasteAsTextShortcut(deadline: { current: number }): boolean {
   const armed = Date.now() <= deadline.current;
@@ -335,6 +338,8 @@ export interface ChatComposerHandle {
   ) => boolean;
   openModelPicker: () => void;
   stepReasoningEffort: (direction: 1 | -1) => void;
+  /** Moves the selection to the next (1) or previous (-1) model of the thread's provider. */
+  cycleModel: (direction: 1 | -1) => void;
   toggleModelPicker: () => void;
   openControl: (command: KeybindingCommand) => void;
   isModelPickerOpen: () => boolean;
@@ -3119,6 +3124,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   };
   const openModelPickerStable = useStableCallback(openModelPicker);
 
+  const { favorites: modelFavorites } = useEnvironmentModelPreferences(environmentId);
+  const modelFavoriteKeys = modelFavorites.map((favorite) =>
+    providerModelKey(favorite.provider, favorite.model),
+  );
   useImperativeHandle(
     composerRef,
     () => ({
@@ -3208,6 +3217,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             expandedCursorAfterReplace: change.cursor,
           });
         }
+      },
+      cycleModel: (direction) => {
+        if (noProviderAvailable || pendingUserInputs.length > 0 || isEditingQueuedMessage) {
+          return;
+        }
+        const next = nextComposerCycleModel({
+          instanceId: selectedInstanceId,
+          models: selectedProviderModels,
+          current: selectedModel,
+          direction,
+          favoriteModelKeys: modelFavoriteKeys,
+          isDisabled: (slug) => getModelDisabledReason(selectedInstanceId, slug) !== null,
+        });
+        if (next) onProviderModelSelect(selectedInstanceId, next, { focusComposer: false });
       },
       toggleModelPicker: () => {
         if (isComposerModelPickerOpen) {
@@ -3400,6 +3423,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       selectedPromptEffort,
       selectedProvider,
       selectedProviderModels,
+      modelFavoriteKeys,
+      onProviderModelSelect,
+      getModelDisabledReason,
       interactionMode,
       planModeUiEnabled,
       compactThreadContextStable,

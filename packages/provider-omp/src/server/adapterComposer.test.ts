@@ -573,4 +573,56 @@ posixOnly("OmpAdapter composer runtime", () => {
       assert.include(messages[1], "<user_request>\nPlan the change\n</user_request>");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
+
+  // Recorded from the pinned OMP (`omp_handoff` replay fixture): the ack comes first, the
+  // handoff runs in the background, and one `command_output` closes it.
+  it.live("sends /handoff to OMP and ends its turn with OMP's closing output", () =>
+    Effect.gen(function* () {
+      const state = yield* makeFakeOmpState;
+      const thread = yield* openThread(state, {
+        commands: {
+          ...TURN_READS,
+          prompt: [
+            { respond: { agentInvoked: false } },
+            { sleepMs: 200 },
+            {
+              emit: { type: "command_output", text: "Context handed off and compacted in place." },
+            },
+          ],
+        },
+      });
+      const turn = yield* thread.startTurn("/handoff focus on the parser");
+      assert.strictEqual(yield* turn.terminal, "completed");
+      assert.deepStrictEqual(
+        commandsOf(state, "prompt").map((command) => command["message"]),
+        ["/handoff focus on the parser"],
+      );
+      const shownAt = thread.events.findIndex(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "notification" &&
+          event.turnItem.summary === "Context handed off and compacted in place.",
+      );
+      const endedAt = thread.events.findIndex((event) => event.type === "turn.terminal");
+      assert.isTrue(shownAt !== -1 && shownAt < endedAt, "the handoff's output is not on its turn");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("stops a /handoff OMP is still running", () =>
+    Effect.gen(function* () {
+      const state = yield* makeFakeOmpState;
+      const thread = yield* openThread(state, {
+        commands: {
+          ...TURN_READS,
+          // A Stop cancels the handoff, and OMP then sends nothing more.
+          prompt: [{ respond: { agentInvoked: false } }],
+          abort_and_restore_queue: [{ respond: NO_QUEUE }],
+        },
+      });
+      const turn = yield* thread.startTurn("/handoff");
+      yield* thread.interrupt(turn.providerTurnId);
+      assert.strictEqual(yield* turn.terminal, "interrupted");
+      assert.lengthOf(commandsOf(state, "abort_and_restore_queue"), 1);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
 });

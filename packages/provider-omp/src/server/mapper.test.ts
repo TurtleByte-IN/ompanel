@@ -587,6 +587,91 @@ describe("OmpThreadMapper", () => {
     assert.strictEqual(thread?.nativeThreadRef?.nativeId, "session-c");
   });
 
+  it("keeps a /handoff turn open until OMP's closing output, on the same session", () => {
+    const { mapper, providerThread } = startedTurn("/handoff focus on the parser");
+    const ack = mapper.handleFrame(
+      {
+        type: "response",
+        id: "ompanel-3",
+        command: "prompt",
+        success: true,
+        data: { agentInvoked: false },
+      } as never,
+      at(1),
+    );
+    assert.isNull(ack.settled);
+    assert.isTrue(mapper.awaitingCommandOutput);
+    const output = mapper.handleFrame(
+      { type: "command_output", text: "Context handed off and compacted in place." } as never,
+      at(2),
+    );
+    assert.deepStrictEqual(output.settled, { status: "completed" });
+    assert.isNull(output.dropped);
+    assert.deepStrictEqual(
+      turnItems(output.events).map((item) =>
+        item.type === "notification" ? item.summary : item.type,
+      ),
+      ["Context handed off and compacted in place."],
+    );
+    const final = mapper.finalizeTurn({ status: "completed" }, { state: STATE }, at(3));
+    const thread = ofType(final, "provider_thread.updated").at(-1)?.providerThread;
+    assert.strictEqual(thread?.id, providerThread.id);
+    assert.strictEqual(thread?.nativeThreadRef?.nativeId, "session-a");
+  });
+
+  it("shows /compact's compaction card and output before ending its turn", () => {
+    const { mapper } = startedTurn("/compact");
+    const frames = [
+      {
+        type: "response",
+        id: "ompanel-3",
+        command: "prompt",
+        success: true,
+        data: { agentInvoked: false },
+      },
+      { type: "manual_compaction_start" },
+      {
+        type: "manual_compaction_end",
+        result: { summary: "pong", shortSummary: "pong", firstKeptEntryId: "e1", tokensBefore: 15 },
+        aborted: false,
+      },
+      { type: "command_output", text: "Compaction complete. Tokens: 15 -> 6." },
+    ];
+    const results = frames.map((frame) => mapper.handleFrame(frame as never, at(1)));
+    assert.deepStrictEqual(
+      results.map((result) => result.settled),
+      [null, null, null, { status: "completed" }],
+    );
+    assert.deepStrictEqual(
+      turnItems(results.flatMap((result) => result.events)).map((item) => [item.type, item.status]),
+      [
+        ["compaction", "running"],
+        ["compaction", "completed"],
+        ["notification", "completed"],
+      ],
+    );
+  });
+
+  it("ends a background builtin at its ack when its output came first", () => {
+    const { mapper } = startedTurn("/handoff");
+    mapper.handleFrame(
+      { type: "command_output", text: "Handoff generation is already in progress." } as never,
+      at(1),
+    );
+    const ack = mapper.handleFrame(
+      {
+        type: "response",
+        id: "ompanel-3",
+        command: "prompt",
+        success: true,
+        data: { agentInvoked: false },
+      } as never,
+      at(2),
+    );
+    assert.deepStrictEqual(ack.settled, { status: "completed" });
+    assert.isFalse(mapper.awaitingCommandOutput);
+  });
+
   it("shows builtin command output, notices and notify requests in the turn", () => {
     const { mapper } = startedTurn("/context");
     const events = [

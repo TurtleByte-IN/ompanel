@@ -405,15 +405,18 @@ posixOnly("OmpAdapter browser and computer-use guard", () => {
         ["/plugin enable evil", "builtin_command_refused"],
         ["/todo export ~/.zshrc", "builtin_command_refused"],
         ["/stats --host 0.0.0.0", "builtin_command_refused"],
+        ["/security scan", "builtin_command_refused"],
+        ["/security export secscan_1 --output ~/.zshrc", "builtin_command_refused"],
       ] as const) {
         const cause = refusal(yield* turn("full-access", false, { text }).pipe(Effect.flip));
         assert.strictEqual(cause.reason, reason);
       }
       assert.lengthOf(sent("prompt"), 0);
       yield* turn("full-access", true, { text: "/computer status" });
+      yield* turn("full-access", true, { text: "/security show secscan_1" });
       assert.deepStrictEqual(
         sent("prompt").map((command) => command["message"]),
-        ["/computer status"],
+        ["/computer status", "/security show secscan_1"],
       );
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );

@@ -1,8 +1,7 @@
 /**
- * T3 server capabilities a provider can hand to its agent as tools of its own: run a command in
- * the thread's T3 terminal, give a thread a T3-managed worktree, and reach the thread's T3 MCP
- * toolkits (preview, orchestration/delegation, worktree, …). Implemented in `apps/server`, which
- * owns the terminal manager, git workflow and MCP server; provider packages only see this seam.
+ * T3 capabilities a provider hands its agent: the thread's T3 terminal, T3 worktrees and moves
+ * between checkouts of the thread's project, and the thread's T3 MCP toolkits. Implemented in
+ * `apps/server` (terminal manager, git workflow, MCP server); providers only see this seam.
  */
 import type { ThreadId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -48,6 +47,18 @@ export interface ProviderHostTerminalCommandResult {
 export interface ProviderHostWorktree {
   readonly path: string;
   readonly branch: string;
+}
+
+/** A checkout of a thread's project: its workspace root or a git worktree of its repository. */
+export interface ProviderHostThreadWorkspace {
+  /** The checkout's directory as T3 records it (the project's root, or git's worktree path). */
+  readonly path: string;
+  /** The branch checked out there; `null` for a workspace root without one (detached, not git). */
+  readonly branch: string | null;
+  /** The thread's `worktreePath` once it works here: `null` for the project's workspace root. */
+  readonly worktreePath: string | null;
+  /** The thread already works in this checkout. */
+  readonly current: boolean;
 }
 
 export interface ProviderHostMcpTool {
@@ -101,6 +112,24 @@ export class ProviderHostTools extends Context.Service<
     readonly bindThreadWorktree: (input: {
       readonly threadId: ThreadId;
       readonly worktree: ProviderHostWorktree;
+    }) => Effect.Effect<void, ProviderHostToolError>;
+    /**
+     * Resolves `path` to a checkout of the thread's project the thread may move to: the project's
+     * workspace root or a git worktree of its repository with a branch checked out. Fails with
+     * the reason for any other directory. Changes nothing; see `moveThreadWorkspace`.
+     */
+    readonly resolveThreadWorkspace: (input: {
+      readonly threadId: ThreadId;
+      readonly path: string;
+    }) => Effect.Effect<ProviderHostThreadWorkspace, ProviderHostToolError>;
+    /**
+     * Points the thread at `workspace` (thread metadata) without creating or removing worktrees
+     * or running the setup script. A no-op when the thread already works there. Changing the
+     * workspace detaches the thread's live provider session.
+     */
+    readonly moveThreadWorkspace: (input: {
+      readonly threadId: ThreadId;
+      readonly workspace: ProviderHostThreadWorkspace;
     }) => Effect.Effect<void, ProviderHostToolError>;
     /** Connects to the thread's T3 MCP server with its session credential and lists its tools. */
     readonly connectMcp: (

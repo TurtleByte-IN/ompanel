@@ -194,6 +194,12 @@ interface ActiveTurn {
   steersInFlight: number;
   /** The prompt's outcome, held while a message sent for the turn has not run (`prompt_result`). */
   heldOutcome: OmpTurnOutcome | null;
+  /** The prompt is `/compact` or `/handoff`, which OMP finishes after acknowledging it. */
+  readonly backgroundCommand: boolean;
+  /** A `command_output` reached this turn. */
+  commandOutputSeen: boolean;
+  /** OMP acknowledged the background command; its closing `command_output` ends the turn. */
+  awaitingCommandOutput: boolean;
 }
 
 /** OMP's displayable steering and follow-up queue (`queue_update`). */
@@ -518,6 +524,13 @@ const isTodoPhases = (value: unknown): value is ReadonlyArray<TodoPhase> =>
 /** A `/rename` typed by the user is the only title OMP reports that may rename the thread. */
 const RENAME_COMMAND = /^\/rename(?:\s|$)/;
 
+/**
+ * Builtins OMP's RPC mode runs after acknowledging the prompt (`runCommandInBackground`): the
+ * ack says `agentInvoked: false`, then compaction frames and one closing `command_output`
+ * follow, or nothing when a Stop interrupted it.
+ */
+const BACKGROUND_COMMAND = /^\/(?:compact|handoff)(?:[\s:]|$)/;
+
 export interface OmpThreadMapperOptions {
   readonly instanceId: OrchestrationV2ProviderSession["providerInstanceId"];
   readonly providerSession: OrchestrationV2ProviderSession;
@@ -742,6 +755,9 @@ export class OmpThreadMapper {
       stopping: false,
       steersInFlight: 0,
       heldOutcome: null,
+      backgroundCommand: BACKGROUND_COMMAND.test(input.message.text.trimStart()),
+      commandOutputSeen: false,
+      awaitingCommandOutput: false,
     };
     // The orchestrator owns the provider thread row; keep its identity for later updates.
     thread.providerThread = {
@@ -853,8 +869,13 @@ export class OmpThreadMapper {
             }),
           };
         } else if (asRecord(f["data"])?.["agentInvoked"] === false) {
-          // A builtin slash command finished locally; no `prompt_result` follows.
-          settled = { status: "completed" };
+          // A builtin slash command finished locally; no `prompt_result` follows. A background
+          // one ends with its `command_output`, unless that came first (a usage error).
+          if (turn.backgroundCommand && !turn.commandOutputSeen) {
+            turn.awaitingCommandOutput = true;
+          } else {
+            settled = { status: "completed" };
+          }
         }
         break;
       }
@@ -868,15 +889,7 @@ export class OmpThreadMapper {
           id !== turn.promptId
         )
           break;
-        const outcome = this.#promptOutcome(f);
-        // A message T3 sent for this turn that OMP has not run yet would start an OMP run no
-        // turn owns: the turn stays open until that run ends (`agent_end`, `steerAcknowledged`).
-        const queued = this.#queue.steering.length + this.#queue.followUp.length;
-        if (!turn.stopping && (turn.steersInFlight > 0 || queued > 0)) {
-          turn.heldOutcome = outcome;
-        } else {
-          settled = outcome;
-        }
+        settled = this.#promptDone(turn, this.#promptOutcome(f));
         break;
       }
       case "message_start":
@@ -997,6 +1010,11 @@ export class OmpThreadMapper {
                 detail: text,
               }),
             );
+          }
+          turn.commandOutputSeen = true;
+          if (turn.awaitingCommandOutput) {
+            turn.awaitingCommandOutput = false;
+            settled = this.#promptDone(turn, { status: "completed" });
           }
         }
         break;
@@ -1429,6 +1447,25 @@ export class OmpThreadMapper {
   /** Whether the active turn's prompt finished but a message T3 sent for it is still pending. */
   get holdingOutcome(): boolean {
     return this.#turn?.heldOutcome != null;
+  }
+
+  /** Whether the active turn waits for a background `/compact` or `/handoff` to finish. */
+  get awaitingCommandOutput(): boolean {
+    return this.#turn?.awaitingCommandOutput === true;
+  }
+
+  /**
+   * The prompt ended with `outcome`. A message T3 sent for this turn that OMP has not run yet
+   * would start an OMP run no turn owns: the turn stays open until that run ends (`agent_end`,
+   * `steerAcknowledged`).
+   */
+  #promptDone(turn: ActiveTurn, outcome: OmpTurnOutcome): OmpTurnOutcome | null {
+    const queued = this.#queue.steering.length + this.#queue.followUp.length;
+    if (!turn.stopping && (turn.steersInFlight > 0 || queued > 0)) {
+      turn.heldOutcome = outcome;
+      return null;
+    }
+    return outcome;
   }
 
   /**

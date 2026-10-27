@@ -117,8 +117,11 @@ well inside their upstream limits, so those are unchanged.
 `.github/workflows/upstream-merge.yml` merges `pingdotgg/t3code` `main` into
 the fork every Monday at 06:00 UTC (PRD §4, merge cadence; §10, upstream
 merge). It fetches upstream over public HTTPS with its push URL disabled, so it
-cannot push upstream. It merges into a fresh branch off `main`, named
-`chore/upstream-merge-<date>-<sha>`. Then one of these happens:
+cannot push upstream. Every `gh` call runs with `GH_REPO` set to this fork:
+once the `upstream` remote exists, `gh` would otherwise resolve upstream as the
+target repository (the first non-dry run failed exactly that way, with a 403
+creating the label on `pingdotgg/t3code`). It merges into a fresh branch off
+`main`, named `chore/upstream-merge-<date>-<sha>`. Then one of these happens:
 
 - `main` already contains upstream: nothing.
 - The merge conflicts: it opens an issue labelled `upstream-merge`, titled

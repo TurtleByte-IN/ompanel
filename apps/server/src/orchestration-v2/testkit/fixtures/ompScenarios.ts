@@ -111,6 +111,68 @@ export const OMP_REPLAY_SCENARIOS: ReadonlyArray<OmpReplayScenario> = [
       }),
   },
   {
+    name: "handoff",
+    description:
+      "`/handoff` after three turns acks `{ agentInvoked: false }`, then writes the handoff " +
+      "document through the model as a compaction entry on the same session (no new session " +
+      "id or file, no compaction frames) and reports it in one closing command_output.",
+    run: (session) =>
+      Effect.gen(function* () {
+        // Long enough that the kept tail (`compaction.keepRecentTokens`) leaves it to summarise.
+        yield* session.prompt(`first question: ${"tell me about the weather. ".repeat(40)}`);
+        yield* session.prompt("second question");
+        yield* session.prompt("third question");
+        const before = yield* session.request("get_state", undefined);
+        const { agentInvoked, from } = yield* session.prompt("/handoff focus on the weather");
+        NodeAssert.equal(agentInvoked, false, "/handoff started a model turn");
+        const output = yield* session.waitFor(
+          "command_output",
+          (frame) => frame.type === "command_output",
+          from,
+        );
+        NodeAssert.equal(
+          output.type === "command_output" && output.text,
+          "Context handed off and compacted in place.",
+        );
+        const after = yield* session.request("get_state", undefined);
+        NodeAssert.equal(after.sessionId, before.sessionId, "/handoff changed the session id");
+        NodeAssert.equal(after.sessionFile, before.sessionFile, "/handoff changed the file");
+        NodeAssert.deepEqual(
+          session.frames
+            .slice(from)
+            .map((frame) => frame.type)
+            .filter((type) => type.includes("compaction") || type === "session_info_update"),
+          [],
+          "/handoff sent compaction or session frames",
+        );
+        const { entries } = yield* session.request("get_entries", {});
+        NodeAssert.ok(
+          entries.some((entry) => entry["type"] === "compaction"),
+          "/handoff wrote no compaction entry",
+        );
+      }),
+  },
+  {
+    name: "security",
+    description:
+      "`/security` (list stored scans) answers in command_output with no model turn; with " +
+      "OMP's default `security.enabled: false` it says security is disabled.",
+    run: (session) =>
+      Effect.gen(function* () {
+        const { agentInvoked, from } = yield* session.prompt("/security");
+        NodeAssert.equal(agentInvoked, false, "/security started a model turn");
+        const output = yield* session.waitFor(
+          "command_output",
+          (frame) => frame.type === "command_output",
+          from,
+        );
+        NodeAssert.ok(
+          output.type === "command_output" && output.text.includes("Security is disabled"),
+          output.type === "command_output" ? output.text : "no output",
+        );
+      }),
+  },
+  {
     name: "cancel",
     description: "`abort` while the model streams ends the turn as aborted.",
     run: (session) =>

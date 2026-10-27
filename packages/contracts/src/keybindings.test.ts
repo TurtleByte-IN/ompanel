@@ -50,3 +50,19 @@ it.effect("drops malformed resolved rule entries", () =>
     );
   }),
 );
+
+it.effect("knows the composer model-cycle commands", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decode(ResolvedKeybindingsConfig, [
+      { command: "composer.cycleModel", shortcut: { ...shortcut, altKey: true } },
+      {
+        command: "composer.cycleModelBackward",
+        shortcut: { ...shortcut, altKey: true, shiftKey: true },
+      },
+    ]);
+    assert.deepEqual(
+      parsed.map((rule) => rule.command),
+      ["composer.cycleModel", "composer.cycleModelBackward"],
+    );
+  }),
+);

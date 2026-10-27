@@ -55,3 +55,40 @@ describe("OmpSettings.agentDir and launchArgs", () => {
     }
   });
 });
+
+describe("OmpSettings.profile", () => {
+  it.each(["", "work", "client-a", "v1.2_beta", "0day", "a".repeat(64)])(
+    "accepts %j",
+    (profile) => {
+      const decoded = decode({ profile });
+      assert.isTrue(Result.isSuccess(decoded));
+      if (Result.isSuccess(decoded)) assert.strictEqual(decoded.success.profile, profile);
+    },
+  );
+
+  it("trims the name and defaults to the default profile", () => {
+    const trimmed = decode({ profile: "  work  " });
+    assert.isTrue(Result.isSuccess(trimmed) && trimmed.success.profile === "work");
+    const absent = decode({});
+    assert.isTrue(Result.isSuccess(absent) && absent.success.profile === "");
+  });
+
+  it.each([
+    "Work",
+    "my profile",
+    "-work",
+    ".work",
+    "_work",
+    "work.",
+    "../work",
+    "work/sub",
+    "a".repeat(65),
+    "con",
+    "NUL.txt",
+    "com1",
+  ])("rejects %j with OMP's profile-name rule", (profile) => {
+    const decoded = decode({ profile });
+    assert.isTrue(Result.isFailure(decoded));
+    if (Result.isFailure(decoded)) assert.include(String(decoded.failure), "an OMP profile name");
+  });
+});

@@ -564,75 +564,122 @@ export const TraitsPicker = memo(function TraitsPicker({
     reportedModelSelection,
   });
   const isCodexStyle = provider === "codex";
+  const roleChipLabel = ompRoleChipLabel({
+    provider,
+    descriptors,
+    modelSelection: instanceId && model ? { instanceId, model, options: modelOptions ?? [] } : null,
+    reportedModelSelection,
+  });
 
   return (
-    <Menu
-      open={isMenuOpen}
-      onOpenChange={(open) => {
-        setIsMenuOpen(open && !disabled);
-      }}
-    >
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <MenuTrigger
-              render={
-                <ComposerControl
-                  disabled={disabled}
-                  aria-label={triggerLabel}
-                  data-composer-shortcut={isComposerOwned ? "composer.effort" : undefined}
-                  size={size}
-                  className={cn(
-                    isCodexStyle
-                      ? "min-w-0 max-w-40 shrink justify-start overflow-hidden whitespace-nowrap sm:max-w-48"
-                      : "shrink-0 whitespace-nowrap",
-                    triggerClassName,
-                  )}
-                />
-              }
-            />
-          }
+    <>
+      {roleChipLabel ? (
+        <ComposerControl
+          disabled={disabled}
+          size={size}
+          aria-label={`OMP role: ${roleChipLabel}`}
+          data-omp-role-chip=""
+          className="shrink-0 whitespace-nowrap"
+          onClick={() => setIsMenuOpen(!disabled)}
         >
-          {isCodexStyle ? (
-            <span
-              className={cn(
-                "flex min-w-0 w-full items-center",
-                size === "xs" ? "gap-1" : "gap-1.5",
-              )}
-            >
-              <ComposerControlIcon icon={BrainIcon} size={size} className="redesign:hidden" />
-              <ComposerControlIcon icon={GaugeIcon} size={size} className="hidden redesign:block" />
-              <span data-composer-control-label className="min-w-0 truncate">
-                {triggerLabel}
+          <span data-composer-control-label>{roleChipLabel}</span>
+        </ComposerControl>
+      ) : null}
+      <Menu
+        open={isMenuOpen}
+        onOpenChange={(open) => {
+          setIsMenuOpen(open && !disabled);
+        }}
+      >
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <MenuTrigger
+                render={
+                  <ComposerControl
+                    disabled={disabled}
+                    aria-label={triggerLabel}
+                    data-composer-shortcut={isComposerOwned ? "composer.effort" : undefined}
+                    size={size}
+                    className={cn(
+                      isCodexStyle
+                        ? "min-w-0 max-w-40 shrink justify-start overflow-hidden whitespace-nowrap sm:max-w-48"
+                        : "shrink-0 whitespace-nowrap",
+                      triggerClassName,
+                    )}
+                  />
+                }
+              />
+            }
+          >
+            {isCodexStyle ? (
+              <span
+                className={cn(
+                  "flex min-w-0 w-full items-center",
+                  size === "xs" ? "gap-1" : "gap-1.5",
+                )}
+              >
+                <ComposerControlIcon icon={BrainIcon} size={size} className="redesign:hidden" />
+                <ComposerControlIcon
+                  icon={GaugeIcon}
+                  size={size}
+                  className="hidden redesign:block"
+                />
+                <span data-composer-control-label className="min-w-0 truncate">
+                  {triggerLabel}
+                </span>
+                <ComposerControlChevron size={size} />
               </span>
-              <ComposerControlChevron size={size} />
-            </span>
-          ) : (
-            <>
-              <ComposerControlIcon icon={BrainIcon} size={size} className="redesign:hidden" />
-              <ComposerControlIcon icon={GaugeIcon} size={size} className="hidden redesign:block" />
-              <span data-composer-control-label>{triggerLabel}</span>
-              <ComposerControlChevron size={size} />
-            </>
-          )}
-        </TooltipTrigger>
-        <TooltipPopup side="top">{triggerLabel}</TooltipPopup>
-      </Tooltip>
-      <MenuPopup align="start" {...(isComposerOwned ? composerFloatingLayerProps : {})}>
-        <TraitsMenuContent
-          provider={provider}
-          {...(instanceId ? { instanceId } : {})}
-          models={models}
-          model={model}
-          promptUltrathink={promptUltrathink}
-          {...(onPromptEdit ? { onPromptEdit } : {})}
-          modelOptions={modelOptions}
-          reportedModelSelection={reportedModelSelection}
-          allowPromptInjectedEffort={allowPromptInjectedEffort}
-          planModeEnabled={planModeEnabled}
-          {...persistence}
-        />
-      </MenuPopup>
-    </Menu>
+            ) : (
+              <>
+                <ComposerControlIcon icon={BrainIcon} size={size} className="redesign:hidden" />
+                <ComposerControlIcon
+                  icon={GaugeIcon}
+                  size={size}
+                  className="hidden redesign:block"
+                />
+                <span data-composer-control-label>{triggerLabel}</span>
+                <ComposerControlChevron size={size} />
+              </>
+            )}
+          </TooltipTrigger>
+          <TooltipPopup side="top">{triggerLabel}</TooltipPopup>
+        </Tooltip>
+        <MenuPopup align="start" {...(isComposerOwned ? composerFloatingLayerProps : {})}>
+          <TraitsMenuContent
+            provider={provider}
+            {...(instanceId ? { instanceId } : {})}
+            models={models}
+            model={model}
+            promptUltrathink={promptUltrathink}
+            {...(onPromptEdit ? { onPromptEdit } : {})}
+            modelOptions={modelOptions}
+            reportedModelSelection={reportedModelSelection}
+            allowPromptInjectedEffort={allowPromptInjectedEffort}
+            planModeEnabled={planModeEnabled}
+            {...persistence}
+          />
+        </MenuPopup>
+      </Menu>
+    </>
   );
 });
+
+/**
+ * The chip beside an OMP thread's traits control: the role the thread runs as, readable without
+ * opening the menu. Hidden on the default role, like any trait left at its default.
+ */
+function ompRoleChipLabel(input: {
+  provider: ProviderDriverKind;
+  descriptors: ReadonlyArray<ProviderOptionDescriptor>;
+  modelSelection: ModelSelection | null;
+  reportedModelSelection: TraitsMenuContentProps["reportedModelSelection"];
+}): string | null {
+  if (input.provider !== "omp") return null;
+  const role = input.descriptors.find((descriptor) => descriptor.id === "role");
+  if (!role || role.type !== "select") return null;
+  const value = getDescriptorStringValue(role, input.modelSelection, input.reportedModelSelection);
+  const choice = role.options.find((option) => option.id === value);
+  if (!choice || choice.isDefault) return null;
+  return `Role: ${choice.label}`;
+}
