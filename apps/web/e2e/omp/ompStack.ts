@@ -11,6 +11,7 @@ import * as NodePath from "node:path";
 
 import JSZip from "jszip";
 
+import { type CollabRelay, startCollabRelay } from "./collabRelay.ts";
 import { type FakeSignInVendor, startFakeSignInVendor, writeFakeSignInOmp } from "./fakeSignIn.ts";
 import { type OtlpMetricsReceiver, startOtlpMetricsReceiver } from "./otlpMetrics.ts";
 import { linkToRelayStub, type RelayStub, startRelayStub } from "./relayStub.ts";
@@ -57,6 +58,8 @@ export interface OmpStack {
   readonly model: ScriptedModel;
   /** The server's OTLP metric exports, as a collector would receive them. */
   readonly metrics: OtlpMetricsReceiver;
+  /** OMP's collab relay (`collab.relayUrl`): Share live rooms open here, never on the internet. */
+  readonly collabRelay: CollabRelay;
   /** Live `omp` session processes, from the server's pidfiles. */
   readonly ompProcesses: () => ReadonlyArray<OmpProcess>;
   readonly git: (...args: ReadonlyArray<string>) => string;
@@ -71,6 +74,8 @@ export interface OmpStack {
    * A no-op unless the stack started with `freshOmpHome`.
    */
   readonly completeOmpSetup: () => void;
+  /** Adds a value the run handled (a Share live link) to the secrets scan `stop` runs. */
+  readonly registerSecret: (label: string, value: string) => void;
   /** The server's output, pairing token redacted. */
   readonly serverLog: () => string;
   /**
@@ -203,8 +208,12 @@ export const startOmpStack = async (options: OmpStackOptions = {}): Promise<OmpS
   for (const dir of [agentDir, userdata, workspace]) NodeFS.mkdirSync(dir, { recursive: true });
 
   // OMP's default model is the scripted one unless the live suite names a real one; nothing
-  // reads the developer's ~/.omp. A fresh OMP home gets both only from `completeOmpSetup`.
-  const ompConfig = `modelRoles:\n  default: ${options.defaultModel ?? "fake/fake-model"}\n`;
+  // reads the developer's ~/.omp. A fresh OMP home gets both only from `completeOmpSetup`. Share
+  // live rooms go to a loopback relay.
+  const collabRelay = await startCollabRelay();
+  const ompConfig =
+    `modelRoles:\n  default: ${options.defaultModel ?? "fake/fake-model"}\n` +
+    `collab:\n  relayUrl: ${collabRelay.url}\n`;
   const modelDir = options.freshOmpHome === true ? NodePath.join(root, "omp-setup") : agentDir;
   NodeFS.mkdirSync(modelDir, { recursive: true });
   if (options.freshOmpHome !== true) {
@@ -328,18 +337,23 @@ export const startOmpStack = async (options: OmpStackOptions = {}): Promise<OmpS
       return args === undefined ? [] : [{ pid: entry.pid, threadId: entry.threadId, args }];
     });
 
+  const registered: Array<{ readonly label: string; readonly value: string }> = [];
   return {
     pairingUrl,
     workspace,
     home,
     model,
     metrics,
+    collabRelay,
     ompProcesses,
     git,
     omp,
     signIn,
     relay,
     completeOmpSetup,
+    registerSecret: (label, value) => {
+      registered.push({ label, value });
+    },
     serverLog: () =>
       secrets.reduce(
         (text, secret) => text.replaceAll(secret, "<redacted>"),
@@ -367,6 +381,7 @@ export const startOmpStack = async (options: OmpStackOptions = {}): Promise<OmpS
           },
           ...secrets.map((value, index) => ({ label: `secretEnvironment[${index}]`, value })),
           ...(vendor?.exchanged() ?? []).map((value) => ({ label: "OAuth code", value })),
+          ...registered,
         ],
         serverLog: logPath,
         // Logs and traces, OMP's thread state, OMP's own sessions and logs, and the workspace
@@ -387,6 +402,7 @@ export const startOmpStack = async (options: OmpStackOptions = {}): Promise<OmpS
       await model.close();
       await metrics.close();
       await relay?.close();
+      await collabRelay.close();
       await vendor?.close();
       NodeFS.rmSync(root, { recursive: true, force: true });
       return { leakedSecrets };

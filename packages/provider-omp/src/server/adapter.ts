@@ -120,7 +120,7 @@ import {
   ompReportedBuiltins,
   ompWorkspaceTrustAvailable,
 } from "./toolGuards.ts";
-import { type OmpSetVibeModeResult, ompVibeModeAvailable } from "./vibe.ts";
+import { ompVibeModeAvailable } from "./vibe.ts";
 
 /** Streamed text is held this long so a burst of deltas becomes one update. */
 const STREAM_FLUSH = Duration.millis(50);
@@ -1201,38 +1201,31 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
             Effect.catch(traitRefused("prewalk")),
           );
       }
-      // `set_vibe_mode` is newer than the vendored contract (OMP_VIBE_CONTRACT); older sidecars
-      // run vibe mode only in their TUI, and the composer does not offer the trait for them.
+      // `set_vibe_mode` arrived with OMP_VIBE_CONTRACT; older sidecars run vibe mode only in
+      // their TUI, and the composer does not offer the trait for them.
       if (
         traits.vibe !== undefined &&
         traits.vibe !== applied.vibe &&
         ompVibeModeAvailable(process.contractVersion)
       ) {
         const enabled = traits.vibe;
-        const request = process.request as unknown as (
-          command: "set_vibe_mode",
-          params: { readonly enabled: boolean },
-          options: { readonly timeoutMs: number },
-        ) => Effect.Effect<OmpSetVibeModeResult, OmpRpcRequestError>;
-        yield* request(
-          "set_vibe_mode",
-          { enabled },
-          { timeoutMs: SELECTION_REQUEST_TIMEOUT_MS },
-        ).pipe(
-          Effect.tap((result) =>
-            Effect.gen(function* () {
-              applied.vibe = result.enabled;
-              if (result.enabled) return;
-              // Leaving vibe mode kills every worker; a killed worker may send no final frame.
-              const now = yield* DateTime.now;
-              for (const id of subagents.liveVibeWorkerIds()) {
-                const ended = { type: "subagent_lifecycle", payload: { id, status: "aborted" } };
-                yield* emit(subagents.handleFrame(ended, mapper.subagentScope, now));
-              }
-            }),
-          ),
-          Effect.catch(traitRefused("vibe")),
-        );
+        yield* process
+          .request("set_vibe_mode", { enabled }, { timeoutMs: SELECTION_REQUEST_TIMEOUT_MS })
+          .pipe(
+            Effect.tap((result) =>
+              Effect.gen(function* () {
+                applied.vibe = result.enabled;
+                if (result.enabled) return;
+                // Leaving vibe mode kills every worker; a killed worker may send no final frame.
+                const now = yield* DateTime.now;
+                for (const id of subagents.liveVibeWorkerIds()) {
+                  const ended = { type: "subagent_lifecycle", payload: { id, status: "aborted" } };
+                  yield* emit(subagents.handleFrame(ended, mapper.subagentScope, now));
+                }
+              }),
+            ),
+            Effect.catch(traitRefused("vibe")),
+          );
       }
     });
 

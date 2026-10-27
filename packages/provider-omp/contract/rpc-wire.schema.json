@@ -175,6 +175,17 @@
 				"clientOmit": []
 			},
 			{
+				"name": "set_vibe_mode",
+				"doc": "Turn vibe mode on or off with the lifecycle of the interactive `/vibe` command; idempotent.",
+				"params": "SetVibeModeParams",
+				"result": "SetVibeModeResult",
+				"nullable": false,
+				"unwrap": null,
+				"timeoutMs": null,
+				"completion": null,
+				"clientOmit": []
+			},
+			{
 				"name": "set_ask_dialog",
 				"doc": "Opt in to `ask` UI requests; returns the applied setting.",
 				"params": "SetAskDialogParams",
@@ -414,6 +425,39 @@
 				"result": "LiveMuteResult",
 				"nullable": false,
 				"unwrap": "muted",
+				"timeoutMs": null,
+				"completion": null,
+				"clientOmit": []
+			},
+			{
+				"name": "collab_start",
+				"doc": "Host this session in a collab room (or reuse the live one granting at least `access`, default control) and return its links.",
+				"params": "CollabStartParams",
+				"result": "CollabStatus",
+				"nullable": false,
+				"unwrap": null,
+				"timeoutMs": 30000,
+				"completion": null,
+				"clientOmit": []
+			},
+			{
+				"name": "collab_stop",
+				"doc": "End this session's collab room, telling guests goodbye, and cancel a start still connecting; false when there was neither.",
+				"params": null,
+				"result": "CollabStopResult",
+				"nullable": false,
+				"unwrap": "stopped",
+				"timeoutMs": null,
+				"completion": null,
+				"clientOmit": []
+			},
+			{
+				"name": "collab_status",
+				"doc": "Report this session's collab room and its links.",
+				"params": null,
+				"result": "CollabStatus",
+				"nullable": false,
+				"unwrap": null,
 				"timeoutMs": null,
 				"completion": null,
 				"clientOmit": []
@@ -2747,6 +2791,11 @@
 					],
 					"description": "Current goal mode; null when the session has no goal.",
 					"default": null
+				},
+				"vibeModeEnabled": {
+					"type": "boolean",
+					"description": "Vibe mode is on: the session directs worker sessions through the `vibe_*` tools.",
+					"default": false
 				}
 			},
 			"required": [
@@ -3319,7 +3368,8 @@
 					"description": "Raw `AgentProgress` record."
 				},
 				"parentToolCallId": {
-					"type": "string"
+					"type": "string",
+					"description": "Tool call that spawned the subagent: the `task` call, or for a vibe worker the `vibe_spawn` call, on every turn."
 				},
 				"parentId": {
 					"anyOf": [
@@ -4641,7 +4691,8 @@
 					"type": "string"
 				},
 				"parentToolCallId": {
-					"type": "string"
+					"type": "string",
+					"description": "Tool call that spawned the subagent: the `task` call, or for a vibe worker the `vibe_spawn` call, on every turn."
 				},
 				"parentId": {
 					"anyOf": [
@@ -4695,7 +4746,8 @@
 					"description": "Raw `AgentProgress` record."
 				},
 				"parentToolCallId": {
-					"type": "string"
+					"type": "string",
+					"description": "Tool call that spawned the subagent: the `task` call, or for a vibe worker the `vibe_spawn` call, on every turn."
 				},
 				"parentId": {
 					"anyOf": [
@@ -4908,6 +4960,91 @@
 				"type"
 			],
 			"description": "Sent exactly once when a live session ends; `error` carries the failure cause."
+		},
+		"CollabAccess": {
+			"enum": [
+				"view",
+				"control"
+			],
+			"type": "string",
+			"description": "What a collab link grants: `view` watches the session; `control` also lets guests prompt and interrupt it. Over RPC guests never see dialogs; they go to the RPC host."
+		},
+		"CollabParticipant": {
+			"type": "object",
+			"properties": {
+				"name": {
+					"type": "string"
+				},
+				"role": {
+					"enum": [
+						"host",
+						"guest"
+					],
+					"type": "string"
+				},
+				"readOnly": {
+					"type": "boolean",
+					"description": "True for a guest that joined through a view link."
+				}
+			},
+			"required": [
+				"name",
+				"role"
+			]
+		},
+		"CollabStatus": {
+			"type": "object",
+			"properties": {
+				"active": {
+					"type": "boolean"
+				},
+				"participants": {
+					"type": "array",
+					"items": {
+						"$ref": "#/$defs/CollabParticipant"
+					},
+					"description": "Host first; empty when no room is active."
+				},
+				"access": {
+					"$ref": "#/$defs/CollabAccess"
+				},
+				"link": {
+					"type": "string",
+					"description": "`omp join` link for the granted access; a capability, never logged."
+				},
+				"webLink": {
+					"type": "string",
+					"description": "Browser link for the granted access; a capability, never logged."
+				},
+				"relayConnected": {
+					"type": "boolean"
+				}
+			},
+			"required": [
+				"active",
+				"participants"
+			],
+			"description": "This session's collab room. Links are present only while `active`; anyone holding one reaches the session through the relay, outside any access control of the RPC host."
+		},
+		"CollabStateEvent": {
+			"type": "object",
+			"properties": {
+				"type": {
+					"const": "collab_state"
+				},
+				"active": {
+					"type": "boolean"
+				},
+				"participantCount": {
+					"type": "integer"
+				}
+			},
+			"required": [
+				"type",
+				"active",
+				"participantCount"
+			],
+			"description": "The collab room started, gained or lost a guest, or ended (stop, session change, relay close). Carries no links; call `collab_status` for them."
 		},
 		"BtwDeltaEvent": {
 			"type": "object",
@@ -6079,6 +6216,9 @@
 					"$ref": "#/$defs/LiveEndEvent"
 				},
 				{
+					"$ref": "#/$defs/CollabStateEvent"
+				},
+				{
 					"$ref": "#/$defs/BtwDeltaEvent"
 				},
 				{
@@ -6316,6 +6456,34 @@
 			},
 			"required": [
 				"op"
+			]
+		},
+		"SetVibeModeParams": {
+			"type": "object",
+			"properties": {
+				"enabled": {
+					"type": "boolean"
+				}
+			},
+			"required": [
+				"enabled"
+			]
+		},
+		"SetVibeModeResult": {
+			"type": "object",
+			"properties": {
+				"enabled": {
+					"type": "boolean",
+					"description": "Whether vibe mode is on after the call."
+				},
+				"killed": {
+					"type": "integer",
+					"description": "Worker sessions the call killed by exiting vibe mode; 0 otherwise."
+				}
+			},
+			"required": [
+				"enabled",
+				"killed"
 			]
 		},
 		"SetAskDialogParams": {
@@ -6774,6 +6942,29 @@
 			},
 			"required": [
 				"muted"
+			]
+		},
+		"CollabStartParams": {
+			"type": "object",
+			"properties": {
+				"access": {
+					"$ref": "#/$defs/CollabAccess"
+				},
+				"relay": {
+					"type": "string",
+					"description": "Relay override (`host[:port]` or a URL); defaults to `collab.relayUrl`."
+				}
+			}
+		},
+		"CollabStopResult": {
+			"type": "object",
+			"properties": {
+				"stopped": {
+					"type": "boolean"
+				}
+			},
+			"required": [
+				"stopped"
 			]
 		},
 		"SetModelParams": {

@@ -32,7 +32,8 @@ import type { OmpThreadSession } from "./threadSessions.ts";
 const encoder = new TextEncoder();
 type Behaviour = { readonly stdout: string; readonly exitCode: number } | "hang";
 
-// What the pinned omp (v18.12.6-ompanel.3) prints, captured from the real binary.
+// What the pinned omp prints, captured from the real v18.12.6-ompanel.3 binary (`plugin list` is
+// unchanged at v18.12.6-ompanel.4).
 const PLUGIN_LIST_JSON = JSON.stringify(
   {
     npm: [

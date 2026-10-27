@@ -78,11 +78,12 @@ reaches OMP and points to this menu item (`server/toolGuards.ts`).
 
 Share live is OMP's `/collab` for a thread running in Ompanel. It needs the RPC
 commands `collab_start`, `collab_status` and `collab_stop` (OMP RPC contract
-1.7.0, the fork's `docs/rpc.md`). Until the sidecar `omp.lock` pins is on that
-contract, the dialog says so as it opens and the Start button stays disabled:
+1.7.0, the fork's `docs/rpc.md`); the pinned sidecar (`v18.12.6-ompanel.4`,
+contract 1.8.0) has them. Against a sidecar below 1.7.0 the dialog says so as it
+opens and the Start button stays disabled:
 
 > Share live needs OMP RPC contract 1.7.0 or later; this Ompanel runs OMP
-> 18.12.6-ompanel.3 (contract 1.6.0). Update Ompanel to a build with a newer
+> `<version>` (contract `<contract>`). Update Ompanel to a build with a newer
 > OMP.
 
 The room belongs to the thread's running OMP process, so the thread must be

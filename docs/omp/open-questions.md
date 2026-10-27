@@ -1,6 +1,6 @@
 # PRD §12 open questions
 
-Answers on the pinned fork tag, `v18.12.6-ompanel.3` (`packages/provider-omp/omp.lock`).
+Answers on the pinned fork tag, `v18.12.6-ompanel.4` (`packages/provider-omp/omp.lock`).
 Re-check them when the pin moves.
 
 ## Extension `setStatus` and `setWidget`
@@ -52,7 +52,7 @@ The pinned binary in `rpc-ui` mode, with a scratch `HOME` whose global config se
 
 ## Tailing subagent session files before O-3
 
-Moot. O-3 shipped in the fork (RPC contract 1.2.0; the pin carries 1.6.0): every
+Moot. O-3 shipped in the fork (RPC contract 1.2.0; the pin carries 1.8.0): every
 `subagent_lifecycle` / `subagent_progress` / `subagent_event` frame carries `parentId`
 and `depth`, and transcripts come from `get_subagent_messages`, paged by byte offset
 ([subagents.md](./subagents.md)). Ompanel never reads OMP's session files for subagents,

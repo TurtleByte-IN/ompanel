@@ -15,9 +15,3 @@ export const OMP_VIBE_CONTRACT = "1.8.0";
 /** Whether a sidecar speaking `contractVersion` takes `set_vibe_mode`. */
 export const ompVibeModeAvailable = (contractVersion: string): boolean =>
   contractAtLeast(contractVersion, OMP_VIBE_CONTRACT);
-
-/** `set_vibe_mode`'s result: the mode now, and how many workers an exit ended. */
-export interface OmpSetVibeModeResult {
-  readonly enabled: boolean;
-  readonly killed: number;
-}
