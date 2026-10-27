@@ -197,6 +197,30 @@ describe("OmpTextGeneration", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.live("never gives omp -p launch arguments that bring tools or extension code back", () =>
+    Effect.gen(function* () {
+      const { textGeneration, readLog, dir } = yield* setup("ok", {
+        launchArgs: ["--tools", "read,bash", "-e", "./ext.ts", "--hook", "./h.ts", "--no-lsp"],
+      });
+      yield* textGeneration.generateCommitMessage({
+        cwd: dir,
+        branch: "main",
+        stagedSummary: "M a.ts",
+        stagedPatch: "diff --git a/a.ts b/a.ts",
+        modelSelection,
+      });
+      assert.deepStrictEqual((yield* readLog).args, [
+        "-p",
+        "--no-session",
+        "--no-tools",
+        "--no-extensions",
+        "--model",
+        "@commit,@smol,@default",
+        "--no-lsp",
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.live("passes a non-default model slug through", () =>
     Effect.gen(function* () {
       const { textGeneration, readLog, dir } = yield* setup("ok");

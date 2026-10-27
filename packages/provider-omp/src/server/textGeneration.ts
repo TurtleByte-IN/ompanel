@@ -9,6 +9,7 @@ import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
+import { ompPrintLaunchArgs } from "./launch.ts";
 import { OmpAnsi } from "./ompAnsi.ts";
 import type { OmpSidecarError } from "./sidecar.ts";
 
@@ -23,7 +24,7 @@ export interface OmpTextGenerationOptions {
   /** Resolves the omp executable (sidecar resolver) when an operation runs. */
   readonly resolveBinary: Effect.Effect<string, OmpSidecarError>;
   readonly profile: string;
-  /** The instance's launch arguments, appended to every `omp -p`. */
+  /** The instance's launch arguments; `omp -p` gets only those `ompPrintLaunchArgs` keeps. */
   readonly launchArgs?: ReadonlyArray<string>;
   readonly environment: NodeJS.ProcessEnv;
   /**
@@ -44,7 +45,8 @@ const ompTextGenerationRole = (operation: TextGenerationOperations.Operation) =>
 /**
  * `omp -p` one-shot args; the prompt is piped on stdin so diffs never hit argv limits.
  * `--no-tools` drops built-in tools and `--no-extensions` stops extension discovery; neither
- * disables MCP servers or custom tools, which the owned empty cwd keeps to user-level ones.
+ * disables MCP servers or custom tools, which the owned empty cwd keeps to user-level ones. The
+ * launch arguments come last, less any that would give the run tools or code back.
  */
 const ompTextGenerationArgs = (input: {
   readonly operation: TextGenerationOperations.Operation;
@@ -59,7 +61,7 @@ const ompTextGenerationArgs = (input: {
   "--no-extensions",
   "--model",
   input.model === OMP_DEFAULT_MODEL_SLUG ? ompTextGenerationRole(input.operation) : input.model,
-  ...(input.launchArgs ?? []),
+  ...ompPrintLaunchArgs(input.launchArgs ?? []),
 ];
 
 const failureDetail = (exitCode: number, stderr: string, stdout: string) => {

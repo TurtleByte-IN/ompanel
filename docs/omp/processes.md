@@ -18,10 +18,14 @@ omp --mode rpc-ui --approval-mode <mode> [--profile <name>] --config <overlay> -
 | `--cwd`           | The thread's worktree, or the server's working directory when the thread names none.                                                                                                                                   |
 
 The instance's **Launch arguments** come last. `resolveOmpLaunchArgs` in
-`launch.ts` refuses a flag Ompanel sets or relies on, and a token OMP would read
-as a prompt; the refusal fails the sidecar lookup, so the status card and every
-spawn show it. The same arguments end the control server's and text
-generation's command lines, never a subcommand's.
+`launch.ts` refuses a flag Ompanel sets or relies on, `--api-key` (a secret in
+argv), and a token OMP would read as a prompt; the refusal fails the sidecar
+lookup, so the status card and every spawn show it. The same arguments end the
+control server's command line, never a subcommand's. Text generation's
+`omp -p --no-tools --no-extensions` gets only what `ompPrintLaunchArgs` keeps
+(`--thinking`, `--service-tier` and switches that turn things off): `--tools`
+overrides `--no-tools`, and `-e`, `--hook`, `--plugin-dir` or an extension's
+flag load code despite `--no-extensions`.
 
 The binary is resolved (and its sha256 checked, see [sidecar.md](./sidecar.md))
 right before each spawn. The process gets the server's environment plus the

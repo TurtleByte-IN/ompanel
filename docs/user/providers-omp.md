@@ -31,10 +31,15 @@ More on OMP:
    A profile has its own agent directory, so set a profile or an agent
    directory, not both.
 5. **Launch arguments** are added to every OMP session the instance starts:
-   threads, text generation and the RPC servers Ompanel reads lists from. They
-   are not added to `omp config`, `omp plugin` or other subcommands, which reject
-   flags they do not know. Ompanel refuses flags it sets itself (mode, working
-   directory, profile, config, session, approval mode, model) and prompt text.
+   threads and the RPC servers Ompanel reads lists from. They are not added to
+   `omp config`, `omp plugin` or other subcommands, which reject flags they do
+   not know. Thread titles and commit messages get only `--thinking`,
+   `--service-tier` and the `--no-…` switches that turn things off, so a flag
+   like `--tools` or `-e` never gives that background run tools or extension
+   code. Ompanel refuses flags it sets itself (mode, working directory,
+   profile, config, session, approval mode, model), prompt text, and
+   `--api-key`: a key there would show in the process list, so sign in or use
+   an environment variable instead.
 
 Add another OMP instance for each separate account or configuration, each with
 its own profile.

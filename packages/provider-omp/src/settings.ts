@@ -69,7 +69,7 @@ export const OmpSettings = makeProviderSettingsSchema(
       Schema.annotateKey({
         title: "Launch arguments",
         description:
-          "Extra CLI arguments for every omp session this instance starts (threads, text generation, its RPC servers), not for `omp config`, `omp plugin` or other subcommands. Flags Ompanel sets itself (mode, cwd, profile, config, session, approval, model) are refused.",
+          "Extra CLI arguments for every omp session this instance starts (threads, its RPC servers), not for `omp config`, `omp plugin` or other subcommands. Title and commit-message runs get only --thinking, --service-tier and --no-… switches. Flags Ompanel sets itself (mode, cwd, profile, config, session, approval, model) and --api-key are refused.",
         providerSettingsForm: { placeholder: "--thinking high", clearWhenEmpty: "omit" },
       }),
     ),

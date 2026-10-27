@@ -5,7 +5,12 @@ import * as NodeURL from "node:url";
 
 import { assert, describe, it } from "@effect/vitest";
 
-import { ompSessionArgs, resolveOmpInstanceLaunch, resolveOmpLaunchArgs } from "./launch.ts";
+import {
+  ompPrintLaunchArgs,
+  ompSessionArgs,
+  resolveOmpInstanceLaunch,
+  resolveOmpLaunchArgs,
+} from "./launch.ts";
 
 const REPO_ROOT = NodeURL.fileURLToPath(new URL("../../../../", import.meta.url));
 
@@ -111,6 +116,36 @@ describe("OMP instance launch settings", () => {
       if (!resolved.ok) assert.include(resolved.message, "prompt");
     },
   );
+
+  it.each(["--api-key sk-secret", "--api-key=sk-secret", "--no-lsp --api-key sk-secret"])(
+    "refuses %j, a credential every omp's argv would show",
+    (launchArgs) => {
+      const resolved = resolveOmpLaunchArgs(launchArgs);
+      assert.isFalse(resolved.ok);
+      if (!resolved.ok) {
+        assert.include(resolved.message, "'--api-key'");
+        assert.include(resolved.message, "environment variable");
+        assert.notInclude(resolved.message, "sk-secret");
+      }
+    },
+  );
+
+  it("gives omp -p only flags that change how the model answers, never tools or code", () => {
+    const resolved = resolveOmpLaunchArgs(
+      "--tools read,bash --thinking high -e ./ext.ts --extension=./b.ts --hook ./h.ts " +
+        "--plugin-dir /p --trusted-extension ./t.ts --my-ext-flag on --service-tier=flex " +
+        "--no-lsp --advisor --append-system-prompt 'be brief' --tools=bash",
+    );
+    assert.isTrue(resolved.ok);
+    if (!resolved.ok) return;
+    assert.deepStrictEqual(ompPrintLaunchArgs(resolved.args), [
+      "--thinking",
+      "high",
+      "--service-tier=flex",
+      "--no-lsp",
+    ]);
+    assert.deepStrictEqual(ompPrintLaunchArgs([]), []);
+  });
 
   it("points PI_CODING_AGENT_DIR at the agent dir, ~ expanded, without an inherited profile", () => {
     const resolved = resolveOmpInstanceLaunch({

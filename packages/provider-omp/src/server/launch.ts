@@ -93,6 +93,12 @@ const OMP_RESERVED_LAUNCH_FLAGS: ReadonlyArray<string> = [
 ];
 
 /**
+ * OMP's launch flags that take a credential (`--api-key` in `cli/flag-tables.ts`). Saved as a
+ * launch argument, the secret would sit in every omp's argv, which other local users can read.
+ */
+const OMP_CREDENTIAL_LAUNCH_FLAGS: ReadonlyArray<string> = ["--api-key"];
+
+/**
  * OMP's value-less launch flags that a launch argument may use (`VALUELESS_FLAGS` in
  * `cli/flag-tables.ts`, less the reserved ones). A bare token after one of these is a prompt.
  */
@@ -134,6 +140,15 @@ export const resolveOmpLaunchArgs = (launchArgs: string): OmpLaunchArgsResolutio
         message: `OMP launch argument '${reserved}' is set by Ompanel and cannot be overridden.`,
       };
     }
+    const credential = OMP_CREDENTIAL_LAUNCH_FLAGS.find(
+      (flag) => arg === flag || arg.startsWith(`${flag}=`),
+    );
+    if (credential !== undefined) {
+      return {
+        ok: false,
+        message: `OMP launch argument '${credential}' would put a secret on the command line, where other local users can read it. Sign in to OMP or set the key in an environment variable instead.`,
+      };
+    }
     // Unknown flags may be extension flags that take a value, so only known value-less flags
     // and `--flag=value` forms leave a following bare token as a prompt.
     const previous = index === 0 ? undefined : args[index - 1]!;
@@ -153,12 +168,58 @@ export const resolveOmpLaunchArgs = (launchArgs: string): OmpLaunchArgsResolutio
   return { ok: true, args };
 };
 
+/**
+ * Launch arguments an `omp -p` run keeps. Titles and commit messages run `-p --no-tools
+ * --no-extensions` on untrusted text (messages, diffs); `--tools` overrides `--no-tools`, and
+ * `-e`/`--extension`, `--hook`, `--plugin-dir` or an extension's own flag load code despite
+ * `--no-extensions`. So only flags that change how the model answers, never what it can run,
+ * pass; the rest still reach the instance's threads.
+ */
+const OMP_PRINT_VALUE_FLAGS: Readonly<Record<string, true>> = {
+  "--thinking": true,
+  "--service-tier": true,
+};
+const OMP_PRINT_VALUELESS_FLAGS: Readonly<Record<string, true>> = {
+  "--hide-thinking": true,
+  "--no-lsp": true,
+  "--no-pty": true,
+  "--no-skills": true,
+  "--no-rules": true,
+  "--no-title": true,
+  "--no-tools": true,
+  "--no-extensions": true,
+};
+
+/** `args` (already accepted by `resolveOmpLaunchArgs`) less every flag an `omp -p` must not get. */
+export const ompPrintLaunchArgs = (args: ReadonlyArray<string>): ReadonlyArray<string> => {
+  const kept: Array<string> = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index]!;
+    const equals = arg.indexOf("=");
+    if (equals > 0 && OMP_PRINT_VALUE_FLAGS[arg.slice(0, equals)] === true) {
+      kept.push(arg);
+    } else if (OMP_PRINT_VALUELESS_FLAGS[arg] === true) {
+      kept.push(arg);
+    } else if (OMP_PRINT_VALUE_FLAGS[arg] === true) {
+      kept.push(...args.slice(index, index + 2));
+      index += 1;
+    } else if (equals === -1 && args[index + 1]?.startsWith("-") === false) {
+      // A dropped flag's value: accepted launch args have no bare token that is not one.
+      index += 1;
+    }
+  }
+  return kept;
+};
+
 export type OmpInstanceLaunchResolution =
   | {
       readonly ok: true;
       /** The environment every omp of the instance runs with. */
       readonly environment: NodeJS.ProcessEnv;
-      /** Appended to every `omp --mode rpc|rpc-ui` and `omp -p`; never to subcommands. */
+      /**
+       * Appended to every `omp --mode rpc|rpc-ui`, and through `ompPrintLaunchArgs` to `omp -p`;
+       * never to subcommands.
+       */
       readonly launchArgs: ReadonlyArray<string>;
     }
   | { readonly ok: false; readonly message: string };
