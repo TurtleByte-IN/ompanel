@@ -29,8 +29,9 @@ const at = (seconds: number) =>
   DateTime.makeUnsafe(Date.parse("2026-10-26T10:00:00.000Z") + seconds * 1000);
 const PNG = "iVBORw0KGgo=";
 
-function startedTurn() {
+function startedTurn(options: { readonly proposalsResolvable?: boolean } = {}) {
   const mapper = new OmpThreadMapper({
+    ...options,
     instanceId: INSTANCE_ID,
     providerSession: {
       id: ProviderSessionId.make("provider-session:omp"),
@@ -90,7 +91,7 @@ function startedTurn() {
       result,
       isError,
     });
-  return { frame, toolEnd };
+  return { frame, toolEnd, mapper };
 }
 
 function cardOf(items: ReadonlyArray<OrchestrationV2TurnItem>): OmpToolCard {
@@ -213,6 +214,143 @@ describe("OMP cards", () => {
     assert.strictEqual(restaged?.id, staged[0]?.id);
     const updated = cardOf(resolved.slice(1));
     assert.strictEqual(updated.kind === "proposed_edit" && updated.state, "applied");
+  });
+
+  const STAGED = {
+    content: [text("Staged as a proposal — files NOT modified yet. To apply: …\n-1:a\n+1:b")],
+    details: {
+      totalReplacements: 1,
+      filesTouched: 1,
+      applied: false,
+      fileReplacements: [{ path: "src/x.ts", count: 1 }],
+    },
+  };
+  const stage = (
+    toolEnd: (
+      toolName: string,
+      args: unknown,
+      result: unknown,
+    ) => ReadonlyArray<OrchestrationV2TurnItem>,
+  ) => toolEnd("ast_edit", { ops: [{ pat: "a", out: "b" }], paths: ["src"] }, STAGED);
+  const agentResolve = (toolCallId?: string) => ({
+    content: [text("Discarded")],
+    details: {
+      xdev: {
+        tool: "reject",
+        mode: "execute",
+        args: {},
+        inner: {
+          action: "discard",
+          sourceToolName: "ast_edit",
+          sourceResultDetails: { totalReplacements: 1, applied: false },
+          ...(toolCallId === undefined ? {} : { toolCallId }),
+        },
+      },
+    },
+  });
+
+  it("proposed edit on contract 1.10.0: the card offers Accept/Reject and waits for them", () => {
+    const { toolEnd, mapper } = startedTurn({ proposalsResolvable: true });
+    const staged = stage(toolEnd);
+    const [item] = staged;
+    assert.strictEqual(item?.status, "waiting");
+    const card = cardOf(staged);
+    assert.isTrue(card.kind === "proposed_edit" && card.resolvable);
+    const toolCallId = String(item?.nativeItemRef?.nativeId ?? "");
+    assert.isTrue(mapper.isProposalStaged(toolCallId));
+
+    const accepted = mapper
+      .resolveProposal(toolCallId, "applied", at(30))
+      .flatMap((event) => (event.type === "turn_item.updated" ? [event.turnItem] : []));
+    assert.strictEqual(accepted[0]?.id, item?.id);
+    assert.strictEqual(accepted[0]?.status, "completed");
+    const settled = cardOf(accepted);
+    assert.strictEqual(settled.kind === "proposed_edit" && settled.state, "applied");
+    assert.notProperty(settled, "resolvable");
+    // Consumed once: a second click, or the agent's own resolve, changes nothing.
+    assert.isFalse(mapper.isProposalStaged(toolCallId));
+    assert.lengthOf(mapper.resolveProposal(toolCallId, "discarded", at(31)), 0);
+  });
+
+  it("proposed edit: the agent's resolve updates the preview its tool call names", () => {
+    const { toolEnd, mapper } = startedTurn({ proposalsResolvable: true });
+    const first = stage(toolEnd)[0];
+    const second = stage(toolEnd)[0];
+    const firstId = String(first?.nativeItemRef?.nativeId ?? "");
+    const resolved = toolEnd("write", { path: "xd://reject" }, agentResolve(firstId));
+    assert.strictEqual(resolved[1]?.id, first?.id);
+    const card = cardOf(resolved.slice(1));
+    assert.strictEqual(card.kind === "proposed_edit" && card.state, "discarded");
+    // Without a named call (an older OMP), the latest staged preview is the one resolved.
+    const latest = toolEnd("write", { path: "xd://reject" }, agentResolve());
+    assert.strictEqual(latest[1]?.id, second?.id);
+    // A session that ends drops whatever is still staged.
+    stage(toolEnd);
+    const dropped = mapper
+      .settleProposals(at(60))
+      .flatMap((event) => (event.type === "turn_item.updated" ? [event.turnItem] : []));
+    assert.lengthOf(dropped, 1);
+    const droppedCard = cardOf(dropped);
+    assert.strictEqual(droppedCard.kind === "proposed_edit" && droppedCard.state, "discarded");
+  });
+
+  it("proposed edit: an errored resolve naming its preview still settles that card", () => {
+    const { toolEnd, mapper } = startedTurn({ proposalsResolvable: true });
+    const first = stage(toolEnd)[0];
+    stage(toolEnd);
+    const firstId = String(first?.nativeItemRef?.nativeId ?? "");
+    const failed = toolEnd("write", { path: "xd://reject" }, agentResolve(firstId), true);
+    assert.strictEqual(failed[1]?.id, first?.id);
+    const card = cardOf(failed.slice(1));
+    assert.strictEqual(card.kind === "proposed_edit" && card.state, "discarded");
+    assert.isFalse(mapper.isProposalStaged(firstId));
+  });
+
+  it("proposed edit: a withdrawn offer keeps the state and drops the buttons", () => {
+    const { toolEnd, mapper } = startedTurn({ proposalsResolvable: true });
+    const item = stage(toolEnd)[0];
+    const id = String(item?.nativeItemRef?.nativeId ?? "");
+    const withdrawn = mapper
+      .resolveProposal(id, "proposed", at(40))
+      .flatMap((event) => (event.type === "turn_item.updated" ? [event.turnItem] : []));
+    assert.strictEqual(withdrawn[0]?.status, "completed");
+    const card = cardOf(withdrawn);
+    assert.strictEqual(card.kind === "proposed_edit" && card.state, "proposed");
+    assert.notProperty(card, "resolvable");
+    assert.isFalse(mapper.isProposalStaged(id));
+  });
+
+  it.each([
+    ["a click during the agent's apply", "apply", "applied"],
+    ["a click that timed out, then the agent's reject", "discard", "discarded"],
+  ] as const)("proposed edit: %s settles the card from the agent's result", (_, action, state) => {
+    const { toolEnd, mapper } = startedTurn({ proposalsResolvable: true });
+    const item = stage(toolEnd)[0];
+    const id = String(item?.nativeItemRef?.nativeId ?? "");
+    const withdrawn = mapper
+      .withdrawProposalOffer(id, at(40))
+      .flatMap((event) => (event.type === "turn_item.updated" ? [event.turnItem] : []));
+    assert.strictEqual(withdrawn[0]?.status, "waiting");
+    assert.notProperty(cardOf(withdrawn), "resolvable");
+    assert.isTrue(mapper.isProposalStaged(id));
+    const result = agentResolve(id);
+    result.details.xdev.inner.action = action;
+    const resolved = toolEnd(
+      `write`,
+      { path: `xd://${action === "apply" ? "resolve" : "reject"}` },
+      result,
+    );
+    assert.strictEqual(resolved[1]?.id, item?.id);
+    const card = cardOf(resolved.slice(1));
+    assert.strictEqual(card.kind === "proposed_edit" && card.state, state);
+    assert.isFalse(mapper.isProposalStaged(id));
+  });
+
+  it("proposed edit on the pinned contract: no Accept/Reject, the card completes", () => {
+    const { toolEnd } = startedTurn();
+    const staged = stage(toolEnd);
+    assert.strictEqual(staged[0]?.status, "completed");
+    assert.notProperty(cardOf(staged), "resolvable");
   });
 
   it("proposed edit: conflict:// writes show the resolution", () => {

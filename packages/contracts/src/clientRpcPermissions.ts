@@ -30,6 +30,9 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.serverStartOmpThreadCollab]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverStopOmpThreadCollab]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverGetOmpThreadCollab]: AuthOrchestrationOperateScope,
+  // Accepting or rejecting a staged edit writes (or drops) changes in the thread's workspace,
+  // like answering the thread's own approvals.
+  [WS_METHODS.serverResolveOmpProposal]: AuthOrchestrationOperateScope,
   // Signing in and out of OMP's providers changes the provider install's stored credentials.
   [WS_METHODS.serverStartOmpSignIn]: AuthProvidersManageScope,
   [WS_METHODS.serverAnswerOmpSignIn]: AuthProvidersManageScope,

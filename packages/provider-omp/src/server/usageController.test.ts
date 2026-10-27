@@ -254,6 +254,7 @@ describe("OMP usage: running threads (get_session_stats)", () => {
     process: { request },
     onRestartRequired: () => Effect.void,
     isBusy: () => false,
+    resolveProposal: () => Effect.die("not used"),
   });
 
   it.effect("reports each thread on its own, failures included", () =>

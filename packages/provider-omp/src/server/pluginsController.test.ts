@@ -179,6 +179,7 @@ const session = (
   process: { request },
   onRestartRequired: () => Effect.void,
   isBusy: () => busy,
+  resolveProposal: () => Effect.die("not used"),
 });
 
 const controllerWith = (

@@ -5,9 +5,12 @@ Re-check them when the pin moves.
 
 ## Extension `setStatus` and `setWidget`
 
-Ompanel renders neither, natively or as a generic card. The mapper drops both frames
-(`packages/provider-omp/src/server/mapper.ts`, test "shows open_url and set_editor_text
-as notifications and ignores TUI styling" in `uiRequests.test.ts`). Neither needs a reply.
+Ompanel shows both in a per-thread status strip above the composer, not as cards. The
+mapper keeps them on the provider thread's `nativeMetadata.extensionStatus`, keyed by
+`statusKey` / `widgetKey` (`applyExtensionStatus` in
+`packages/provider-omp/src/server/mapper.ts`; tests "keeps extension status lines and
+widgets…" in `uiRequests.test.ts`, `OmpStatusStrip.browser.test.tsx` in `apps/web`).
+Neither needs a reply. The frame table in [frames.md](frames.md) has the rules.
 
 - Nothing built into OMP sends content. RPC forwards `setWidget` only for a string
   array or a removal; OMP's one built-in widget (the autoresearch dashboard) passes a
@@ -17,11 +20,11 @@ as notifications and ignores TUI styling" in `uiRequests.test.ts`). Neither need
   transient progress line (`/review`: "Loading open PRs…", `/annotate`: "Rephrasing
   annotation source with the session model…"), removed when the command finishes.
 - Both are keyed state that replaces itself, sent at any time; an extension may update
-  its status on every turn. A card per update would pile up in the transcript. The
-  fitting surface is a per-thread status strip keyed by `statusKey` / `widgetKey`,
-  where an absent value removes the entry.
-- Only third-party extensions produce content. Build the strip when an extension
-  Ompanel users rely on needs it.
+  its status on every turn. A card per update would pile up in the transcript, so the
+  strip holds one entry per key, and an absent value removes the entry. The adapter
+  applies them as soon as they arrive, even with no turn running.
+- Only third-party extensions produce content, so the strip is empty for most threads
+  and then renders nothing.
 
 ## `--config` overlay and `modelRoleStorage: project`
 

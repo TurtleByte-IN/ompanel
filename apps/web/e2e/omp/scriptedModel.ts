@@ -27,6 +27,11 @@ export const TOOL_REFUSED_PREFIX = "scripted model cannot call ";
 const FANOUT_PREFIX = "fanout: ";
 /** A subagent (offered OMP's `yield` tool) yields this as its result. */
 const SUBAGENT_RESULT = "subagent done";
+/**
+ * In vibe mode, `vibe spawn: <name>` makes the model start one `good` worker session named
+ * `<name>` with OMP's `vibe_spawn` tool; the worker's task is `Reply with <name>-done.`
+ */
+export const VIBE_SPAWN_PREFIX = "vibe spawn: ";
 /** A user message containing this, while OMP offers its `goal` tool, marks the goal complete. */
 export const GOAL_DONE_MARKER = "goal done:";
 /** The text after this marker comes back verbatim. */
@@ -216,6 +221,19 @@ const scriptedReply = (request: ChatRequest, devices: ReadonlyArray<string>): Re
       .map((name) => name.trim())
       .filter((name) => name !== "");
     return { calls: fanoutCalls(request, names) };
+  }
+  const vibeAt = userText.indexOf(VIBE_SPAWN_PREFIX);
+  if (vibeAt !== -1 && offered.has("vibe_spawn")) {
+    const name =
+      userText
+        .slice(vibeAt + VIBE_SPAWN_PREFIX.length)
+        .split("\n")[0]
+        ?.trim() ?? "";
+    return {
+      calls: [
+        { tool: "vibe_spawn", args: { cli: "good", name, prompt: `Reply with ${name}-done.` } },
+      ],
+    };
   }
   const verbatimAt = userText.indexOf(VERBATIM_MARKER);
   if (verbatimAt !== -1)

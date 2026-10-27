@@ -14,6 +14,9 @@ const PROPOSAL_LABEL = {
   discarded: "Discarded",
 } as const;
 
+/** A staged proposal the user can resolve from the card (OMP sidecar with `resolve_proposal`). */
+const RESOLVABLE_LABEL = "Proposed: files not modified yet. Accept or reject it.";
+
 const PROPOSAL_CLASS = {
   proposed: "text-warning-foreground",
   applied: "text-adaptive-emerald-600-400",
@@ -68,6 +71,7 @@ function joined(parts: ReadonlyArray<string | false | null | undefined>, separat
 function CardBody(props: {
   readonly card: OmpToolCardModel;
   readonly renderAudio?: ((path: string) => ReactNode) | undefined;
+  readonly renderProposalActions?: (() => ReactNode) | undefined;
 }) {
   const { card } = props;
   switch (card.kind) {
@@ -91,11 +95,15 @@ function CardBody(props: {
           ))}
         </>
       );
-    case "proposed_edit":
+    case "proposed_edit": {
+      const actions =
+        card.state === "proposed" && card.resolvable === true
+          ? props.renderProposalActions?.()
+          : undefined;
       return (
         <>
           <Line className={PROPOSAL_CLASS[card.state]}>
-            {`${PROPOSAL_LABEL[card.state]} · ${card.replacements} replacement${
+            {`${actions === undefined ? PROPOSAL_LABEL[card.state] : RESOLVABLE_LABEL} · ${card.replacements} replacement${
               card.replacements === 1 ? "" : "s"
             }`}
           </Line>
@@ -106,8 +114,10 @@ function CardBody(props: {
             <Line className="text-foreground-muted">Reason: {card.reason}</Line>
           ) : null}
           <Pre text={card.diff} />
+          {actions ?? null}
         </>
       );
+    }
     case "conflict_resolution":
       return (
         <>
@@ -250,10 +260,27 @@ export function OmpToolCard(props: {
   readonly card: OmpToolCardModel;
   /** Renders the playable audio a `speech` card points at; without it the path is shown. */
   readonly renderAudio?: (path: string) => ReactNode;
+  /** Accept and Reject for a staged edit; absent where the card is read-only. */
+  readonly renderProposalActions?: () => ReactNode;
 }) {
   return (
     <View className="gap-1.5" testID={`omp-card-${props.card.kind}`}>
-      <CardBody card={props.card} renderAudio={props.renderAudio} />
+      <CardBody
+        card={props.card}
+        renderAudio={props.renderAudio}
+        renderProposalActions={props.renderProposalActions}
+      />
     </View>
   );
+}
+
+/**
+ * The tool call whose staged proposal the card may resolve: only while the item waits for it.
+ * A cancelled item (crash recovery) or a settled one is read-only.
+ */
+export function ompProposalToolCallId(item: {
+  readonly status: string;
+  readonly nativeItemRef: { readonly nativeId: string | null } | null;
+}): string | undefined {
+  return item.status === "waiting" ? (item.nativeItemRef?.nativeId ?? undefined) : undefined;
 }

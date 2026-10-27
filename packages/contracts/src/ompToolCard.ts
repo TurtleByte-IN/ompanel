@@ -17,7 +17,10 @@ export interface OmpAskAnswer {
   readonly timedOut?: boolean;
 }
 
-/** Where an `ast_edit` proposal stands. OMP stages it; only the agent applies or discards it. */
+/**
+ * Where an `ast_edit` proposal stands. OMP stages it; the agent applies or discards it, and so
+ * can the user from the card when the OMP sidecar has `resolve_proposal` (`resolvable`).
+ */
 export type OmpProposalState = "proposed" | "applied" | "discarded";
 
 export interface OmpDebugFrame {
@@ -59,6 +62,11 @@ export type OmpToolCard =
       readonly replacements: number;
       readonly diff: string;
       readonly reason?: string;
+      /**
+       * Still staged in the running OMP session and the sidecar takes `resolve_proposal`: the
+       * card offers Accept and Reject. Absent once resolved, or on an older sidecar.
+       */
+      readonly resolvable?: boolean;
     }
   | {
       readonly kind: "conflict_resolution";

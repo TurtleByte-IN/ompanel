@@ -17,6 +17,7 @@ import type {
   OmpBranchTree,
   OmpCollabAccess,
   OmpCollabStatus,
+  OmpProposalAction,
   OmpShareGistResult,
   ProviderInstanceId,
   ScopedThreadRef,
@@ -113,6 +114,41 @@ function downloadHtml(fileName: string, html: string): void {
 /** Every OMP call shows its own failure, in its dialog or a toast. */
 const command = <W, A, E>(atomCommand: AtomCommand<W, A, E>, input: W) =>
   runAtomCommand(appAtomRegistry, atomCommand, input, { reportFailure: false });
+
+/**
+ * Accept (`apply`) or Reject (`discard`) the proposal tool call `toolCallId` staged, from its card.
+ * The card itself updates from the thread's events; a failure shows as a toast.
+ */
+export async function resolveOmpProposal(
+  threadRef: ScopedThreadRef,
+  toolCallId: string,
+  action: OmpProposalAction,
+): Promise<void> {
+  const instanceId = readOmpThreadInstanceId(threadRef);
+  if (instanceId === null) return;
+  const result = await command(serverEnvironment.resolveOmpProposal, {
+    environmentId: threadRef.environmentId,
+    input: { instanceId, threadId: threadRef.threadId, toolCallId, action },
+  });
+  if (result._tag === "Success") {
+    if (result.value.stale) {
+      toastManager.add({
+        type: "warning",
+        title: "Files changed since the preview",
+        description: result.value.text,
+      });
+    }
+    return;
+  }
+  const message = failureMessage(result);
+  if (message !== null) {
+    toastManager.add({
+      type: "error",
+      title: action === "apply" ? "Could not accept the edit" : "Could not reject the edit",
+      description: message,
+    });
+  }
+}
 
 /** Runs a picked OMP menu item for `threadRef`; the parent `omp` item does nothing. */
 export async function runOmpThreadMenuAction(

@@ -7,6 +7,7 @@ import {
   OmpThreadMenuOperationError,
   type OmpCollabAccess,
   type OmpCollabStatus,
+  type OmpProposalAction,
   type OmpThreadMenuOperationErrorReason,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -25,6 +26,11 @@ import {
   readOmpThreadSessionRecord,
   type OmpSessionsLocation,
 } from "./ompSessions.ts";
+import {
+  isOmpProposalNotPending,
+  OMP_RESOLVE_PROPOSAL_CONTRACT,
+  ompProposalsResolvable,
+} from "./proposals.ts";
 import type { OmpRpcRequestError } from "./rpcProcess.ts";
 import { readOmpBranchTree } from "./sessionBranches.ts";
 import type { OmpSidecarError } from "./sidecar.ts";
@@ -343,5 +349,43 @@ export const makeOmpThreadMenuController = (
     );
   });
 
-  return { exportHtml, shareGist, startCollab, stopCollab, collabStatus, branchTree };
+  const proposalsSupported = ompProposalsResolvable(input.contractVersion);
+
+  const resolveProposal = Effect.fn("OmpThreadMenu.resolveProposal")(function* (request: {
+    readonly threadId: ThreadId;
+    readonly toolCallId: string;
+    readonly action: OmpProposalAction;
+  }) {
+    if (!proposalsSupported) {
+      return yield* fail(
+        "needs_newer_omp",
+        `Accept and Reject need OMP RPC contract ${OMP_RESOLVE_PROPOSAL_CONTRACT} or later; this Ompanel runs OMP ${input.ompVersion} (contract ${input.contractVersion}). Ask the agent to apply or discard the proposal instead.`,
+      );
+    }
+    const session = yield* running(request.threadId);
+    const answer = yield* session
+      .resolveProposal({ toolCallId: request.toolCallId, action: request.action })
+      .pipe(
+        Effect.mapError((error) =>
+          isOmpProposalNotPending(error)
+            ? fail("not_pending", "This proposal is no longer pending: it was already resolved.")
+            : rpcFailed(error),
+        ),
+      );
+    return {
+      state: answer.action === "apply" ? ("applied" as const) : ("discarded" as const),
+      stale: answer.isError,
+      text: answer.text,
+    };
+  });
+
+  return {
+    exportHtml,
+    shareGist,
+    startCollab,
+    stopCollab,
+    collabStatus,
+    branchTree,
+    resolveProposal,
+  };
 };

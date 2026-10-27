@@ -12,7 +12,8 @@ import type * as Scope from "effect/Scope";
 
 import { OMP_GUARDED_KEYS, type OmpThreadRpcCommand } from "../configForm.ts";
 import { OMP_EMPTY_OVERLAY, ompThreadOverlayPath } from "./launch.ts";
-import type { OmpRpcProcess } from "./rpcProcess.ts";
+import type { OmpProposalAction, OmpResolveProposalAnswer } from "./proposals.ts";
+import type { OmpRpcProcess, OmpRpcRequestError } from "./rpcProcess.ts";
 import {
   type OmpThreadSettingsHost,
   OmpThreadHostError,
@@ -32,6 +33,11 @@ export interface OmpThreadSession {
   readonly onRestartRequired: (keys: ReadonlyArray<string>) => Effect.Effect<void>;
   /** A T3 turn is running in the session; a fork of it must wait (sessionBranches.ts). */
   readonly isBusy: () => boolean;
+  /** RPC `resolve_proposal`, then the staged card shows the outcome (proposals.ts). */
+  readonly resolveProposal: (request: {
+    readonly toolCallId: string;
+    readonly action: OmpProposalAction;
+  }) => Effect.Effect<OmpResolveProposalAnswer, OmpRpcRequestError>;
 }
 
 export interface OmpThreadSessions {

@@ -1534,6 +1534,15 @@ export function createServerEnvironmentAtoms<R, E>(
         key: ({ environmentId, input }) => `${environmentId}:${input.threadId}`,
       },
     }),
+    // One answer per click: a second click on the same card while the first runs joins it.
+    resolveOmpProposal: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:omp-thread-menu:resolve-proposal",
+      tag: WS_METHODS.serverResolveOmpProposal,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => `${environmentId}:${input.threadId}:${input.toolCallId}`,
+      },
+    }),
     readOmpSettings: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:omp-settings:read",
       tag: WS_METHODS.serverReadOmpSettings,
