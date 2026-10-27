@@ -107,8 +107,8 @@ argv, cwd of every process) and `frames()` (every RPC line it read).
 
 `target(script)` returns an `OmpControlTarget` whose `omp` answers with the
 pinned fork's output (`PINNED_*`, captured in a scratch `HOME`: CLI output from
-the v18.12.6-ompanel.3 sidecar, whose CLI the pinned v18.12.6-ompanel.4 keeps,
-and the `ready` frame from v18.12.6-ompanel.4; typed against the vendored CLI
+the v18.12.6-ompanel.3 sidecar, whose CLI the pinned v18.12.6-ompanel.5 keeps,
+and the `ready` frame from v18.12.6-ompanel.5; typed against the vendored CLI
 and wire contracts) unless `script` replaces a command:
 
 ```ts

@@ -57,7 +57,8 @@ Projects & threads, project-scoped; on mobile under Server controls → Agent be
   reject an overlay with an unknown key. On such an OMP the setting is not enforced: the
   server reports it (`ompWorkspaceTrust` capability), web and mobile say "Not enforced by
   this server's OMP version", and opening an untrusted thread logs a warning with the
-  contract versions (no paths). Until `omp.lock` pins such a release, that is the state.
+  contract versions (no paths). The pinned sidecar (`v18.12.6-ompanel.5`, contract 1.9.0)
+  enforces it.
 - Ompanel's thread overlay is a loaded `--config` file, so outside Full access OMP asks
   before any write to it, whatever the mode or a remembered grant
   (oh-my-pi `d1dd9c852`: `config/settings.ts:762` registers loaded overlays,
