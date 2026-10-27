@@ -251,6 +251,8 @@ export const OMP_PROVIDER_CAPABILITIES = {
 export interface OmpAdapterOptions {
   readonly instanceId: ProviderInstanceId;
   readonly profile: string;
+  /** The instance's launch arguments, appended to every thread's `omp --mode rpc-ui`. */
+  readonly launchArgs?: ReadonlyArray<string>;
   readonly environment: NodeJS.ProcessEnv;
   readonly platform: NodeJS.Platform;
   /** Working directory for threads that do not name one. */
@@ -435,6 +437,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
     const process = yield* startOmpSessionProcess({
       binaryPath,
       profile: options.profile,
+      ...(options.launchArgs === undefined ? {} : { launchArgs: options.launchArgs }),
       runtimeMode: input.runtimePolicy.runtimeMode,
       cwd,
       threadId: input.threadId,

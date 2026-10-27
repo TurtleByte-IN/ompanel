@@ -22,3 +22,36 @@ describe("OmpSettings.binaryPath", () => {
     assert.isTrue(Result.isFailure(decode({ binaryPath })));
   });
 });
+
+describe("OmpSettings.agentDir and launchArgs", () => {
+  it("decodes both to empty by default", () => {
+    const decoded = decode({});
+    assert.isTrue(Result.isSuccess(decoded));
+    if (Result.isSuccess(decoded)) {
+      assert.strictEqual(decoded.success.agentDir, "");
+      assert.strictEqual(decoded.success.launchArgs, "");
+    }
+  });
+
+  it.each(["/srv/omp/agent", "~/.omp-work/agent", "C:\\omp\\agent"])(
+    "accepts the agent dir %j",
+    (agentDir) => {
+      assert.isTrue(Result.isSuccess(decode({ agentDir })));
+    },
+  );
+
+  it.each(["agent", "./agent", ".omp/agent"])("rejects the relative agent dir %j", (agentDir) => {
+    assert.isTrue(Result.isFailure(decode({ agentDir })));
+  });
+
+  it("keeps launch arguments as written, trimmed", () => {
+    const decoded = decode({ launchArgs: "  --thinking high --append-system-prompt 'be brief'  " });
+    assert.isTrue(Result.isSuccess(decoded));
+    if (Result.isSuccess(decoded)) {
+      assert.strictEqual(
+        decoded.success.launchArgs,
+        "--thinking high --append-system-prompt 'be brief'",
+      );
+    }
+  });
+});

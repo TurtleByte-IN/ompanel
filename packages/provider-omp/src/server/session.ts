@@ -38,6 +38,8 @@ export interface OmpSessionProcessInput {
   /** Absolute path of the verified `omp` binary, resolved right before this spawn. */
   readonly binaryPath: string;
   readonly profile: string;
+  /** The instance's launch arguments, appended to omp's argv. */
+  readonly launchArgs?: ReadonlyArray<string>;
   readonly runtimeMode: RuntimeMode;
   readonly cwd: string;
   readonly threadId: string;
@@ -62,6 +64,7 @@ export const startOmpSessionProcess = Effect.fn("startOmpSessionProcess")(functi
     profile: input.profile,
     overlayPath,
     cwd: input.cwd,
+    ...(input.launchArgs === undefined ? {} : { launchArgs: input.launchArgs }),
   });
 
   const agentScope = yield* AgentScope;

@@ -5,6 +5,8 @@
  * strictly by `config/settings.ts`), `--cwd` (`cli/flag-tables.ts`).
  */
 import type { RuntimeMode } from "@t3tools/contracts";
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import { tokenizeCliArgs } from "@t3tools/shared/cliArgs";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -50,15 +52,162 @@ export const ompApprovalModeFor = (runtimeMode: RuntimeMode): OmpApprovalMode =>
   }
 };
 
+/**
+ * Flags Ompanel sets or relies on for every omp it starts: mode, working directory, profile,
+ * config overlay, session choice, approval policy (and what bypasses it), the model it picks per
+ * thread or operation, and one-shot actions that exit. A launch argument may not set any of them.
+ */
+const OMP_RESERVED_LAUNCH_FLAGS: ReadonlyArray<string> = [
+  "--mode",
+  "--print",
+  "-p",
+  "--no-ui",
+  "--cwd",
+  "--profile",
+  "--alias",
+  "--config",
+  "--approval-mode",
+  "--auto-approve",
+  "--yolo",
+  "--plan-yolo",
+  "--plan-yolo-into",
+  "--session",
+  "--session-dir",
+  "--no-session",
+  "--resume",
+  "-r",
+  "--restore",
+  "--continue",
+  "-c",
+  "--fork",
+  "--from-claude",
+  "--from-codex",
+  "--goal",
+  "--export",
+  "--model",
+  "--provider",
+  "--help",
+  "-h",
+  "--version",
+  "-v",
+];
+
+/**
+ * OMP's value-less launch flags that a launch argument may use (`VALUELESS_FLAGS` in
+ * `cli/flag-tables.ts`, less the reserved ones). A bare token after one of these is a prompt.
+ */
+const OMP_VALUELESS_LAUNCH_FLAGS: Readonly<Record<string, true>> = {
+  "--allow-home": true,
+  "--no-tools": true,
+  "--no-lsp": true,
+  "--no-pty": true,
+  "--hide-thinking": true,
+  "--advisor": true,
+  "--external-thinking": true,
+  "--prewalk": true,
+  "--no-prewalk": true,
+  "--print-thoughts": true,
+  "--no-extensions": true,
+  "--no-skills": true,
+  "--no-rules": true,
+  "--no-title": true,
+};
+
+export type OmpLaunchArgsResolution =
+  | { readonly ok: true; readonly args: ReadonlyArray<string> }
+  | { readonly ok: false; readonly message: string };
+
+/**
+ * The instance's launch arguments, shell-tokenized. Refuses a flag Ompanel owns and anything OMP
+ * would read as a prompt: `--`, or a bare token that is not the value of the flag before it.
+ */
+export const resolveOmpLaunchArgs = (launchArgs: string): OmpLaunchArgsResolution => {
+  const args = tokenizeCliArgs(launchArgs);
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index]!;
+    const reserved = OMP_RESERVED_LAUNCH_FLAGS.find(
+      (flag) => arg === flag || (flag.startsWith("--") && arg.startsWith(`${flag}=`)),
+    );
+    if (reserved !== undefined) {
+      return {
+        ok: false,
+        message: `OMP launch argument '${reserved}' is set by Ompanel and cannot be overridden.`,
+      };
+    }
+    // Unknown flags may be extension flags that take a value, so only known value-less flags
+    // and `--flag=value` forms leave a following bare token as a prompt.
+    const previous = index === 0 ? undefined : args[index - 1]!;
+    const isValue =
+      previous !== undefined &&
+      previous.startsWith("-") &&
+      previous !== "-" &&
+      !previous.includes("=") &&
+      OMP_VALUELESS_LAUNCH_FLAGS[previous] !== true;
+    if (arg === "--" || ((arg === "-" || !arg.startsWith("-")) && !isValue)) {
+      return {
+        ok: false,
+        message: `OMP launch arguments cannot include a prompt or positional argument ('${arg}').`,
+      };
+    }
+  }
+  return { ok: true, args };
+};
+
+export type OmpInstanceLaunchResolution =
+  | {
+      readonly ok: true;
+      /** The environment every omp of the instance runs with. */
+      readonly environment: NodeJS.ProcessEnv;
+      /** Appended to every `omp --mode rpc|rpc-ui` and `omp -p`; never to subcommands. */
+      readonly launchArgs: ReadonlyArray<string>;
+    }
+  | { readonly ok: false; readonly message: string };
+
+/**
+ * How every omp of an instance runs, from its settings. `agentDir` becomes
+ * `PI_CODING_AGENT_DIR`; inherited `OMP_PROFILE`/`PI_PROFILE` are dropped since a profile
+ * outranks it, and a configured profile beside it is refused for the same reason.
+ */
+export const resolveOmpInstanceLaunch = (input: {
+  readonly agentDir: string;
+  readonly launchArgs: string;
+  readonly profile: string;
+  readonly environment: NodeJS.ProcessEnv;
+  readonly homeDir: string;
+}): OmpInstanceLaunchResolution => {
+  const launchArgs = resolveOmpLaunchArgs(input.launchArgs);
+  if (!launchArgs.ok) return launchArgs;
+  if (input.agentDir === "") {
+    return { ok: true, environment: input.environment, launchArgs: launchArgs.args };
+  }
+  if (input.profile !== "") {
+    return {
+      ok: false,
+      message:
+        "Set either an OMP profile or an agent directory, not both: a profile has its own agent directory.",
+    };
+  }
+  const environment: NodeJS.ProcessEnv = { ...input.environment };
+  delete environment["OMP_PROFILE"];
+  delete environment["PI_PROFILE"];
+  environment["PI_CODING_AGENT_DIR"] = expandHomePath(input.agentDir, input.homeDir);
+  return { ok: true, environment, launchArgs: launchArgs.args };
+};
+
 export interface OmpSessionLaunch {
   readonly approvalMode: OmpApprovalMode;
   /** Empty for OMP's default profile. */
   readonly profile: string;
   readonly overlayPath: string;
   readonly cwd: string;
+  /** The instance's launch arguments, appended after Ompanel's own flags. */
+  readonly launchArgs?: ReadonlyArray<string>;
 }
 
-/** `omp --mode rpc-ui --approval-mode <m> [--profile <p>] --config <overlay> --cwd <path>`. */
+/**
+ * `omp --mode rpc-ui --approval-mode <m> [--profile <p>] --config <overlay> --cwd <path>
+ * [launch args]`.
+ */
 export const ompSessionArgs = (launch: OmpSessionLaunch): ReadonlyArray<string> => [
   "--mode",
   "rpc-ui",
@@ -69,6 +218,7 @@ export const ompSessionArgs = (launch: OmpSessionLaunch): ReadonlyArray<string> 
   launch.overlayPath,
   "--cwd",
   launch.cwd,
+  ...(launch.launchArgs ?? []),
 ];
 
 /** OMP rejects a missing or non-mapping overlay, so an empty one is an explicit empty mapping. */

@@ -7,7 +7,7 @@ Every thread on an OMP instance runs its own `omp` process. The code is in
 ## Command line
 
 ```
-omp --mode rpc-ui --approval-mode <mode> [--profile <name>] --config <overlay> --cwd <dir>
+omp --mode rpc-ui --approval-mode <mode> [--profile <name>] --config <overlay> --cwd <dir> [launch args]
 ```
 
 | Flag              | Value                                                                                                                                                                                                                  |
@@ -17,9 +17,18 @@ omp --mode rpc-ui --approval-mode <mode> [--profile <name>] --config <overlay> -
 | `--config`        | The thread's overlay, `<stateDir>/omp/threads/<thread id>/overlay.yml` (owner-only). Created as an empty mapping; a respawn keeps it, because it holds the thread's settings overrides ([settings.md](./settings.md)). |
 | `--cwd`           | The thread's worktree, or the server's working directory when the thread names none.                                                                                                                                   |
 
+The instance's **Launch arguments** come last. `resolveOmpLaunchArgs` in
+`launch.ts` refuses a flag Ompanel sets or relies on, and a token OMP would read
+as a prompt; the refusal fails the sidecar lookup, so the status card and every
+spawn show it. The same arguments end the control server's and text
+generation's command lines, never a subcommand's.
+
 The binary is resolved (and its sha256 checked, see [sidecar.md](./sidecar.md))
 right before each spawn. The process gets the server's environment plus the
-instance's environment overrides.
+instance's environment overrides. An instance **Agent directory** sets
+`PI_CODING_AGENT_DIR` (with `OMP_PROFILE` and `PI_PROFILE` dropped) for every
+`omp` the instance runs. Ompanel sets no `OTEL_*` variable and no `telemetry.*`
+key, so OMP's own OTLP export follows the user's environment and OMP settings.
 
 The same command line runs on macOS, Linux and Windows:
 

@@ -23,6 +23,8 @@ export interface OmpTextGenerationOptions {
   /** Resolves the omp executable (sidecar resolver) when an operation runs. */
   readonly resolveBinary: Effect.Effect<string, OmpSidecarError>;
   readonly profile: string;
+  /** The instance's launch arguments, appended to every `omp -p`. */
+  readonly launchArgs?: ReadonlyArray<string>;
   readonly environment: NodeJS.ProcessEnv;
   /**
    * An empty directory Ompanel owns. omp runs here, never in the checkout, so the checkout's
@@ -48,6 +50,7 @@ const ompTextGenerationArgs = (input: {
   readonly operation: TextGenerationOperations.Operation;
   readonly model: string;
   readonly profile: string;
+  readonly launchArgs?: ReadonlyArray<string>;
 }): ReadonlyArray<string> => [
   ...(input.profile === "" ? [] : ["--profile", input.profile]),
   "-p",
@@ -56,6 +59,7 @@ const ompTextGenerationArgs = (input: {
   "--no-extensions",
   "--model",
   input.model === OMP_DEFAULT_MODEL_SLUG ? ompTextGenerationRole(input.operation) : input.model,
+  ...(input.launchArgs ?? []),
 ];
 
 const failureDetail = (exitCode: number, stderr: string, stdout: string) => {
@@ -84,7 +88,10 @@ export const makeOmpTextGeneration = Effect.fn("makeOmpTextGeneration")(function
           (cause) =>
             new TextGenerationError({
               operation,
-              detail: "Could not locate the OMP executable.",
+              detail:
+                cause.reason === "invalid_launch_settings"
+                  ? cause.message
+                  : "Could not locate the OMP executable.",
               cause,
             }),
         ),
@@ -95,6 +102,7 @@ export const makeOmpTextGeneration = Effect.fn("makeOmpTextGeneration")(function
           operation,
           model: modelSelection.model,
           profile: options.profile,
+          ...(options.launchArgs === undefined ? {} : { launchArgs: options.launchArgs }),
         }),
         {
           cwd: options.cwd,

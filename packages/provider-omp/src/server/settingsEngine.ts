@@ -17,6 +17,8 @@ import type {
 
 import {
   buildOmpSettingsForm,
+  isOmpSecretReference,
+  OMP_SECRET_REFERENCE_KEYS,
   ompConfigValueFits,
   ompThreadRpcCommand,
   type OmpThreadRpcCommand,
@@ -51,7 +53,9 @@ export class OmpSettingsError extends Schema.TaggedError<OmpSettingsError>()("Om
       case "not_thread_overridable":
         return `${this.key} follows the thread's permission mode or its project's trust and cannot be overridden per thread.`;
       case "credential":
-        return `${this.key} is a stored credential; change it with OMP sign-in or an environment variable, or reset it.`;
+        return OMP_SECRET_REFERENCE_KEYS.includes(this.key)
+          ? `${this.key} takes where OMP reads the secret (an environment variable name or !command), never the secret itself.`
+          : `${this.key} is a stored credential; change it with OMP sign-in or an environment variable, or reset it.`;
       case "invalid_overlay":
         return `The thread's OMP overlay is not one Ompanel wrote, so ${this.key} was not changed.`;
     }
@@ -259,9 +263,12 @@ export const makeOmpSettingsEngine = (deps: {
   /**
    * A credential, stored or not, is never set from here: `config set` would carry it in argv,
    * which other local users can read, and an overlay would copy it to disk. Reset still clears it.
+   * A credential OMP resolves (`OMP_SECRET_REFERENCE_KEYS`) may be set to a reference instead:
+   * `!command` or an environment variable name, never the secret itself.
    */
   const checkAssignable = (field: OmpSettingsField, value: unknown) =>
-    field.credential
+    field.credential &&
+    !(OMP_SECRET_REFERENCE_KEYS.includes(field.key) && isOmpSecretReference(value))
       ? Effect.fail(new OmpSettingsError({ key: field.key, reason: "credential" }))
       : ompConfigValueFits(field.type, value)
         ? Effect.void

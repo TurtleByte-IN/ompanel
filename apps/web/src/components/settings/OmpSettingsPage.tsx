@@ -1,8 +1,10 @@
 import type {
   EnvironmentId,
+  OmpConfigScope,
   OmpSettingsField,
   OmpSettingsForm as OmpSettingsFormModel,
   OmpSettingsWriteResult,
+  ProjectId,
   ProviderInstanceId,
 } from "@t3tools/contracts";
 import {
@@ -15,10 +17,12 @@ import {
   OMP_SETTINGS_PAGES,
   OMP_WEB_SEARCH_ROLE,
   ompSettingsPageForm,
+  ompSettingsPageHasSettings,
   type OmpSettingsPageId,
 } from "@t3tools/provider-omp/settingsPages";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
+import { useProjects } from "../../state/entities";
 import {
   useEnvironmentConnectionStatus,
   useEnvironmentHasConnected,
@@ -45,8 +49,14 @@ import {
 } from "./OmpSettingsRuleEditors";
 import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
 
-// Ompanel writes the user's global OMP config from these pages; project layers stay per project.
-const SCOPE = "global";
+/** A project the pages can show and write the `.omp/config.yml` layer of. */
+export interface OmpSettingsProject {
+  readonly id: ProjectId;
+  readonly title: string;
+  readonly workspaceRoot: string;
+}
+
+const GLOBAL_LAYER = "global";
 
 function reportFailure(title: string, result: AtomCommandResult<unknown, unknown>) {
   if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
@@ -220,30 +230,90 @@ function KeybindingsNote() {
   );
 }
 
-/** One OMP settings page for one OMP instance: reads through the engine, writes globally. */
+/** Global or one project's `.omp/config.yml`: which layer the page shows and writes. */
+function LayerSwitch({
+  projects,
+  projectId,
+  onChange,
+}: {
+  readonly projects: ReadonlyArray<OmpSettingsProject>;
+  readonly projectId: ProjectId | null;
+  readonly onChange: (projectId: ProjectId | null) => void;
+}) {
+  const project = projects.find((candidate) => candidate.id === projectId);
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <Select
+        value={projectId ?? GLOBAL_LAYER}
+        onValueChange={(next) => {
+          if (next === null) return;
+          onChange(next === GLOBAL_LAYER ? null : (next as ProjectId));
+        }}
+      >
+        <SelectTrigger size="sm" aria-label="OMP config layer" className="w-56">
+          <SelectValue>
+            {project === undefined ? "Global" : `Project: ${project.title}`}
+          </SelectValue>
+        </SelectTrigger>
+        <SelectPopup>
+          <SelectItem value={GLOBAL_LAYER}>Global</SelectItem>
+          {projects.map((candidate) => (
+            <SelectItem key={candidate.id} value={candidate.id}>
+              {`Project: ${candidate.title}`}
+            </SelectItem>
+          ))}
+        </SelectPopup>
+      </Select>
+      <p className="text-muted-foreground text-xs" data-omp-settings-layer>
+        {project === undefined
+          ? "Edits go to OMP's global config.yml; values show what applies outside any project."
+          : `Edits go to ${project.workspaceRoot}/.omp/config.yml; values show what applies in this project.`}
+      </p>
+    </div>
+  );
+}
+
+/**
+ * One OMP settings page for one OMP instance: reads through the engine and writes the global
+ * layer, or a project's layer when one is picked.
+ */
 export function OmpSettingsPageBody({
   environmentId,
   instanceId,
   pageId,
+  projects = [],
 }: {
   readonly environmentId: EnvironmentId;
   readonly instanceId: ProviderInstanceId;
   readonly pageId: OmpSettingsPageId;
+  readonly projects?: ReadonlyArray<OmpSettingsProject>;
 }) {
   const page = OMP_SETTINGS_PAGES[pageId];
   // Custom providers live in models.yml only; that page has no settings to read.
-  const hasSettings = page.keys.length > 0;
+  const hasSettings = ompSettingsPageHasSettings(page);
   const readSettings = useAtomCommand(serverEnvironment.readOmpSettings, { reportFailure: false });
   const writeSetting = useAtomCommand(serverEnvironment.writeOmpSetting, { reportFailure: false });
   const resetSetting = useAtomCommand(serverEnvironment.resetOmpSetting, { reportFailure: false });
   const [form, setForm] = useState<OmpSettingsFormModel | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
+  const [pickedProjectId, setPickedProjectId] = useState<ProjectId | null>(null);
+  // A project removed meanwhile falls back to the global layer.
+  const projectId = projects.some((project) => project.id === pickedProjectId)
+    ? pickedProjectId
+    : null;
+  const scope: OmpConfigScope = projectId === null ? "global" : "project";
+  const layer = projectId === null ? {} : { projectId };
 
   // The parent keys this body by environment and instance, so state starts fresh for each.
   useEffect(() => {
     if (!hasSettings) return;
     let cancelled = false;
-    void readSettings({ environmentId, input: { instanceId } }).then((result) => {
+    setForm(null);
+    setLoadFailed(false);
+    void readSettings({
+      environmentId,
+      input: { instanceId, ...(projectId === null ? {} : { projectId }) },
+    }).then((result) => {
       if (cancelled) return;
       if (result._tag === "Success") setForm(result.value);
       else {
@@ -254,7 +324,7 @@ export function OmpSettingsPageBody({
     return () => {
       cancelled = true;
     };
-  }, [environmentId, instanceId, readSettings, hasSettings]);
+  }, [environmentId, instanceId, readSettings, hasSettings, projectId]);
 
   const applied = (
     key: string,
@@ -299,6 +369,9 @@ export function OmpSettingsPageBody({
       {pageId === "skills" ? (
         <OmpSkillsSection environmentId={environmentId} instanceId={instanceId} />
       ) : null}
+      {hasSettings && projects.length > 0 ? (
+        <LayerSwitch projects={projects} projectId={projectId} onChange={setPickedProjectId} />
+      ) : null}
       {!hasSettings ? null : form === null ? (
         <p className="text-muted-foreground text-xs">
           {loadFailed ? "OMP settings are unavailable." : "Reading OMP settings…"}
@@ -306,20 +379,20 @@ export function OmpSettingsPageBody({
       ) : (
         <OmpSettingsForm
           form={ompSettingsPageForm(form, page)}
-          scope={SCOPE}
+          scope={scope}
           controls={pageId === "search" ? SEARCH_CONTROLS : CONTROLS}
           {...(page.terminalOnly ? { readOnlyNote: TERMINAL_ONLY_NOTE } : {})}
           {...(pageId === "search" ? { noReset: SEARCH_PARTIAL_KEYS } : {})}
           onWrite={(key, value) =>
             void writeSetting({
               environmentId,
-              input: { instanceId, scope: SCOPE, key, value },
+              input: { instanceId, ...layer, scope, key, value },
             }).then((result) => applied(key, result, `Could not save ${key}`))
           }
           onReset={(key) =>
             void resetSetting({
               environmentId,
-              input: { instanceId, scope: SCOPE, key },
+              input: { instanceId, ...layer, scope, key },
             }).then((result) => applied(key, result, `Could not reset ${key}`))
           }
         />
@@ -347,6 +420,14 @@ export function OmpSettingsPanel({ pageId }: { readonly pageId: OmpSettingsPageI
     instances.find((provider) => provider.instanceId === picked)?.instanceId ??
     instances[0]?.instanceId;
   const page = OMP_SETTINGS_PAGES[pageId];
+  const allProjects = useProjects();
+  const projects = useMemo(
+    () =>
+      allProjects.filter(
+        (project) => project.environmentId === environmentId && project.isScratch !== true,
+      ),
+    [allProjects, environmentId],
+  );
   return (
     <SettingsPageContainer>
       <SettingsSection
@@ -388,6 +469,7 @@ export function OmpSettingsPanel({ pageId }: { readonly pageId: OmpSettingsPageI
             environmentId={environmentId}
             instanceId={instanceId}
             pageId={pageId}
+            projects={projects}
           />
         )}
       </SettingsSection>

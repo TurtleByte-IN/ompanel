@@ -152,6 +152,19 @@ vi.mock(import("../ProviderUpdatesAction"), async (original) => ({
   ...(await original()),
   ProviderUpdatesAction: (() => null) as never,
 }));
+// OMP's own sections load over RPC; these tests cover only the provider card around them.
+vi.mock(import("./OmpAccountsSection"), async (original) => ({
+  ...(await original()),
+  OmpAccountsSection: (() => null) as never,
+}));
+vi.mock(import("./OmpOnboardingSection"), async (original) => ({
+  ...(await original()),
+  OmpOnboardingSection: (() => null) as never,
+}));
+vi.mock(import("./OmpSessionImportSection"), async (original) => ({
+  ...(await original()),
+  OmpSessionImportSection: (() => null) as never,
+}));
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { EnvironmentProviderSettings } from "./ProviderSettingsPanel";
@@ -301,5 +314,47 @@ describe("EnvironmentProviderSettings routing", () => {
       environmentId,
       input: { instanceId, elicitationId: action.elicitationId },
     });
+  });
+
+  it("shows an OMP update notice on the providers list without a click, with no install action", async () => {
+    await setup();
+    const instanceId = ProviderInstanceId.make("omp");
+    const message =
+      "OMP 18.13.0 is out; Ompanel ships 18.12.6. Sidecar updates only arrive with app updates, so update Ompanel to get it.";
+    state.settings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [instanceId]: { driver: ProviderDriverKind.make("omp"), enabled: true },
+      },
+    };
+    await setProviders([
+      {
+        ...provider(),
+        instanceId,
+        driver: ProviderDriverKind.make("omp"),
+        version: "18.12.6",
+        executable: { source: "bundled", path: "/app/omp" },
+        versionAdvisory: {
+          status: "behind_latest",
+          currentVersion: "18.12.6",
+          latestVersion: "18.13.0",
+          updateCommand: null,
+          canUpdate: false,
+          canInstallVersion: false,
+          checkedAt: "2026-07-24T12:00:00.000Z",
+          message,
+        },
+      },
+    ]);
+    await using _screen = await render(panel());
+
+    // The providers list row and the open instance's header both carry it.
+    const notice = page.getByRole("button", { name: "Update available, view details" }).first();
+    await expect.element(notice).toBeVisible();
+
+    await userEvent.click(notice);
+    await expect.element(page.getByText(message)).toBeVisible();
+    expect(page.getByRole("button", { name: "Update now" }).elements()).toHaveLength(0);
+    expect(state.updateProvider).not.toHaveBeenCalled();
   });
 });

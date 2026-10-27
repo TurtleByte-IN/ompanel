@@ -152,6 +152,11 @@ export interface OmpControlTarget {
   /** Identity of the verified binary file; a swapped binary misses the cache. */
   readonly binaryIdentity?: string;
   readonly profile: string;
+  /**
+   * The instance's launch arguments: appended to `omp --mode rpc` only. One-shot subcommands
+   * (`config`, `plugin`, `update`, ...) take their own flags and reject unknown ones.
+   */
+  readonly launchArgs?: ReadonlyArray<string>;
   readonly environment: NodeJS.ProcessEnv;
   readonly cwd: string;
 }
@@ -951,7 +956,12 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
       .spawn(
         command(
           target,
-          [...profileArgs(target.profile), ...OMP_CONTROL_RPC_ARGS, ...extraArgs],
+          [
+            ...profileArgs(target.profile),
+            ...OMP_CONTROL_RPC_ARGS,
+            ...extraArgs,
+            ...(target.launchArgs ?? []),
+          ],
           Stream.fromQueue(outgoing),
         ),
       )

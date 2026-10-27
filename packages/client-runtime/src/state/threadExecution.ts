@@ -145,6 +145,20 @@ export function deriveReportedModelSelection(projection: ThreadStructure): Model
   return providerThread?.nativeMetadata?.modelSelection ?? null;
 }
 
+const NO_RESTART_SETTINGS: ReadonlyArray<string> = [];
+
+/**
+ * Settings keys the thread's live provider session reads only at startup and that changed since
+ * it started; stopping the session applies them, since its replacement starts clean.
+ */
+export function deriveRestartRequiredSettings(projection: ThreadStructure): ReadonlyArray<string> {
+  const session = projection.providerSessions.findLast(
+    (candidate) => candidate.providerInstanceId === projection.thread.providerInstanceId,
+  );
+  if (session === undefined || session.status === "stopped") return NO_RESTART_SETTINGS;
+  return session.restartRequired ?? NO_RESTART_SETTINGS;
+}
+
 export const REASONING_EFFORT_OPTION_IDS: ReadonlyArray<string> = [
   "reasoningEffort",
   "effort",

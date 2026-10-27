@@ -355,8 +355,10 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                           ) : null}
                           {provider.versionAdvisory?.status === "behind_latest" &&
                           !provider.versionAdvisory.canUpdate ? (
-                            <Text className="text-sm text-foreground-muted">
-                              Update this provider on the environment's machine.
+                            <Text selectable className="text-sm text-foreground-muted">
+                              {/* The server's advice: OMP's pinned sidecar updates with the app. */}
+                              {provider.versionAdvisory.message ??
+                                "Update this provider on the environment's machine."}
                             </Text>
                           ) : null}
                         </View>

@@ -84,9 +84,14 @@ The adapter registers every running thread with the instance's thread
 registry (`server/threadSessions.ts`). When a launch-scoped key changes for
 a thread, the session's provider state gains `restartRequired: [keys]`
 (`OrchestrationV2ProviderSession`), which reaches the thread projection
-through `provider_session.updated`. The next model selection change on that
-session returns `restart_session` from `planSelectionTransition`. Stopping
-the thread's session also restarts it, and its replacement starts clean.
+through `provider_session.updated`. The web thread view shows "Restart to apply"
+and the keys above the composer (`useRestartRequiredBanner`), and the mobile thread
+screen a matching card (`RestartRequiredCard`), both with a Restart button
+that is held while a turn runs. Restart stops the thread's session, as the
+thread's stop-session command does; the next turn starts a replacement that
+reads the current settings and starts clean. The next model selection change
+on a marked session also returns `restart_session` from
+`planSelectionTransition`.
 
 ## Server API
 
@@ -308,6 +313,16 @@ The pinned omp prints `marketplace list`, `discover` and `update --check` as
 text only; Ompanel strips terminal escapes and reads the lines
 (`parseOmpMarketplaceList`, `parseOmpMarketplaceDiscover`,
 `parseOmpUpdateCheck` in `control.ts`).
+
+The provider probe runs the same `update --check` after each snapshot
+(`makeOmpUpdateNotice` in `updateNotice.ts`, from the driver's
+`enrichSnapshot`), never ahead of it. An `available` answer becomes the
+snapshot's `versionAdvisory` (`behind_latest`, `canUpdate: false`, no update
+command; `ompVersionAdvisory` in `status.ts` words it for the pinned sidecar or
+a custom binary), so the provider card shows the notice without a click. Answers
+are cached per binary identity for an hour, failures for five minutes; a failed
+check adds no advisory. It is skipped when the probe found no usable omp or
+the server's `enableProviderUpdateChecks` is off.
 
 Every change goes through one confirmation dialog that shows the exact command
 line (`formatOmpCommandLine` over `ompPluginCommandArgs`, the same arguments

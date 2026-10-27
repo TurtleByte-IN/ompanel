@@ -102,6 +102,8 @@ export const OmpSidecarErrorReason = Schema.Literals([
   "sha256_mismatch",
   "download_failed",
   "not_found",
+  /** The instance's launch settings (launch arguments, agent directory) are refused. */
+  "invalid_launch_settings",
 ]);
 export type OmpSidecarErrorReason = typeof OmpSidecarErrorReason.Type;
 

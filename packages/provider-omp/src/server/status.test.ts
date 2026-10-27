@@ -4,7 +4,7 @@ import * as Schema from "effect/Schema";
 import { OMP_LOCK } from "../ompLock.ts";
 import { OmpSettings } from "../settings.ts";
 import { OmpSidecarError } from "./sidecar.ts";
-import { OMP_NEEDS_SETUP_MESSAGE, ompProviderSnapshot } from "./status.ts";
+import { OMP_NEEDS_SETUP_MESSAGE, ompProviderSnapshot, ompVersionAdvisory } from "./status.ts";
 
 const settings = { ...Schema.decodeSync(OmpSettings)({}), enabled: true };
 const checkedAt = "2026-10-26T00:00:00.000Z";
@@ -200,5 +200,65 @@ describe("ompProviderSnapshot", () => {
     });
     assert.strictEqual(snapshot.status, "error");
     assert.strictEqual(snapshot.message, "OMP timed out while running `omp --version`.");
+  });
+});
+
+describe("ompVersionAdvisory", () => {
+  const available = {
+    status: "available",
+    currentVersion: "18.12.6",
+    latestVersion: "18.13.0",
+  } as const;
+
+  it("tells a bundled sidecar's user that the new OMP comes with an app update", () => {
+    const advisory = ompVersionAdvisory({
+      check: available,
+      probedVersion: "18.12.6",
+      executable: { source: "bundled", path: "/app/omp" },
+      checkedAt,
+    });
+    assert.deepStrictEqual(advisory, {
+      status: "behind_latest",
+      currentVersion: "18.12.6",
+      latestVersion: "18.13.0",
+      updateCommand: null,
+      canUpdate: false,
+      canInstallVersion: false,
+      checkedAt,
+      message:
+        "OMP 18.13.0 is out; Ompanel ships 18.12.6. Sidecar updates only arrive with app updates, so update Ompanel to get it.",
+    });
+  });
+
+  it("points a custom binary at whatever installed it", () => {
+    const advisory = ompVersionAdvisory({
+      check: available,
+      probedVersion: "18.12.6",
+      executable: { source: "custom", path: "/opt/omp" },
+      checkedAt,
+    });
+    assert.strictEqual(advisory.status, "behind_latest");
+    assert.isFalse(advisory.canUpdate);
+    assert.strictEqual(
+      advisory.message,
+      "OMP 18.13.0 is out. Ompanel runs /opt/omp; update it with the app or tool that installed it.",
+    );
+  });
+
+  it("gives no notice when OMP is current, managed elsewhere or silent", () => {
+    const advise = (check: Parameters<typeof ompVersionAdvisory>[0]["check"]) =>
+      ompVersionAdvisory({ check, probedVersion: "18.12.6", executable: undefined, checkedAt });
+    const current = advise({ status: "current", currentVersion: null, latestVersion: null });
+    assert.strictEqual(current.status, "current");
+    assert.strictEqual(current.latestVersion, "18.12.6");
+    assert.strictEqual(
+      advise({ status: "managed", currentVersion: null, latestVersion: null }).status,
+      "unknown",
+    );
+    assert.strictEqual(
+      advise({ status: "unknown", currentVersion: "18.12.6", latestVersion: null }).status,
+      "unknown",
+    );
+    assert.isNull(advise({ status: "unknown", currentVersion: null, latestVersion: null }).message);
   });
 });

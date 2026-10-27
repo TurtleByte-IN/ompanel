@@ -1,7 +1,10 @@
 import type {
   CustomModelSetting,
+  OmpUpdateCheck,
+  ServerProvider,
   ServerProviderAuth,
   ServerProviderModel,
+  ServerProviderVersionAdvisory,
 } from "@t3tools/contracts";
 import {
   buildServerProvider,
@@ -231,4 +234,48 @@ export function ompProviderSnapshot(input: {
       probe.models ?? [],
     ),
   );
+}
+
+/**
+ * The provider-card notice for an `omp update --check` answer. Ompanel never updates OMP itself:
+ * the shipped sidecar changes only with an app update, and a custom binary with its own installer.
+ */
+export function ompVersionAdvisory(input: {
+  readonly check: OmpUpdateCheck;
+  /** The version the probe saw, when OMP's answer names none. */
+  readonly probedVersion: string | null;
+  readonly executable: ServerProvider["executable"];
+  readonly checkedAt: string;
+}): ServerProviderVersionAdvisory {
+  const { check, executable } = input;
+  const currentVersion = check.currentVersion ?? input.probedVersion;
+  const base = {
+    currentVersion,
+    updateCommand: null,
+    canUpdate: false,
+    canInstallVersion: false,
+    checkedAt: input.checkedAt,
+  };
+  if (check.status === "available" && check.latestVersion !== null) {
+    const latestVersion = check.latestVersion;
+    return {
+      ...base,
+      status: "behind_latest",
+      latestVersion,
+      message:
+        executable?.source === "custom"
+          ? `OMP ${latestVersion} is out. Ompanel runs ${executable.path}; update it with the app or tool that installed it.`
+          : `OMP ${latestVersion} is out${currentVersion ? `; Ompanel ships ${currentVersion}` : ""}. Sidecar updates only arrive with app updates, so update Ompanel to get it.`,
+    };
+  }
+  if (check.status === "current") {
+    return {
+      ...base,
+      status: "current",
+      latestVersion: check.latestVersion ?? currentVersion,
+      message: null,
+    };
+  }
+  // `managed` (a package manager owns an omp on PATH) or no answer: newer or not is unknown.
+  return { ...base, status: "unknown", latestVersion: null, message: null };
 }

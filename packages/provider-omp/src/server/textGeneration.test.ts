@@ -41,7 +41,10 @@ process.stdin.on("end", () => {
 const modelSelection = { instanceId: ProviderInstanceId.make("omp"), model: "default" };
 const isTextGenerationError = Schema.is(TextGenerationError);
 
-const setup = (mode: "ok" | "fail" | "hang", options?: { readonly profile?: string }) =>
+const setup = (
+  mode: "ok" | "fail" | "hang",
+  options?: { readonly profile?: string; readonly launchArgs?: ReadonlyArray<string> },
+) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -69,6 +72,7 @@ const setup = (mode: "ok" | "fail" | "hang", options?: { readonly profile?: stri
     const textGeneration = yield* makeOmpTextGeneration({
       resolveBinary: Effect.succeed(binary),
       profile: options?.profile ?? "",
+      ...(options?.launchArgs === undefined ? {} : { launchArgs: options.launchArgs }),
       environment: { PATH: process.env.PATH, FAKE_OMP_LOG: log, FAKE_OMP_MODE: mode },
       cwd: ownedCwd,
     }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, observed));
@@ -165,6 +169,30 @@ describe("OmpTextGeneration", () => {
         "--no-extensions",
         "--model",
         "@tiny",
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("appends the instance's launch arguments after Ompanel's own flags", () =>
+    Effect.gen(function* () {
+      const { textGeneration, readLog, dir } = yield* setup("ok", {
+        launchArgs: ["--thinking", "high", "--no-lsp"],
+      });
+      yield* textGeneration.generateThreadTitle({
+        cwd: dir,
+        message: "The login form rejects valid passwords",
+        modelSelection,
+      });
+      assert.deepStrictEqual((yield* readLog).args, [
+        "-p",
+        "--no-session",
+        "--no-tools",
+        "--no-extensions",
+        "--model",
+        "@tiny",
+        "--thinking",
+        "high",
+        "--no-lsp",
       ]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
