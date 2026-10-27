@@ -119,6 +119,8 @@ const OMP_LAUNCH_SCOPED_KEYS: Readonly<Record<string, true>> = {
   "mnemopi.embeddingModel": true,
   "plan.defaultOnStartup": true,
   "plan.enabled": true,
+  // OMP registers its OTLP exporters once, at startup (`main.ts`, `telemetry-export.ts`).
+  "telemetry.otlpExportEnabled": true,
 };
 
 /**
@@ -267,6 +269,24 @@ export const isOmpCredentialKey = (key: string, type: OmpConfigType): boolean =>
   KNOWN_CREDENTIALS.has(key) ||
   !KNOWN_SETTINGS.has(key) ||
   ((type === "string" || type === "record") && namesSecret(key));
+
+/**
+ * Credentials OMP resolves through its config-value resolver (`resolveConfigValue`): the stored
+ * value may be `!command` (OMP runs it and reads stdout) or an environment variable name instead
+ * of the secret itself (`auth-broker/discover.ts` for the broker token).
+ */
+export const OMP_SECRET_REFERENCE_KEYS: ReadonlyArray<string> = ["auth.broker.token"];
+
+/** An upper-case environment variable name; OMP's generated tokens are mixed-case base64url. */
+const ENV_VAR_NAME = /^[A-Z][A-Z0-9_]{0,127}$/;
+
+/**
+ * `value` names where OMP reads a secret (`!command` or an environment variable name) rather than
+ * holding one, so `omp config set` may carry it in argv.
+ */
+export const isOmpSecretReference = (value: unknown): value is string =>
+  typeof value === "string" &&
+  ((value.startsWith("!") && value.trim().length > 1) || ENV_VAR_NAME.test(value));
 
 /**
  * One field per key, in OMP's settings-panel order. A credential's value is never carried.

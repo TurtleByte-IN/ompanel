@@ -19,6 +19,7 @@ import {
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import type { OmpSettings } from "../settings.ts";
+import { resolveOmpInstanceLaunch } from "./launch.ts";
 import { resolveOmpSessionsLocation } from "./ompSessions.ts";
 
 const OmpScanState = Schema.Struct({ sessionId: Schema.mutableKey(Schema.String) });
@@ -112,17 +113,30 @@ export const ompUsageFormat: TranscriptUsageFormat<typeof OmpScanState.Type> = {
 
 export type OmpUsageReaderEnv = FileSystem.FileSystem | Path.Path;
 
-/** The instance's session directory, resolved like its threads do (profile, env overrides). */
+/**
+ * The instance's session directory, resolved like its threads do (profile, agent directory, env
+ * overrides): the environment is the one every omp of the instance runs with.
+ */
 export const ompUsageReader: ProviderUsageReader<OmpSettings, OmpUsageReaderEnv> = {
   kind: "transcripts",
   provider: "omp",
   format: ompUsageFormat,
   directories: Effect.fn("ompUsageReader.directories")(function* ({ config, environment }) {
-    const location = yield* resolveOmpSessionsLocation({
+    const homeDir = yield* HostProcess.HomeDirectory;
+    const profile = config?.profile ?? "";
+    // Launch arguments do not move sessions; a refused agent dir leaves the driver's fallback.
+    const launch = resolveOmpInstanceLaunch({
+      agentDir: config?.agentDir ?? "",
+      launchArgs: "",
+      profile,
       environment,
-      profile: config?.profile ?? "",
+      homeDir,
+    });
+    const location = yield* resolveOmpSessionsLocation({
+      environment: launch.ok ? launch.environment : environment,
+      profile,
       platform: yield* HostProcess.Platform,
-      homeDir: yield* HostProcess.HomeDirectory,
+      homeDir,
     });
     return [{ dir: location.root }];
   }),

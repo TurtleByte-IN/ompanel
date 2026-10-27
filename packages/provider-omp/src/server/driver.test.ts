@@ -2,12 +2,14 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,
+  type ProviderInstanceEnvironment,
   ProviderInstanceId,
   ProviderSessionId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -25,6 +27,8 @@ import { OMP_LOCK } from "../ompLock.ts";
 import type { OmpSettings } from "../settings.ts";
 import { OMP_CONTROL_TIMEOUTS_MS } from "./control.ts";
 import { OmpDriver } from "./driver.ts";
+import { ompThreadOverlayPath } from "./launch.ts";
+import { ompStateDirs } from "./session.ts";
 
 // Offline: with no bundled or cached sidecar the driver would download the pinned release.
 const offlineFetch: typeof globalThis.fetch = () => Promise.reject(new Error("offline in tests"));
@@ -53,8 +57,12 @@ const SKILL_LIST = {
   warnings: [],
 };
 
-const fakeOmp = (contractVersion: string | undefined) => {
+const UP_TO_DATE = "Current version: 18.12.6\n✔ Already up to date\n";
+
+const fakeOmp = (contractVersion: string | undefined, update = UP_TO_DATE) => {
   const launches: Array<ChildProcess.StandardCommand> = [];
+  /** Completed by the first thread (`--mode rpc-ui`) launch. */
+  const threadSpawned = Deferred.makeUnsafe<void>();
   const spawner = ChildProcessSpawner.make((command) => {
     if (!ChildProcess.isStandardCommand(command)) return Effect.die("Unexpected pipeline");
     launches.push(command);
@@ -95,12 +103,15 @@ const fakeOmp = (contractVersion: string | undefined) => {
     );
     const stdout = command.args.includes("--version")
       ? Stream.succeed("omp/18.12.6\n")
-      : command.args.includes("skill")
-        ? Stream.succeed(`${JSON.stringify(SKILL_LIST)}\n`)
-        : Stream.concat(Stream.succeed(ready), responses).pipe(
-            Stream.map((frame) => `${JSON.stringify(frame)}\n`),
-          );
-    return Effect.succeed(
+      : command.args.includes("update")
+        ? Stream.succeed(update)
+        : command.args.includes("skill")
+          ? Stream.succeed(`${JSON.stringify(SKILL_LIST)}\n`)
+          : Stream.concat(Stream.succeed(ready), responses).pipe(
+              Stream.map((frame) => `${JSON.stringify(frame)}\n`),
+            );
+    return Effect.as(
+      command.args.includes("rpc-ui") ? Deferred.succeed(threadSpawned, undefined) : Effect.void,
       ChildProcessSpawner.makeHandle({
         // Outside the valid PID range, so cleanup cannot signal a real process.
         pid: ChildProcessSpawner.ProcessId(999_999_997),
@@ -117,7 +128,7 @@ const fakeOmp = (contractVersion: string | undefined) => {
       }),
     );
   });
-  return { spawner, launches };
+  return { spawner, launches, threadSpawned };
 };
 
 /** An existing file to use as the explicit binary path. */
@@ -130,14 +141,72 @@ const overrideBinary = Effect.gen(function* () {
   return binary;
 }).pipe(Effect.orDie);
 
-const create = (config: Partial<OmpSettings>, enabled = true) =>
+const create = (
+  config: Partial<OmpSettings>,
+  enabled = true,
+  environment: ProviderInstanceEnvironment = [],
+) =>
   OmpDriver.create({
     instanceId: ProviderInstanceId.make("omp"),
     displayName: undefined,
-    environment: [],
+    environment,
     enabled,
     config: { ...OmpDriver.defaultConfig(), ...config },
   });
+
+type OmpInstance = Effect.Success<ReturnType<typeof create>>;
+
+const THREAD_ID = ThreadId.make("thread-1");
+
+/**
+ * Starts every kind of omp an instance runs: the probe (`--version`, `--mode rpc`), a workspace
+ * catalog (`skill list` and `--mode rpc`), text generation (`-p`) and a thread (`--mode rpc-ui`).
+ */
+const runEveryOmp = (instance: OmpInstance, threadSpawned: Deferred.Deferred<void>) =>
+  Effect.gen(function* () {
+    yield* instance.snapshot.refresh;
+    yield* instance.snapshotForCwd!("/repo").pipe(Effect.exit);
+    // The fake's `-p` output is no title; only the launch matters here.
+    yield* instance.textGeneration
+      .generateThreadTitle({
+        cwd: "/repo",
+        message: "Fix the login form",
+        modelSelection: { instanceId: instance.instanceId, model: "default" },
+      })
+      .pipe(Effect.exit);
+    const opening = yield* instance.orchestrationAdapter
+      .openSession({
+        threadId: THREAD_ID,
+        providerSessionId: ProviderSessionId.make("session-1"),
+        modelSelection: { instanceId: instance.instanceId, model: "default" },
+        runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          cwd: null,
+        }),
+      })
+      .pipe(Effect.scoped, Effect.exit, Effect.forkChild);
+    // The fake never completes the thread handshake; the spawn is all this needs.
+    yield* Deferred.await(threadSpawned);
+    yield* Fiber.interrupt(opening);
+  });
+
+/** The launches that run omp itself (a wrapper keeps omp's path in its argv), not `ps` and the like. */
+const ompLaunches = (launches: ReadonlyArray<ChildProcess.StandardCommand>, binaryPath: string) =>
+  launches.filter((launch) => launch.command === binaryPath || launch.args.includes(binaryPath));
+
+const launchKind = (launch: ChildProcess.StandardCommand) =>
+  launch.args.includes("--version")
+    ? "version"
+    : launch.args.includes("skill")
+      ? "skill"
+      : launch.args.includes("rpc-ui")
+        ? "thread"
+        : launch.args.includes("-p")
+          ? "text"
+          : launch.args.includes("rpc")
+            ? "rpc"
+            : "other";
 
 it.layer(layerTest)("OmpDriver", (it) => {
   it.effect("reports a ready sidecar that speaks the pinned contract", () =>
@@ -166,6 +235,41 @@ it.layer(layerTest)("OmpDriver", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("shows an available OMP update on the snapshot without anyone asking", () =>
+    Effect.gen(function* () {
+      const omp = fakeOmp(
+        OMP_LOCK.contract.version,
+        "Current version: 18.12.6\nNew version available: 18.13.0\n",
+      );
+      const binaryPath = yield* overrideBinary;
+      const instance = yield* create({ binaryPath }).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, omp.spawner),
+      );
+      const noticing = yield* instance.snapshot.streamChanges.pipe(
+        Stream.filter((snapshot) => snapshot.versionAdvisory !== undefined),
+        Stream.runHead,
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* instance.snapshot.refresh;
+      const noticed = yield* Fiber.join(noticing);
+      const advisory = noticed._tag === "Some" ? noticed.value.versionAdvisory : undefined;
+      assert.deepStrictEqual(advisory, {
+        status: "behind_latest",
+        currentVersion: "18.12.6",
+        latestVersion: "18.13.0",
+        updateCommand: null,
+        canUpdate: false,
+        canInstallVersion: false,
+        checkedAt: advisory?.checkedAt ?? null,
+        message: `OMP 18.13.0 is out. Ompanel runs ${binaryPath}; update it with the app or tool that installed it.`,
+      });
+      // The check only reports; nothing ever runs `omp update` without `--check`.
+      const updates = omp.launches.filter((launch) => launch.args.includes("update"));
+      assert.isAbove(updates.length, 0);
+      assert.isTrue(updates.every((launch) => launch.args.includes("--check")));
+    }).pipe(Effect.scoped),
+  );
+
   it.effect(
     "lists a workspace's commands, skills and models once and puts them on the snapshot",
     () =>
@@ -176,7 +280,9 @@ it.layer(layerTest)("OmpDriver", (it) => {
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, omp.spawner),
         );
         yield* instance.snapshot.refresh;
-        const before = omp.launches.length;
+        // The background update check is not part of the catalog.
+        const catalogOnly = () => omp.launches.filter((launch) => !launch.args.includes("update"));
+        const before = catalogOnly().length;
         const publishedSnapshot = yield* instance.snapshot.streamChanges.pipe(
           Stream.filter((snapshot) => snapshot.workspaceSnapshots !== undefined),
           Stream.runHead,
@@ -205,7 +311,7 @@ it.layer(layerTest)("OmpDriver", (it) => {
           models?.map((model) => model.slug);
         assert.deepStrictEqual(slugs(workspace.workspaceModels), ["default", "lab/a"]);
         assert.deepStrictEqual(slugs(workspace.models), ["default", "lab/a", "lab/b"]);
-        const catalogLaunches = omp.launches.slice(before);
+        const catalogLaunches = catalogOnly().slice(before);
         // All run at once, each behind its own sidecar check, so their order is not fixed.
         assert.sameDeepMembers(
           catalogLaunches.map((launch) => [launch.args.includes("skill"), launch.options.cwd]),
@@ -216,7 +322,7 @@ it.layer(layerTest)("OmpDriver", (it) => {
           ],
         );
         yield* instance.snapshotForCwd!("/repo");
-        assert.strictEqual(omp.launches.length, before + 3, "the same workspace reuses its lists");
+        assert.strictEqual(catalogOnly().length, before + 3, "the same workspace reuses its lists");
 
         const published = yield* Fiber.join(publishedSnapshot);
         assert.deepStrictEqual(
@@ -361,6 +467,124 @@ it.layer(layerTest)("OmpDriver", (it) => {
         })
         .pipe(Effect.scoped, Effect.flip);
       assert.strictEqual(error._tag, "ProviderAdapterOpenSessionError");
+    }).pipe(Effect.scoped),
+  );
+  it.effect("runs every omp with the agent dir; launch args reach rpc, rpc-ui and -p only", () =>
+    Effect.gen(function* () {
+      const omp = fakeOmp(OMP_LOCK.contract.version);
+      const binaryPath = yield* overrideBinary;
+      const instance = yield* create({
+        binaryPath,
+        agentDir: "/srv/omp-work/agent",
+        launchArgs: "--thinking high --no-lsp",
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, omp.spawner));
+      yield* runEveryOmp(instance, omp.threadSpawned);
+
+      const launches = ompLaunches(omp.launches, binaryPath);
+      const kinds = new Set(launches.map(launchKind));
+      for (const kind of ["version", "rpc", "skill", "text", "thread"] as const) {
+        assert.isTrue(kinds.has(kind), `no ${kind} launch`);
+      }
+      for (const launch of launches) {
+        const kind = launchKind(launch);
+        assert.strictEqual(
+          launch.options.env?.["PI_CODING_AGENT_DIR"],
+          "/srv/omp-work/agent",
+          kind,
+        );
+        if (kind === "rpc" || kind === "text" || kind === "thread") {
+          assert.deepStrictEqual(launch.args.slice(-3), ["--thinking", "high", "--no-lsp"], kind);
+        } else {
+          // `--version` and subcommands take their own flags only.
+          assert.notInclude([...launch.args], "--thinking", kind);
+        }
+      }
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("refuses launch args that set a flag Ompanel owns, on the status and every spawn", () =>
+    Effect.gen(function* () {
+      const binaryPath = yield* overrideBinary;
+      const instance = yield* create({ binaryPath, launchArgs: "--cwd /elsewhere" }).pipe(
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() => Effect.die("Refused launch args must not spawn")),
+        ),
+      );
+      yield* instance.snapshot.refresh;
+      const snapshot = yield* instance.snapshot.getSnapshot;
+      assert.strictEqual(snapshot.status, "error");
+      assert.include(snapshot.message, "'--cwd' is set by Ompanel");
+      const error = yield* instance.textGeneration
+        .generateThreadTitle({
+          cwd: "/repo",
+          message: "Fix the login form",
+          modelSelection: { instanceId: instance.instanceId, model: "default" },
+        })
+        .pipe(Effect.flip);
+      assert.include(error.message, "'--cwd' is set by Ompanel");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("refuses an agent dir beside a profile on the status", () =>
+    Effect.gen(function* () {
+      const binaryPath = yield* overrideBinary;
+      const instance = yield* create({ binaryPath, profile: "work", agentDir: "/srv/agent" }).pipe(
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() => Effect.die("Refused settings must not spawn")),
+        ),
+      );
+      yield* instance.snapshot.refresh;
+      const snapshot = yield* instance.snapshot.getSnapshot;
+      assert.strictEqual(snapshot.status, "error");
+      assert.include(snapshot.message, "not both");
+    }).pipe(Effect.scoped),
+  );
+
+  // 9.7b: OMP's OTLP export stays governed by OMP's own `telemetry.*` settings and the user's
+  // `OTEL_*` environment; Ompanel adds neither.
+  it.effect("never sets OMP telemetry or OTEL_* beyond the user's environment", () =>
+    Effect.gen(function* () {
+      const host = yield* ProviderHost.ProviderHost;
+      const path = yield* Path.Path;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const otelOf = (env: NodeJS.ProcessEnv | undefined) =>
+        Object.fromEntries(Object.entries(env ?? {}).filter(([key]) => key.startsWith("OTEL_")));
+      const userOtel = otelOf(process.env);
+      const exported = {
+        name: "OTEL_EXPORTER_OTLP_ENDPOINT",
+        value: "http://collector:4318",
+        sensitive: false,
+      };
+
+      for (const environment of [
+        [],
+        [exported],
+      ] satisfies ReadonlyArray<ProviderInstanceEnvironment>) {
+        const omp = fakeOmp(OMP_LOCK.contract.version);
+        const binaryPath = yield* overrideBinary;
+        const instance = yield* create({ binaryPath }, true, environment).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, omp.spawner),
+        );
+        yield* runEveryOmp(instance, omp.threadSpawned);
+        const expected =
+          environment.length === 0 ? userOtel : { ...userOtel, [exported.name]: exported.value };
+        const launches = ompLaunches(omp.launches, binaryPath);
+        assert.isTrue(launches.some((launch) => launchKind(launch) === "thread"));
+        for (const launch of launches) {
+          assert.deepStrictEqual(otelOf(launch.options.env), expected, launchKind(launch));
+          assert.isFalse(
+            launch.args.some((arg) => /telemetry/i.test(arg)),
+            `${launchKind(launch)} argv sets telemetry`,
+          );
+        }
+        // The thread's `--config` overlay carries no `telemetry` key either.
+        const overlay = yield* fileSystem.readFileString(
+          ompThreadOverlayPath(path, ompStateDirs(path, host.paths.stateDir).threads, THREAD_ID),
+        );
+        assert.notMatch(overlay, /telemetry/i);
+      }
     }).pipe(Effect.scoped),
   );
 });

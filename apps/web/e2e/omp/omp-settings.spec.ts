@@ -1,12 +1,18 @@
 // @effect-diagnostics nodeBuiltinImport:off - an end-to-end test reading the stack's files.
 // Gate G2: OMP's control plane through the web app, against a real `omp` built from the omp.lock
 // tag. One non-credential key changed on every OMP settings page and read back with
-// `omp config get` from the test's OMP home; a sign-in against a fake login provider; `/wt` from
-// a thread making a T3 worktree. Steps run in order on one page. See docs/omp/testing.md.
+// `omp config get` from the test's OMP home; every key `omp config list` reports reachable from a
+// page; a project-layer write; a sign-in against a fake login provider; the auth broker settings
+// on Accounts; `/wt` from a thread making a T3 worktree. Steps run in order on one page. See
+// docs/omp/testing.md.
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import { expect, type Locator, type Page, test } from "@playwright/test";
+import {
+  OMP_SETTINGS_SHOWN_ELSEWHERE,
+  ompSettingsPagesListing,
+} from "@t3tools/provider-omp/settingsPages";
 
 import { FAKE_SIGN_IN_EMAIL, FAKE_SIGN_IN_PROVIDER } from "./fakeSignIn.ts";
 import { useOmpSuite } from "./ompSuite.ts";
@@ -29,6 +35,20 @@ const ompConfigValue = (key: string): unknown => {
   );
   return setting.value;
 };
+
+interface OmpConfigListEntry {
+  readonly source: string;
+  readonly value?: unknown;
+  readonly redacted?: true;
+}
+
+/** `omp config list --json` as OMP resolves it in `cwd` (the workspace project by default). */
+const ompConfigList = (cwd?: string): Readonly<Record<string, OmpConfigListEntry>> =>
+  JSON.parse(
+    suite
+      .current()
+      .stack.omp("config", "list", "--json", ...(cwd === undefined ? [] : ["--cwd", cwd])),
+  );
 
 /** A full page load: the cached providers render before the connection is up. */
 const openPage = async (page: Page, path: string) => {
@@ -198,10 +218,12 @@ const SETTING_CHANGES: ReadonlyArray<SettingChange> = [
   { page: "context", key: "compaction.thresholdPercent", to: 75 },
   { page: "modes", key: "plan.enabled", to: false },
   { page: "runtime", key: "eval.py", to: false },
+  { page: "runtime", key: "telemetry.otlpExportEnabled", to: false },
   { page: "search", key: "web_search.enabled", to: false },
   { page: "discovery", key: "commands.enableClaudeProject", to: false },
   { page: "mcp", key: "mcp.startupTimeoutMs", to: 500 },
   { page: "customization", key: "ttsr.enabled", to: false },
+  { page: "all", key: "autoResume", to: true },
 ];
 
 const change = async (row: Locator, to: SettingChange["to"]) => {
@@ -229,6 +251,49 @@ SETTING_CHANGES.forEach(({ page: pageId, key, to }, index) => {
     await expect(row.getByText("Global", { exact: true })).toBeVisible();
     await screenshot(`04-${String(index + 1).padStart(2, "0")}-${pageId}`);
   });
+});
+
+test("shows every key omp config list reports on a page, the advanced page or Accounts", async () => {
+  const { page, screenshot } = suite.current();
+  const keys = Object.keys(ompConfigList());
+  const advanced = keys.filter(
+    (key) => !(key in OMP_SETTINGS_SHOWN_ELSEWHERE) && ompSettingsPagesListing(key).length === 0,
+  );
+  // The audit's examples of keys no page used to list (parity s7 7.0d).
+  for (const key of ["bash.enabled", "ask.enabled", "async.enabled", "autoResume"]) {
+    expect(advanced).toContain(key);
+  }
+  for (const key of Object.keys(OMP_SETTINGS_SHOWN_ELSEWHERE)) expect(keys).toContain(key);
+  await openPage(page, "/settings/omp-all");
+  await expect(settingRow(page, "bash.enabled")).toBeVisible();
+  await expect(page.locator("[data-setting]")).toHaveCount(advanced.length);
+  await screenshot("04-all-settings");
+});
+
+test("writes a key to the workspace project's .omp/config.yml from the layer switch", async () => {
+  const { page, stack, screenshot } = suite.current();
+  const key = "retry.maxRetries";
+  const globalBefore = ompConfigList(stack.home)[key];
+  await openPage(page, "/settings/omp-routing");
+  await page.getByRole("combobox", { name: "OMP config layer" }).click();
+  await page.getByRole("option", { name: /^Project: / }).click();
+  await expect(page.locator("[data-omp-settings-layer]")).toContainText(
+    NodePath.join(stack.workspace, ".omp", "config.yml"),
+  );
+  const row = settingRow(page, key);
+  await row.scrollIntoViewIfNeeded();
+  await change(row, 6);
+  // OMP resolves the project layer in the workspace and the global one everywhere else.
+  await expect.poll(() => ompConfigList()[key]).toMatchObject({ source: "project", value: 6 });
+  expect(ompConfigList(stack.home)[key]).toEqual(globalBefore);
+  expect(
+    NodeFS.readFileSync(NodePath.join(stack.workspace, ".omp", "config.yml"), "utf8"),
+  ).toContain("maxRetries: 6");
+  await expect(row.getByText("Project", { exact: true })).toBeVisible();
+  await screenshot("04-project-layer");
+  // Reset removes it from the project file; the global value applies in the workspace again.
+  await row.getByRole("button", { name: "Reset" }).click();
+  await expect.poll(() => ompConfigList()[key]).toEqual(globalBefore);
 });
 
 test("adds a custom provider on the OMP custom providers page", async () => {
@@ -374,4 +439,33 @@ test("lists the plugin's skill on the OMP skills page", async () => {
   );
   expect(skills.skills.map((skill) => skill.name)).toContain("g2-skill");
   await screenshot("08-skills");
+});
+
+test("sets the auth broker URL and token source on Accounts through omp config set", async () => {
+  const { page, screenshot } = suite.current();
+  await openPage(page, "/settings/providers");
+  const broker = page.getByRole("region", { name: "Auth broker" });
+  await broker.scrollIntoViewIfNeeded();
+  const url = "http://127.0.0.1:9/g2-broker";
+  await broker.getByRole("textbox", { name: "Auth broker URL" }).fill(url);
+  await broker.getByRole("textbox", { name: "Auth broker URL" }).press("Enter");
+  await expect.poll(() => ompConfigValue("auth.broker.url")).toEqual(url);
+  // A token itself is refused in the form and never reaches omp's argv.
+  const token = broker.getByRole("textbox", { name: "Auth broker token source" });
+  await token.fill("q9X-literal-token-value");
+  await token.press("Enter");
+  await expect(broker.getByRole("alert")).toContainText("not the token itself");
+  expect(ompConfigList()["auth.broker.token"]?.source).toBe("default");
+  await token.fill("G2_BROKER_TOKEN");
+  await token.press("Enter");
+  await expect
+    .poll(() => ompConfigList()["auth.broker.token"])
+    .toMatchObject({ source: "global", redacted: true });
+  await expect(broker.locator('[data-setting="auth.broker.token"]')).toContainText("stored");
+  await screenshot("09-auth-broker");
+  // Leave no broker configured: every later omp would try to reach it.
+  for (const key of ["auth.broker.token", "auth.broker.url"]) {
+    await broker.locator(`[data-setting="${key}"]`).getByRole("button", { name: "Reset" }).click();
+    await expect.poll(() => ompConfigList()[key]?.source).toBe("default");
+  }
 });

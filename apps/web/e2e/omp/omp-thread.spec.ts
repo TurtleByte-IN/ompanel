@@ -272,6 +272,49 @@ test("shares the thread live: a room opens on OMP's relay with its links, and st
   await expect(dialog).toHaveCount(0);
 });
 
+test("restarts the session after a launch-only setting changes", async () => {
+  const { assistantSays, page, screenshot, send, stack } = suite.current();
+  const threadUrl = page.url();
+  const before = threadProcesses().map((entry) => entry.pid);
+  expect(before).toHaveLength(1);
+
+  // OMP reads memory.backend only at startup: a global write marks every open thread, this one
+  // and the fork, whose omp also still runs.
+  const open = stack.ompProcesses().length;
+  expect(open).toBeGreaterThan(1);
+  await page.evaluate(() => window.location.assign("/settings/omp-memory"));
+  const row = page.locator('[data-setting="memory.backend"]');
+  await row.getByRole("textbox").fill("local");
+  await row.getByRole("textbox").press("Enter");
+  await expect
+    .poll(() => JSON.parse(stack.omp("config", "get", "memory.backend", "--json")).value)
+    .toBe("local");
+  // The server marked them: the write reports them before the thread page loads.
+  await expect(
+    page.getByText(`${open} open thread(s) pick up memory.backend after a restart`),
+  ).toBeVisible();
+
+  await page.evaluate((url) => window.location.assign(url), threadUrl);
+  const banner = page.getByText("Restart to apply memory.backend");
+  await expect(banner).toBeVisible();
+  await screenshot("12a-restart-required");
+
+  // Restart stops the session; the next turn starts a fresh omp that reads the new setting.
+  await page.getByRole("button", { name: "Restart", exact: true }).click();
+  await expect(banner).toHaveCount(0);
+  await expect.poll(() => threadProcesses()).toHaveLength(0);
+  const replies = await assistantSays(STREAMED_PARAGRAPHS[1]).count();
+  await send("after restart");
+  await expect(assistantSays(STREAMED_PARAGRAPHS[1])).toHaveCount(replies + 1);
+  // The fresh omp reopened the thread's session file: the conversation continues.
+  expect(historyFor("after restart")).toContain("hello from G1");
+  const after = threadProcesses().map((entry) => entry.pid);
+  expect(after).toHaveLength(1);
+  expect(before).not.toContain(after[0]);
+  await expect(banner).toHaveCount(0);
+  await screenshot("12b-restarted");
+});
+
 // PRD §9: what a collector receives about OMP is driver kind, version, error class and frame
 // drops; never a prompt, reply, path or secret (`packages/provider-omp/src/server/telemetry.ts`).
 const OMP_METRIC_KEYS = [

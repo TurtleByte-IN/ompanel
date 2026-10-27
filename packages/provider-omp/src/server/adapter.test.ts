@@ -537,6 +537,12 @@ posixOnly("OmpAdapter.openSession", () => {
           .sendCommand("thread/1", { type: "set_auto_retry", params: { enabled: true } })
           .pipe(Effect.flip);
         assert.strictEqual(closed.reason, "not_open");
+        // The replacement session starts with the current settings: no marker.
+        const respawned = yield* adapter.openSession(input).pipe(
+          Effect.map((reopened) => reopened.providerSession.restartRequired),
+          Effect.scoped,
+        );
+        assert.strictEqual(respawned, undefined);
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

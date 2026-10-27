@@ -18,6 +18,7 @@ import {
 } from "../../state/entities";
 import { UsageLimitRecoveryCard } from "./UsageLimitRecoveryCard";
 import { ChatGptUsageLimitNotice } from "./ChatGptUsageLimitNotice";
+import { RestartRequiredCard } from "./RestartRequiredCard";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import {
   effectiveSnoozed,
@@ -28,7 +29,10 @@ import {
 import type { WorktreeSetupCardProps } from "./worktree-setup-card";
 import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";
 import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import {
+  threadRuntimeIsActive,
+  type EnvironmentThreadShell,
+} from "@t3tools/client-runtime/state/shell";
 import type { HandoffEndpoints } from "@t3tools/client-runtime/handoff";
 import {
   childThreadInputsTitle,
@@ -1551,6 +1555,11 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
                   <ChatGptUsageLimitNotice
                     key={`chatgpt-limit:${props.selectedThread.latestRun?.runId}`}
                     thread={props.selectedThread}
+                  />
+                  <RestartRequiredCard
+                    threadRef={props.selectedThreadDetailRef}
+                    canOperateThread={props.canOperateThread}
+                    working={threadRuntimeIsActive(props.selectedThread.runtime)}
                   />
                   <ThreadGuestShareBar
                     threadRef={props.selectedThreadDetailRef}

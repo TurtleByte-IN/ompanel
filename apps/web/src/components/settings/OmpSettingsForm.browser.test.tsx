@@ -84,11 +84,9 @@ describe("OmpSettingsForm", () => {
     await userEvent.type(threshold, "65{Enter}");
     expect(onWrite).toHaveBeenLastCalledWith("compaction.thresholdPercent", 65);
 
-    const roles = screen.getByRole("textbox", { name: "modelRoles" });
-    await userEvent.clear(roles);
-    await userEvent.type(roles, '{{"default": "anthropic/claude"}');
-    await userEvent.click(document.body);
-    expect(onWrite).toHaveBeenLastCalledWith("modelRoles", { default: "anthropic/claude" });
+    // OMP deep-merges maps and reports the merged one, so a project never writes one back.
+    await expect.element(screen.getByRole("textbox", { name: "modelRoles" })).toBeDisabled();
+    expect(row("modelRoles").textContent).toContain("edit it on the Global layer");
 
     // Only the project layer's own value can be reset from the project form.
     const resets = screen.getByRole("button", { name: "Reset" });
@@ -96,6 +94,20 @@ describe("OmpSettingsForm", () => {
     expect(resets.elements()).toHaveLength(1);
     await userEvent.click(resets);
     expect(onReset).toHaveBeenCalledExactlyOnceWith("compaction.thresholdPercent");
+  });
+
+  it("writes a map on the global layer", async () => {
+    const onWrite = vi.fn();
+    await using screen = await render(
+      <OmpSettingsForm form={FORM} scope="global" onWrite={onWrite} onReset={vi.fn()} />,
+    );
+
+    const roles = screen.getByRole("textbox", { name: "modelRoles" });
+    await userEvent.clear(roles);
+    await userEvent.type(roles, '{{"default": "anthropic/claude"}');
+    await userEvent.click(document.body);
+    expect(onWrite).toHaveBeenLastCalledWith("modelRoles", { default: "anthropic/claude" });
+    expect(row("modelRoles").textContent).not.toContain("Global layer");
   });
 
   it("rejects JSON of the wrong shape without writing it", async () => {

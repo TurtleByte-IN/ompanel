@@ -39,11 +39,12 @@ import {
   readOmpThreadSessionRecords,
   resolveOmpSessionsLocation,
 } from "./ompSessions.ts";
+import { resolveOmpInstanceLaunch } from "./launch.ts";
 import { ompStateDirs } from "./session.ts";
 import { makeOmpSettingsController } from "./settingsController.ts";
 import { makeOmpSettingsEngine } from "./settingsEngine.ts";
 import { makeOmpThreadSessions, makeOmpThreadSettingsHost } from "./threadSessions.ts";
-import { OMP_BUNDLED_SIDECAR_ENV } from "./sidecar.ts";
+import { OMP_BUNDLED_SIDECAR_ENV, OmpSidecarError } from "./sidecar.ts";
 import { makeOmpSidecarProvisioner } from "./sidecarInstall.ts";
 import {
   buildInitialOmpProviderSnapshot,
@@ -54,6 +55,7 @@ import { makeOmpTextGeneration } from "./textGeneration.ts";
 import { ompLockVersionLabel } from "./telemetry.ts";
 import { ompUsageReader, type OmpUsageReaderEnv } from "./usage.ts";
 import { makeOmpUsageController } from "./usageController.ts";
+import { makeOmpUpdateNotice } from "./updateNotice.ts";
 import { makeOmpPluginsController } from "./pluginsController.ts";
 import { makeOmpThreadMenuController } from "./threadMenuController.ts";
 
@@ -92,7 +94,19 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv, OmpUsageReader
     const host = yield* ProviderHost.ProviderHost;
     const path = yield* Path.Path;
     const fileSystem = yield* FileSystem.FileSystem;
-    const processEnv = yield* mergeProviderInstanceEnvironment(environment);
+    const homeDir = yield* HostProcess.HomeDirectory;
+    const instanceEnv = yield* mergeProviderInstanceEnvironment(environment);
+    // agentDir and launchArgs apply to every omp of the instance. A refused value fails every
+    // binary resolution (probe, threads, text generation, control) with its reason.
+    const launch = resolveOmpInstanceLaunch({
+      agentDir: config.agentDir,
+      launchArgs: config.launchArgs,
+      profile: config.profile,
+      environment: instanceEnv,
+      homeDir,
+    });
+    const processEnv = launch.ok ? launch.environment : instanceEnv;
+    const launchArgs = launch.ok ? launch.launchArgs : [];
     const bundledPath = (yield* HostProcess.Environment)[OMP_BUNDLED_SIDECAR_ENV];
     const cacheDir = path.join(host.paths.baseDir, "tools", "omp");
     const continuationIdentity = defaultProviderContinuationIdentity({
@@ -111,15 +125,20 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv, OmpUsageReader
     // Downloads the pinned sidecar into the cache on first use when none is bundled or cached.
     const resolver = yield* makeOmpSidecarProvisioner();
     const control = yield* makeOmpControlService();
-    const resolveBinary = resolver
-      .resolve({ overridePath: effectiveConfig.binaryPath, bundledPath, cacheDir })
-      .pipe(Effect.provide(FetchHttpClient.layer));
+    const resolveBinary = launch.ok
+      ? resolver
+          .resolve({ overridePath: effectiveConfig.binaryPath, bundledPath, cacheDir })
+          .pipe(Effect.provide(FetchHttpClient.layer))
+      : Effect.fail(
+          new OmpSidecarError({ reason: "invalid_launch_settings", detail: launch.message }),
+        );
     const controlTarget = (cwd: string) =>
       resolveBinary.pipe(
         Effect.map((sidecar) => ({
           binaryPath: sidecar.path,
           binaryIdentity: sidecar.identity,
           profile: effectiveConfig.profile,
+          launchArgs,
           environment: processEnv,
           cwd,
         })),
@@ -130,12 +149,14 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv, OmpUsageReader
       target: controlTarget,
       models: (listed) => ompProviderModels(effectiveConfig.customModels, listed),
     });
+    const publishUpdateNotice = yield* makeOmpUpdateNotice({
+      target: controlTarget(host.paths.cwd),
+      updateCheck: control.updateCheck,
+    });
     const checkProvider = Effect.gen(function* () {
       if (!effectiveConfig.enabled) return yield* buildInitialOmpProviderSnapshot(effectiveConfig);
       // Resolve (and re-hash) right before every probe; a resolved path is never reused.
-      const resolved = yield* resolver
-        .resolve({ overridePath: effectiveConfig.binaryPath, bundledPath, cacheDir })
-        .pipe(Effect.provide(FetchHttpClient.layer), Effect.result);
+      const resolved = yield* resolveBinary.pipe(Effect.result);
       if (Result.isFailure(resolved)) {
         return ompProviderSnapshot({
           settings: effectiveConfig,
@@ -147,6 +168,7 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv, OmpUsageReader
         binaryPath: resolved.success.path,
         binaryIdentity: resolved.success.identity,
         profile: effectiveConfig.profile,
+        launchArgs,
         environment: processEnv,
         cwd: host.paths.cwd,
       });
@@ -167,16 +189,27 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv, OmpUsageReader
         buildInitialOmpProviderSnapshot(settings.provider).pipe(Effect.map(stampIdentity)),
       checkProvider,
       // Each directory's `/` and `$` catalog and model list ride on the snapshot, so a list a
-      // thread's server pushes reaches the composer without a rescan.
-      enrichSnapshot: ({ getSnapshot, publishSnapshot }) =>
-        catalog.workspaceSnapshots.pipe(
-          Stream.runForEach((workspaceSnapshots) =>
-            workspaceSnapshots.length === 0
-              ? Effect.void
-              : getSnapshot.pipe(
-                  Effect.flatMap((current) => publishSnapshot({ ...current, workspaceSnapshots })),
-                ),
-          ),
+      // thread's server pushes reaches the composer without a rescan. `omp update --check` runs
+      // beside it, so an update notice needs no click and never holds up the probe's snapshot.
+      enrichSnapshot: ({ settings, snapshot, getSnapshot, publishSnapshot }) =>
+        Effect.all(
+          [
+            catalog.workspaceSnapshots.pipe(
+              Stream.runForEach((workspaceSnapshots) =>
+                workspaceSnapshots.length === 0
+                  ? Effect.void
+                  : getSnapshot.pipe(
+                      Effect.flatMap((current) =>
+                        publishSnapshot({ ...current, workspaceSnapshots }),
+                      ),
+                    ),
+              ),
+            ),
+            settings.enableProviderUpdateChecks
+              ? publishUpdateNotice({ snapshot, getSnapshot, publishSnapshot })
+              : Effect.void,
+          ],
+          { concurrency: "unbounded", discard: true },
         ),
     }).pipe(
       Effect.mapError(
@@ -215,11 +248,12 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv, OmpUsageReader
       environment: processEnv,
       profile: effectiveConfig.profile,
       platform,
-      homeDir: yield* HostProcess.HomeDirectory,
+      homeDir,
     });
     const orchestrationAdapter = yield* makeOmpAdapter({
       instanceId,
       profile: effectiveConfig.profile,
+      launchArgs,
       environment: processEnv,
       platform,
       defaultCwd: host.paths.cwd,
@@ -286,6 +320,7 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv, OmpUsageReader
         // Same provisioning resolver as the probe: re-hashed right before every spawn.
         resolveBinary: resolveBinary.pipe(Effect.map((sidecar) => sidecar.path)),
         profile: effectiveConfig.profile,
+        launchArgs,
         environment: processEnv,
         cwd: textGenerationCwd,
       }),

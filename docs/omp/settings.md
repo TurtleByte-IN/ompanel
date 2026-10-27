@@ -27,6 +27,12 @@ and `omp config reset`, using OMP's CLI JSON contract 1.0.0.
   names a secret (`…Token`, `…Password`, `…ApiKey`) count as well. The
   registered keys and credentials live in `src/ompSettingKeys.generated.ts`,
   generated from the pinned tag's settings registry.
+- One exception: a credential OMP resolves through its config-value resolver
+  (`OMP_SECRET_REFERENCE_KEYS` in `configForm.ts`, today `auth.broker.token`)
+  may be set to where OMP reads the secret instead of the secret: an
+  upper-case environment variable name or a `!command` OMP runs and reads
+  stdout from (`resolveConfigValue`, `auth-broker/discover.ts`). Anything else,
+  including a token itself, is refused as a credential (`isOmpSecretReference`).
 
 ## Launch-scoped keys
 
@@ -44,14 +50,15 @@ It was derived from O main `a3aff57a7e`. The scan collected every setting
 or `onEffectiveChange` subscription anywhere in `packages/coding-agent/src`,
 and dropped those read again on each use.
 
-| Key                      | Why it needs a restart (O main `a3aff57a7e`)                                            |
-| ------------------------ | --------------------------------------------------------------------------------------- |
-| `memory.backend`         | `sdk.ts` `startMemoryBackend` resolves and starts the backend once per session          |
-| `mnemopi.embeddingModel` | read when the Mnemopi backend starts (`mnemopi/config.ts`); its description says so too |
-| `mcp.startupTimeoutMs`   | only used by MCP discovery during session construction (`sdk.ts`)                       |
-| `plan.enabled`           | decides plan-mode tool wiring when the tool registry is built (`sdk.ts`)                |
-| `plan.defaultOnStartup`  | read only at startup (`main.ts`)                                                        |
-| `goal.enabled`           | the goal tool registers at construction; turning it off never unregisters it            |
+| Key                           | Why it needs a restart (O main `a3aff57a7e`)                                                                                |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `memory.backend`              | `sdk.ts` `startMemoryBackend` resolves and starts the backend once per session                                              |
+| `mnemopi.embeddingModel`      | read when the Mnemopi backend starts (`mnemopi/config.ts`); its description says so too                                     |
+| `mcp.startupTimeoutMs`        | only used by MCP discovery during session construction (`sdk.ts`)                                                           |
+| `plan.enabled`                | decides plan-mode tool wiring when the tool registry is built (`sdk.ts`)                                                    |
+| `plan.defaultOnStartup`       | read only at startup (`main.ts`)                                                                                            |
+| `goal.enabled`                | the goal tool registers at construction; turning it off never unregisters it                                                |
+| `telemetry.otlpExportEnabled` | OMP registers its OTLP exporters once at startup (`main.ts`, `telemetry-export.ts`); its own description says "next launch" |
 
 Re-check the list when the pin moves. The CLI contract does not report
 launch scope yet, so the list is maintained by hand.
@@ -84,9 +91,14 @@ The adapter registers every running thread with the instance's thread
 registry (`server/threadSessions.ts`). When a launch-scoped key changes for
 a thread, the session's provider state gains `restartRequired: [keys]`
 (`OrchestrationV2ProviderSession`), which reaches the thread projection
-through `provider_session.updated`. The next model selection change on that
-session returns `restart_session` from `planSelectionTransition`. Stopping
-the thread's session also restarts it, and its replacement starts clean.
+through `provider_session.updated`. The web thread view shows "Restart to apply"
+and the keys above the composer (`useRestartRequiredBanner`), and the mobile thread
+screen a matching card (`RestartRequiredCard`), both with a Restart button
+that is held while a turn runs. Restart stops the thread's session, as the
+thread's stop-session command does; the next turn starts a replacement that
+reads the current settings and starts clean. The next model selection change
+on a marked session also returns `restart_session` from
+`planSelectionTransition`.
 
 ## Server API
 
@@ -116,15 +128,37 @@ are `OmpSettingsOperationError` and never carry `omp` output.
 
 Settings → OMP Models & Roles, Routing, Thinking, Advisor & Agents, Sampling,
 Approvals & Tools, Memory, Context, Modes, Runtime, Search, Discovery, MCP,
-Customization, Plugins, Skills and Terminal prefs each show a slice of
+Customization, Plugins, Skills, Terminal prefs and All settings (advanced) each show a slice of
 the engine's form for the primary environment's OMP instance (a picker appears
-when it runs several). The pages write the global layer and add no write path
-of their own; env-set keys stay read-only and credentials reset-only. The key
+when it runs several). They add no write path of their own; env-set keys stay
+read-only and credentials reset-only. The key
 lists live in `OMP_SETTINGS_PAGES` (`packages/provider-omp/src/settingsPages.ts`);
 a key ending in `.` takes the whole group. A test checks every listed key
 against the pinned registry. Custom providers has no keys: it edits
 `models.yml` only (below). [settings-mapping.md](settings-mapping.md) lists,
 per page, the keys, files, server methods and `omp` commands it uses.
+
+All settings (advanced) (`remainder` in `OMP_SETTINGS_PAGES`) lists, in key
+order, every key `config list` reports that no other page lists, minus the keys
+another part of Ompanel shows (`OMP_SETTINGS_SHOWN_ELSEWHERE`: `auth.broker.url`
+and `auth.broker.token`, on Accounts). A unit test checks that every key the
+pinned OMP registers is on a page, on the advanced page or on that list, and the
+G2 E2E checks the same for a real `omp config list`.
+
+### Global and project layer
+
+When the environment has projects, each settings page has a layer switch:
+Global, or Project: `<title>`. Global reads in Ompanel's own directory (no
+project config) and writes `omp config set --scope global`. A project reads
+`config list --cwd <workspaceRoot>`, so values show what applies in that
+project and the source badge says Project where its `.omp/config.yml` sets a
+key; writes and Reset go to that file (`--scope project --cwd <workspaceRoot>`).
+Reset is offered only for keys the selected layer sets. A project change marks
+only threads inside that project restart required. Map settings (`record` type,
+such as `modelRoles` or `tools.approval`) are read-only on a project: OMP
+deep-merges maps across layers and reports only the merged map, so writing it
+back would copy every global entry into the project and a removed entry would
+merge back in. Edit them on Global; a project's own entries go with Reset.
 
 The pages fit a 390px phone viewport (browser tests render each page in the settings column
 beside the collapsed nav rail). Mobile has Settings → OMP: every page's fields as read-only
@@ -153,7 +187,7 @@ web and desktop. Session import in particular creates a thread and is not offere
 | Memory            | `memory.backend` (`off` `local` `hindsight` `mnemopi` `sharpshooter`), `memories.*` (local), `hindsight.*`, `mnemopi.*`, `sharpshooter.*`; `hindsight.apiToken`, `mnemopi.*ApiKey` are reset-only            |
 | Context           | `compaction.*` (incl. `compaction.methodOrder`)                                                                                                                                                              |
 | Modes             | `plan.*`, `goal.*`, `loop.*`                                                                                                                                                                                 |
-| Runtime           | `eval.*` (incl. `eval.py`, `eval.js`), `providers.tinyModelDevice`, `providers.tinyModelDtype`, plus a read-only PTY row                                                                                     |
+| Runtime           | `eval.*` (incl. `eval.py`, `eval.js`), `providers.tinyModelDevice`, `providers.tinyModelDtype`, `telemetry.otlpExportEnabled`, plus a read-only PTY row                                                      |
 | Search            | `web_search.enabled`, `modelRoles` (`web` role only), `retry.fallbackChains` (`web` chain only), `providers.webSearchTimeoutSeconds`, `exa.*`, `searxng.*`                                                   |
 | Discovery         | `enabledProviders` / `disabledProviders` (read-only), `skills.enabled`, `skills.enable*` sources, `commands.enableClaudeUser/Project`, `mcp.enableProjectConfig`, `contextFiles.extra`                       |
 | MCP               | `mcp.*`, plus the MCP server list below                                                                                                                                                                      |
@@ -161,6 +195,7 @@ web and desktop. Session import in particular creates a thread and is not offere
 | Plugins           | `extensions`, `disabledExtensions`, `extensionHandlers.*`, `marketplace.*`, plus the plugin list, marketplaces and update check below                                                                        |
 | Skills            | `skills.registryUrl`, plus the resolved skill list below                                                                                                                                                     |
 | Terminal prefs    | `startup.*`, `theme.*`, `statusLine.*`, `tui.*`, `terminal.*`, all read-only and marked terminal-only, plus a `keybindings.yml` note                                                                         |
+| All settings      | every other key, in key order (e.g. `bash.enabled`, `browser.*`, `ask.*`, `async.*`, `autoResume`)                                                                                                           |
 
 `modelRoles` covers OMP's 16 roles: `default smol slow vision plan commit tiny
 memory task advisor widget image web speech dictation judge` (OMP has no
@@ -189,6 +224,13 @@ for Ompanel threads.
 OMP has no PTY setting. `--no-pty` and `PI_NO_PTY` turn it off in the terminal
 app, and `rpc-ui` mode (Ompanel's threads) always runs bash without one, so the
 Runtime page shows PTY as a read-only row.
+
+OMP's own telemetry is OMP's setting. OMP exports traces, logs and metrics only
+when `telemetry.otlpExportEnabled` is on and an `OTEL_EXPORTER_OTLP_*` endpoint
+is in its environment. Ompanel passes the user's environment through unchanged
+and never sets `telemetry.*` or any `OTEL_*` variable itself (`driver.test.ts`,
+"never sets OMP telemetry or OTEL_* beyond the user's environment"); the
+Runtime page turns the export off or on.
 
 `web_search` picks providers through the `web` model role: `modelRoles.web`
 is the first `web/<provider>` selector and `retry.fallbackChains.web` the rest
@@ -328,6 +370,16 @@ The pinned omp prints `marketplace list`, `discover` and `update --check` as
 text only; Ompanel strips terminal escapes and reads the lines
 (`parseOmpMarketplaceList`, `parseOmpMarketplaceDiscover`,
 `parseOmpUpdateCheck` in `control.ts`).
+
+The provider probe runs the same `update --check` after each snapshot
+(`makeOmpUpdateNotice` in `updateNotice.ts`, from the driver's
+`enrichSnapshot`), never ahead of it. An `available` answer becomes the
+snapshot's `versionAdvisory` (`behind_latest`, `canUpdate: false`, no update
+command; `ompVersionAdvisory` in `status.ts` words it for the pinned sidecar or
+a custom binary), so the provider card shows the notice without a click. Answers
+are cached per binary identity for an hour, failures for five minutes; a failed
+check adds no advisory. It is skipped when the probe found no usable omp or
+the server's `enableProviderUpdateChecks` is off.
 
 Every change goes through one confirmation dialog that shows the exact command
 line (`formatOmpCommandLine` over `ompPluginCommandArgs`, the same arguments

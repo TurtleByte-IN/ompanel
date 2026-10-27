@@ -32,6 +32,7 @@ const SETTINGS: Readonly<Record<string, FakeSetting>> = {
   modelRoles: { type: "record", default: {} },
   "memory.backend": { type: "enum", default: "off" },
   "hindsight.apiToken": { type: "string", credential: true },
+  "auth.broker.token": { type: "string", credential: true },
   "newfeature.endpoint": { type: "string", default: "https://example.test" },
   "web_search.enabled": { type: "boolean", default: true, env: false },
   "browser.enabled": { type: "boolean", default: true },
@@ -460,6 +461,58 @@ describe("OmpSettingsEngine.write", () => {
       assert.isFalse(omp.launches.some((args) => args.includes("get")));
       assert.isFalse(omp.launches.some((args) => args.some((arg) => arg.startsWith("sk-"))));
       assert.strictEqual(threads.overlays.get("thread-app"), EMPTY_OVERLAY);
+    }),
+  );
+
+  it.effect("sets the broker token only to where OMP reads it, never to the token itself", () =>
+    Effect.gen(function* () {
+      const omp = fakeOmpConfig();
+      const [literal, envName, command, otherCredential] = yield* withEngine(
+        omp,
+        fakeThreads([]),
+        (engine) =>
+          Effect.all([
+            engine
+              .write(TARGET, {
+                key: "auth.broker.token",
+                value: "q9X-Zr3_base64url-token",
+                scope: "global",
+              })
+              .pipe(Effect.flip),
+            engine.write(TARGET, {
+              key: "auth.broker.token",
+              value: "BROKER_TOKEN",
+              scope: "global",
+            }),
+            engine.write(TARGET, {
+              key: "auth.broker.token",
+              value: "!op read op://vault/broker/token",
+              scope: "global",
+            }),
+            // Only keys OMP resolves through its config-value resolver take a reference.
+            engine
+              .write(TARGET, { key: "hindsight.apiToken", value: "HINDSIGHT_KEY", scope: "global" })
+              .pipe(Effect.flip),
+          ]),
+      );
+      for (const error of [literal, otherCredential]) {
+        assert.strictEqual(error._tag === "OmpSettingsError" && error.reason, "credential");
+      }
+      assert.include(literal.message, "never the secret itself");
+      const sets = omp.launches.filter((args) => configAction(args) === "set");
+      assert.deepStrictEqual(
+        sets.map((args) => args.slice(args.indexOf("--") + 1)),
+        [
+          ["auth.broker.token", JSON.stringify("BROKER_TOKEN")],
+          ["auth.broker.token", JSON.stringify("!op read op://vault/broker/token")],
+        ],
+      );
+      assert.isFalse(omp.launches.some((args) => args.some((arg) => arg.includes("q9X"))));
+      // OMP withholds what it stored, like any credential.
+      const stored = command.form.fields.find((field) => field.key === "auth.broker.token");
+      assert.isTrue(stored?.redacted);
+      assert.isFalse(stored !== undefined && "value" in stored);
+      assert.strictEqual(envName.restartRequired.length, 0);
     }),
   );
 });

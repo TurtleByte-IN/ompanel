@@ -49,6 +49,7 @@ import { useUsageLimitsPanel } from "./chat/useUsageLimitsPanel";
 import { useWorktreeSetup } from "./chat/useWorktreeSetup";
 import { useChatShortcuts } from "./chat/useChatShortcuts";
 import { ChatBannerLane } from "./chat/ChatBannerLane";
+import { useRestartRequiredBanner } from "./chat/useRestartRequiredBanner";
 import * as Schema from "effect/Schema";
 import {
   AuthOrchestrationOperateScope,
@@ -2608,8 +2609,16 @@ export default function ChatView(props: ChatViewProps) {
           },
         })
       : null;
+  const restartRequiredBanner = useRestartRequiredBanner({
+    environmentId,
+    threadId,
+    projection: serverProjection,
+    canOperate: canOperateThread,
+    working: isWorking,
+  });
   const composerBannerItems = (() => {
     const limitRecoveryItems = limitRecoveryBanner === null ? [] : [limitRecoveryBanner];
+    const restartRequiredItems = restartRequiredBanner === null ? [] : [restartRequiredBanner];
     const backgroundWorkItems = [childInputBanner, goalBanner, backgroundWorkBanner].filter(
       (item) => item !== null,
     );
@@ -2621,6 +2630,7 @@ export default function ChatView(props: ChatViewProps) {
         ...limitRecoveryItems,
         ...usageLimitsItems,
         ...projectCloneItems,
+        ...restartRequiredItems,
         ...systemComposerBannerItems,
         ...backgroundWorkItems,
       ];
@@ -2629,6 +2639,7 @@ export default function ChatView(props: ChatViewProps) {
       ...feedbackBannerItems,
       ...limitRecoveryItems,
       ...usageLimitsItems,
+      ...restartRequiredItems,
       ...projectCloneItems,
       ...systemComposerBannerItems,
       ...backgroundWorkItems,

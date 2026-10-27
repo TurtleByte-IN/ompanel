@@ -12,7 +12,9 @@ import {
   OMP_APPROVAL_MODES,
   OMP_PATH_SCOPED_KEYS,
   OMP_SETTINGS_PAGES,
+  OMP_SETTINGS_SHOWN_ELSEWHERE,
   ompSettingsPageForm,
+  ompSettingsPagesListing,
 } from "../settingsPages.ts";
 import { makeOmpControlService, type OmpControlTarget } from "./control.ts";
 import { ompApprovalModeFor } from "./launch.ts";
@@ -306,5 +308,76 @@ describe("OMP settings pages", () => {
     }
     // OMP's own bindings are a file the GUI never reads; the page says where they live.
     assert.include(OMP_SETTINGS_PAGES.terminal.description, "keybindings.yml");
+  });
+
+  const registryForm = {
+    fields: OMP_SETTING_KEYS.map((key) => ({
+      key,
+      group: key.split(".")[0]!,
+      type: "string" as const,
+      description: "",
+      source: "default" as const,
+      redacted: false,
+      credential: false,
+      readOnly: false,
+      launchScoped: false,
+      threadOverride: "overlay" as const,
+    })),
+  };
+
+  it("show every key the pinned OMP registers on a page, the advanced page or where the exclusion list says", () => {
+    const advanced = ompSettingsPageForm(registryForm, OMP_SETTINGS_PAGES.all).fields.map(
+      (field) => field.key,
+    );
+    const unreachable = OMP_SETTING_KEYS.filter(
+      (key) =>
+        ompSettingsPagesListing(key).length === 0 &&
+        !advanced.includes(key) &&
+        !(key in OMP_SETTINGS_SHOWN_ELSEWHERE),
+    );
+    assert.deepStrictEqual(unreachable, []);
+    // The advanced page holds only keys no other page lists, never an excluded one, in key order.
+    for (const key of advanced) {
+      assert.deepStrictEqual(ompSettingsPagesListing(key), [], key);
+      assert.notProperty(OMP_SETTINGS_SHOWN_ELSEWHERE, key);
+    }
+    assert.deepStrictEqual(
+      advanced,
+      advanced.toSorted((a, b) => a.localeCompare(b)),
+    );
+    // The audit's examples of keys no page listed (parity s7 7.0d).
+    for (const key of ["bash.enabled", "browser.enabled", "ask.enabled", "async.enabled"]) {
+      assert.include(advanced, key);
+    }
+  });
+
+  it("exclude only registered keys, each shown elsewhere and on no OMP page", () => {
+    for (const [key, where] of Object.entries(OMP_SETTINGS_SHOWN_ELSEWHERE)) {
+      assert.include(OMP_SETTING_KEYS, key);
+      assert.deepStrictEqual(ompSettingsPagesListing(key), [], key);
+      assert.isAbove(where.length, 0);
+    }
+    assert.deepStrictEqual(Object.keys(OMP_SETTINGS_SHOWN_ELSEWHERE).toSorted(), [
+      "auth.broker.token",
+      "auth.broker.url",
+    ]);
+  });
+
+  it("show telemetry.otlpExportEnabled writable on Runtime, restarting threads", () => {
+    const form = {
+      fields: [
+        {
+          ...registryForm.fields.find((field) => field.key === "telemetry.otlpExportEnabled")!,
+          type: "boolean" as const,
+          launchScoped: true,
+        },
+      ],
+    };
+    const runtime = ompSettingsPageForm(form, OMP_SETTINGS_PAGES.runtime).fields;
+    assert.deepStrictEqual(
+      runtime.map((field) => [field.key, field.readOnly]),
+      [["telemetry.otlpExportEnabled", false]],
+    );
+    assert.deepStrictEqual(ompSettingsPageForm(form, OMP_SETTINGS_PAGES.all).fields, []);
   });
 });

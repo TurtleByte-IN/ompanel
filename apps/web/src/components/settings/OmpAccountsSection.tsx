@@ -23,6 +23,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { OmpAuthBrokerSection } from "./OmpAuthBrokerSection";
 import { SettingsSection } from "./settingsLayout";
 
 const SOURCE_LABEL: Record<NonNullable<OmpAccountProvider["source"]>, string> = {
@@ -275,9 +276,8 @@ export function OmpAccountsPanel(props: OmpAccountsPanelProps) {
         </ul>
       )}
       <p className="text-xs text-muted-foreground">
-        Keys go to OMP's own credential store (or its auth broker when `auth.broker.url` is set);
-        Ompanel keeps no copy. The broker token is read from `OMP_AUTH_BROKER_TOKEN` or OMP's token
-        file and is never entered here.
+        Keys go to OMP's own credential store (or its auth broker when one is set below); Ompanel
+        keeps no copy.
       </p>
     </div>
   );
@@ -408,6 +408,13 @@ export function OmpAccountsSection(props: {
             })
           }
         />
+        <div className="px-3 pb-3 sm:px-4">
+          <OmpAuthBrokerSection
+            environmentId={environmentId}
+            instanceId={instanceId}
+            disabled={props.readOnly || !canManage}
+          />
+        </div>
       </SettingsSection>
     </div>
   );

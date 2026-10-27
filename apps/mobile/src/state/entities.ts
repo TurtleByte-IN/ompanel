@@ -1,5 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
-import { deriveReportedModelSelection } from "@t3tools/client-runtime/state/thread-execution";
+import {
+  deriveReportedModelSelection,
+  deriveRestartRequiredSettings,
+} from "@t3tools/client-runtime/state/thread-execution";
 
 import { appAtomRegistry } from "./atom-registry";
 import type {
@@ -236,5 +239,17 @@ export function useThreadReportedModelSelection(ref: ScopedThreadRef | null) {
   return useAtomValue(
     ref === null ? EMPTY_THREAD_ATOM : environmentThreadDetails.threadAtom(ref),
     selectReportedModelSelection,
+  );
+}
+
+const NO_RESTART_SETTINGS: ReadonlyArray<string> = [];
+const selectRestartRequiredSettings = (thread: EnvironmentThread | null) =>
+  thread === null ? NO_RESTART_SETTINGS : deriveRestartRequiredSettings(thread.projection);
+
+/** Settings keys the thread's session must restart to apply. */
+export function useThreadRestartRequiredSettings(ref: ScopedThreadRef | null) {
+  return useAtomValue(
+    ref === null ? EMPTY_THREAD_ATOM : environmentThreadDetails.threadAtom(ref),
+    selectRestartRequiredSettings,
   );
 }

@@ -25,6 +25,21 @@ More on OMP:
 3. Set **Profile** to keep this instance's OMP config, logins and sessions
    apart from your others. OMP stores each profile under
    `~/.omp/profiles/<name>`. Leave it empty for OMP's default profile.
+4. Set **Agent directory** to point this instance at another OMP agent
+   directory (`config.yml`, `models.yml`, sessions), such as `~/.omp-work/agent`.
+   Ompanel runs every `omp` of the instance with `PI_CODING_AGENT_DIR` set to it.
+   A profile has its own agent directory, so set a profile or an agent
+   directory, not both.
+5. **Launch arguments** are added to every OMP session the instance starts:
+   threads and the RPC servers Ompanel reads lists from. They are not added to
+   `omp config`, `omp plugin` or other subcommands, which reject flags they do
+   not know. Thread titles and commit messages get only `--thinking`,
+   `--service-tier` and the `--no-…` switches that turn things off, so a flag
+   like `--tools` or `-e` never gives that background run tools or extension
+   code. Ompanel refuses flags it sets itself (mode, working directory,
+   profile, config, session, approval mode, model), prompt text, and
+   `--api-key`: a key there would show in the process list, so sign in or use
+   an environment variable instead.
 
 Add another OMP instance for each separate account or configuration, each with
 its own profile.
@@ -77,14 +92,21 @@ The provider card shows an error when:
 - a sidecar file does not match the release Ompanel pins, so Ompanel refuses to
   run it,
 - the binary path does not exist or is not absolute,
+- the launch arguments set a flag Ompanel owns, or a profile and an agent
+  directory are both set,
 - OMP speaks a different version of the RPC protocol than this Ompanel release.
 
 A fresh OMP with no model or sign-in shows **Needs setup** instead; see
 [OMP setup](./omp-setup.md).
 
 OMP updates arrive with Ompanel updates. Ompanel does not update OMP on its own.
-**Settings → OMP → Plugins → Check for updates** runs `omp update --check`,
-which only says whether a newer OMP exists.
+After each status check Ompanel also runs `omp update --check`, which only says
+whether a newer OMP exists, and reuses its answer for an hour. When one exists,
+the OMP provider card shows an **Update available** icon; its details say the
+new OMP comes with an Ompanel update, or, for your own binary path, that the
+tool that installed it updates it. The card offers no update button. If the
+check fails or **Provider update checks** is off, no notice appears.
+**Settings → OMP → Plugins → Check for updates** runs the same check on demand.
 
 ## Plugins and Skills
 

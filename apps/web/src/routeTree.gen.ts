@@ -45,6 +45,7 @@ import { Route as ChatSettingsOmpDiscoveryRouteImport } from './routes/_chat.set
 import { Route as ChatSettingsOmpCustomizationRouteImport } from './routes/_chat.settings.omp-customization'
 import { Route as ChatSettingsOmpContextRouteImport } from './routes/_chat.settings.omp-context'
 import { Route as ChatSettingsOmpApprovalsRouteImport } from './routes/_chat.settings.omp-approvals'
+import { Route as ChatSettingsOmpAllRouteImport } from './routes/_chat.settings.omp-all'
 import { Route as ChatSettingsOmpAdvisorRouteImport } from './routes/_chat.settings.omp-advisor'
 import { Route as ChatSettingsKeybindingsRouteImport } from './routes/_chat.settings.keybindings'
 import { Route as ChatSettingsIntegrationsRouteImport } from './routes/_chat.settings.integrations'
@@ -243,6 +244,11 @@ const ChatSettingsOmpApprovalsRoute =
     path: '/omp-approvals',
     getParentRoute: () => ChatSettingsRoute,
   } as any)
+const ChatSettingsOmpAllRoute = ChatSettingsOmpAllRouteImport.update({
+  id: '/omp-all',
+  path: '/omp-all',
+  getParentRoute: () => ChatSettingsRoute,
+} as any)
 const ChatSettingsOmpAdvisorRoute = ChatSettingsOmpAdvisorRouteImport.update({
   id: '/omp-advisor',
   path: '/omp-advisor',
@@ -324,6 +330,7 @@ export interface FileRoutesByFullPath {
   '/settings/integrations': typeof ChatSettingsIntegrationsRoute
   '/settings/keybindings': typeof ChatSettingsKeybindingsRoute
   '/settings/omp-advisor': typeof ChatSettingsOmpAdvisorRoute
+  '/settings/omp-all': typeof ChatSettingsOmpAllRoute
   '/settings/omp-approvals': typeof ChatSettingsOmpApprovalsRoute
   '/settings/omp-context': typeof ChatSettingsOmpContextRoute
   '/settings/omp-customization': typeof ChatSettingsOmpCustomizationRoute
@@ -372,6 +379,7 @@ export interface FileRoutesByTo {
   '/settings/integrations': typeof ChatSettingsIntegrationsRoute
   '/settings/keybindings': typeof ChatSettingsKeybindingsRoute
   '/settings/omp-advisor': typeof ChatSettingsOmpAdvisorRoute
+  '/settings/omp-all': typeof ChatSettingsOmpAllRoute
   '/settings/omp-approvals': typeof ChatSettingsOmpApprovalsRoute
   '/settings/omp-context': typeof ChatSettingsOmpContextRoute
   '/settings/omp-customization': typeof ChatSettingsOmpCustomizationRoute
@@ -422,6 +430,7 @@ export interface FileRoutesById {
   '/_chat/settings/integrations': typeof ChatSettingsIntegrationsRoute
   '/_chat/settings/keybindings': typeof ChatSettingsKeybindingsRoute
   '/_chat/settings/omp-advisor': typeof ChatSettingsOmpAdvisorRoute
+  '/_chat/settings/omp-all': typeof ChatSettingsOmpAllRoute
   '/_chat/settings/omp-approvals': typeof ChatSettingsOmpApprovalsRoute
   '/_chat/settings/omp-context': typeof ChatSettingsOmpContextRoute
   '/_chat/settings/omp-customization': typeof ChatSettingsOmpCustomizationRoute
@@ -472,6 +481,7 @@ export interface FileRouteTypes {
     | '/settings/integrations'
     | '/settings/keybindings'
     | '/settings/omp-advisor'
+    | '/settings/omp-all'
     | '/settings/omp-approvals'
     | '/settings/omp-context'
     | '/settings/omp-customization'
@@ -520,6 +530,7 @@ export interface FileRouteTypes {
     | '/settings/integrations'
     | '/settings/keybindings'
     | '/settings/omp-advisor'
+    | '/settings/omp-all'
     | '/settings/omp-approvals'
     | '/settings/omp-context'
     | '/settings/omp-customization'
@@ -569,6 +580,7 @@ export interface FileRouteTypes {
     | '/_chat/settings/integrations'
     | '/_chat/settings/keybindings'
     | '/_chat/settings/omp-advisor'
+    | '/_chat/settings/omp-all'
     | '/_chat/settings/omp-approvals'
     | '/_chat/settings/omp-context'
     | '/_chat/settings/omp-customization'
@@ -859,6 +871,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatSettingsOmpApprovalsRouteImport
       parentRoute: typeof ChatSettingsRoute
     }
+    '/_chat/settings/omp-all': {
+      id: '/_chat/settings/omp-all'
+      path: '/omp-all'
+      fullPath: '/settings/omp-all'
+      preLoaderRoute: typeof ChatSettingsOmpAllRouteImport
+      parentRoute: typeof ChatSettingsRoute
+    }
     '/_chat/settings/omp-advisor': {
       id: '/_chat/settings/omp-advisor'
       path: '/omp-advisor'
@@ -949,6 +968,7 @@ interface ChatSettingsRouteChildren {
   ChatSettingsIntegrationsRoute: typeof ChatSettingsIntegrationsRoute
   ChatSettingsKeybindingsRoute: typeof ChatSettingsKeybindingsRoute
   ChatSettingsOmpAdvisorRoute: typeof ChatSettingsOmpAdvisorRoute
+  ChatSettingsOmpAllRoute: typeof ChatSettingsOmpAllRoute
   ChatSettingsOmpApprovalsRoute: typeof ChatSettingsOmpApprovalsRoute
   ChatSettingsOmpContextRoute: typeof ChatSettingsOmpContextRoute
   ChatSettingsOmpCustomizationRoute: typeof ChatSettingsOmpCustomizationRoute
@@ -985,6 +1005,7 @@ const ChatSettingsRouteChildren: ChatSettingsRouteChildren = {
   ChatSettingsIntegrationsRoute: ChatSettingsIntegrationsRoute,
   ChatSettingsKeybindingsRoute: ChatSettingsKeybindingsRoute,
   ChatSettingsOmpAdvisorRoute: ChatSettingsOmpAdvisorRoute,
+  ChatSettingsOmpAllRoute: ChatSettingsOmpAllRoute,
   ChatSettingsOmpApprovalsRoute: ChatSettingsOmpApprovalsRoute,
   ChatSettingsOmpContextRoute: ChatSettingsOmpContextRoute,
   ChatSettingsOmpCustomizationRoute: ChatSettingsOmpCustomizationRoute,

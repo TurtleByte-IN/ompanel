@@ -120,12 +120,15 @@ describe("ompUsageFormat", () => {
 });
 
 describe("ompUsageReader", () => {
-  const directories = (profile: string, environment: NodeJS.ProcessEnv) => {
+  const directories = (
+    config: { readonly profile?: string; readonly agentDir?: string },
+    environment: NodeJS.ProcessEnv,
+  ) => {
     if (ompUsageReader.kind !== "transcripts") throw new Error("expected a transcript reader");
     return ompUsageReader
       .directories({
         instanceId: ProviderInstanceId.make("omp"),
-        config: Schema.decodeSync(OmpSettings)({ profile }),
+        config: Schema.decodeSync(OmpSettings)(config),
         environment,
         configured: true,
       })
@@ -137,15 +140,32 @@ describe("ompUsageReader", () => {
 
   effectIt.effect("reads the sessions of the instance's profile, as its threads write them", () =>
     Effect.gen(function* () {
-      assert.deepStrictEqual(yield* directories("", { HOME: "/home/tester" }), [
+      assert.deepStrictEqual(yield* directories({}, { HOME: "/home/tester" }), [
         { dir: "/home/tester/.omp/agent/sessions" },
       ]);
-      assert.deepStrictEqual(yield* directories("work", { HOME: "/home/tester" }), [
+      assert.deepStrictEqual(yield* directories({ profile: "work" }, { HOME: "/home/tester" }), [
         { dir: "/home/tester/.omp/profiles/work/agent/sessions" },
       ]);
       assert.deepStrictEqual(
-        yield* directories("", { HOME: "/home/tester", PI_CODING_AGENT_SESSION_DIR: "/data/s" }),
+        yield* directories({}, { HOME: "/home/tester", PI_CODING_AGENT_SESSION_DIR: "/data/s" }),
         [{ dir: "/data/s" }],
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  effectIt.effect("reads the sessions of the instance's agent directory, ~ expanded", () =>
+    Effect.gen(function* () {
+      // An inherited profile would outrank the agent dir, so the instance's omp runs without it.
+      assert.deepStrictEqual(
+        yield* directories(
+          { agentDir: "~/omp-work/agent" },
+          { HOME: "/home/tester", OMP_PROFILE: "env", PI_PROFILE: "env" },
+        ),
+        [{ dir: "/home/server/omp-work/agent/sessions" }],
+      );
+      assert.deepStrictEqual(
+        yield* directories({ agentDir: "/srv/omp/agent" }, { HOME: "/home/tester" }),
+        [{ dir: "/srv/omp/agent/sessions" }],
       );
     }).pipe(Effect.provide(NodeServices.layer)),
   );

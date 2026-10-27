@@ -22,6 +22,7 @@ import {
   deriveReportedModelSelection,
   deriveLatestThreadRun,
   deriveProviderSubagentStatus,
+  deriveRestartRequiredSettings,
   deriveRunlessWorkStartedAt,
   deriveThreadActivityRun,
   deriveThreadRuntime,
@@ -391,5 +392,39 @@ describe("provider-reported model selection", () => {
         ],
       }),
     ).toBeNull();
+  });
+});
+
+describe("deriveRestartRequiredSettings", () => {
+  const session = {
+    id: ProviderSessionId.make("session"),
+    driver: ProviderDriverKind.make("omp"),
+    providerInstanceId: v2Projection.thread.providerInstanceId,
+    status: "ready" as const,
+    cwd: "/repo",
+    model: null,
+    capabilities: {} as never,
+    createdAt: now,
+    updatedAt: now,
+    lastError: null,
+    restartRequired: ["memory.backend"],
+  };
+
+  it("reads the live session on the thread's provider instance", () => {
+    expect(deriveRestartRequiredSettings({ ...v2Projection, providerSessions: [session] })).toEqual(
+      ["memory.backend"],
+    );
+  });
+
+  it("ignores stopped sessions, other instances, and sessions without the marker", () => {
+    const { restartRequired: _, ...clean } = session;
+    for (const providerSessions of [
+      [],
+      [clean],
+      [{ ...session, status: "stopped" as const }],
+      [{ ...session, providerInstanceId: ProviderInstanceId.make("other") }],
+    ]) {
+      expect(deriveRestartRequiredSettings({ ...v2Projection, providerSessions })).toEqual([]);
+    }
   });
 });

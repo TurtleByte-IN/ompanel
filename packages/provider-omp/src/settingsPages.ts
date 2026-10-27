@@ -38,7 +38,8 @@ export type OmpSettingsPageId =
   | "customization"
   | "plugins"
   | "skills"
-  | "terminal";
+  | "terminal"
+  | "all";
 
 export interface OmpSettingsPage {
   readonly id: OmpSettingsPageId;
@@ -48,6 +49,8 @@ export interface OmpSettingsPage {
   readonly keys: ReadonlyArray<string>;
   /** Every key is shown, never written: settings only OMP's terminal UI reads. */
   readonly terminalOnly?: true;
+  /** The page lists every key no other page lists and `OMP_SETTINGS_SHOWN_ELSEWHERE` leaves out. */
+  readonly remainder?: true;
 }
 
 export const OMP_SETTINGS_PAGES: Readonly<Record<OmpSettingsPageId, OmpSettingsPage>> = {
@@ -165,8 +168,13 @@ export const OMP_SETTINGS_PAGES: Readonly<Record<OmpSettingsPageId, OmpSettingsP
     id: "runtime",
     title: "Runtime",
     description:
-      "The Python and JavaScript eval runtimes and the device the local tiny model runs on.",
-    keys: ["eval.", "providers.tinyModelDevice", "providers.tinyModelDtype"],
+      "The Python and JavaScript eval runtimes, the device the local tiny model runs on, and whether OMP exports its own telemetry over OTLP (to the OTEL_EXPORTER_OTLP_* endpoint in your environment; Ompanel never sets it).",
+    keys: [
+      "eval.",
+      "providers.tinyModelDevice",
+      "providers.tinyModelDtype",
+      "telemetry.otlpExportEnabled",
+    ],
   },
   search: {
     id: "search",
@@ -241,7 +249,39 @@ export const OMP_SETTINGS_PAGES: Readonly<Record<OmpSettingsPageId, OmpSettingsP
     keys: ["startup.", "theme.", "statusLine.", "tui.", "terminal."],
     terminalOnly: true,
   },
+  all: {
+    id: "all",
+    title: "All settings (advanced)",
+    description:
+      "Every OMP setting no other page shows, in key order: feature switches, tool limits and other advanced options. Credentials are never shown; set them with sign-in or an environment variable, or reset them here.",
+    keys: [],
+    remainder: true,
+  },
 };
+
+/**
+ * Keys no OMP settings page shows because another part of Ompanel does, with where. The "All
+ * settings (advanced)" page leaves them out too.
+ */
+export const OMP_SETTINGS_SHOWN_ELSEWHERE: Readonly<Record<string, string>> = {
+  "auth.broker.url": "Settings → Providers → OMP accounts (auth broker)",
+  "auth.broker.token": "Settings → Providers → OMP accounts (auth broker)",
+};
+
+/** `pattern` (an exact key, or a prefix ending in `.`) names `key`. */
+const patternNames = (pattern: string, key: string): boolean =>
+  pattern.endsWith(".") ? key.startsWith(pattern) : key === pattern;
+
+/** The pages that list `key` by name or prefix; the remainder page is not among them. */
+export function ompSettingsPagesListing(key: string): ReadonlyArray<OmpSettingsPage> {
+  return Object.values(OMP_SETTINGS_PAGES).filter((page) =>
+    page.keys.some((pattern) => patternNames(pattern, key)),
+  );
+}
+
+/** A page that reads OMP settings (Custom providers reads only models.yml). */
+export const ompSettingsPageHasSettings = (page: OmpSettingsPage): boolean =>
+  page.keys.length > 0 || page.remainder === true;
 
 /** OMP's approval modes (`tools/approval.ts` `APPROVAL_MODES`), with OMP's labels. */
 export const OMP_APPROVAL_MODES: ReadonlyArray<{
@@ -275,18 +315,27 @@ export const OMP_PATH_SCOPED_KEYS: ReadonlyArray<string> = [
 export const OMP_WEB_SEARCH_ROLE = "web";
 
 /**
- * The page's fields, in the page's key order; keys the running OMP lacks are skipped. Path-scoped
- * arrays and every key of a terminal-only page come back read-only.
+ * The page's fields, in the page's key order (key order on the remainder page); keys the running
+ * OMP lacks are skipped. Path-scoped arrays and every key of a terminal-only page come back
+ * read-only.
  */
 export function ompSettingsPageForm(form: OmpSettingsForm, page: OmpSettingsPage): OmpSettingsForm {
-  const fields: OmpSettingsField[] = [];
-  for (const pattern of page.keys) {
-    for (const field of form.fields) {
-      const inPage = pattern.endsWith(".") ? field.key.startsWith(pattern) : field.key === pattern;
-      if (!inPage) continue;
-      const readOnly = page.terminalOnly === true || OMP_PATH_SCOPED_KEYS.includes(field.key);
-      fields.push(readOnly ? { ...field, readOnly: true } : field);
-    }
-  }
+  const inPage: OmpSettingsField[] =
+    page.remainder === true
+      ? form.fields
+          .filter(
+            (field) =>
+              !(field.key in OMP_SETTINGS_SHOWN_ELSEWHERE) &&
+              ompSettingsPagesListing(field.key).length === 0,
+          )
+          .toSorted((a, b) => a.key.localeCompare(b.key))
+      : page.keys.flatMap((pattern) =>
+          form.fields.filter((field) => patternNames(pattern, field.key)),
+        );
+  const fields = inPage.map((field) =>
+    page.terminalOnly === true || OMP_PATH_SCOPED_KEYS.includes(field.key)
+      ? { ...field, readOnly: true }
+      : field,
+  );
   return { fields };
 }

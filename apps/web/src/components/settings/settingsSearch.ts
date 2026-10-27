@@ -42,6 +42,7 @@ export type SettingsPath =
   | "/settings/omp-plugins"
   | "/settings/omp-skills"
   | "/settings/omp-terminal"
+  | "/settings/omp-all"
   | "/settings/integrations"
   | "/settings/scheduled-tasks"
   | "/settings/source-control"
@@ -121,6 +122,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/omp-plugins": "OMP Plugins",
   "/settings/omp-skills": "OMP Skills",
   "/settings/omp-terminal": "OMP Terminal prefs",
+  "/settings/omp-all": "OMP All settings (advanced)",
   "/settings/integrations": "Integrations",
   "/settings/scheduled-tasks": "Scheduled Tasks",
   "/settings/source-control": "Source Control",
@@ -881,6 +883,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "omp-all",
+    title: "OMP all settings (advanced)",
+    to: "/settings/omp-all",
+    searchTerms: [
+      "omp all settings advanced every key config list feature switches tool limits bash browser ask async auto resume archive",
+    ],
+  },
+  {
     id: "usage-providers",
     title: "Usage providers",
     to: "/settings/providers",
@@ -1261,6 +1271,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/omp-plugins": null,
   "/settings/omp-skills": null,
   "/settings/omp-terminal": null,
+  "/settings/omp-all": null,
   "/settings/integrations": null,
   "/settings/source-control": "environment-defaults",
   "/settings/storage": "project-defaults",

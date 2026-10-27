@@ -19,11 +19,16 @@ const isOmpProfileName = Schema.makeFilter(
 
 // Same rule the sidecar resolver enforces (absolute after `~` expansion), so a relative path is
 // rejected in the form rather than only on the status card. No node:path: this runs in browsers.
-const ABSOLUTE_BINARY_PATH = /^(?:\/|~(?:$|[\\/])|[A-Za-z]:[\\/]|\\\\)/;
+const ABSOLUTE_PATH = /^(?:\/|~(?:$|[\\/])|[A-Za-z]:[\\/]|\\\\)/;
 
 const isAbsoluteBinaryPath = Schema.makeFilter(
-  (value: string) => value === "" || ABSOLUTE_BINARY_PATH.test(value),
+  (value: string) => value === "" || ABSOLUTE_PATH.test(value),
   { expected: "an absolute path to an omp executable (or ~/...)" },
+);
+
+const isAbsoluteAgentDir = Schema.makeFilter(
+  (value: string) => value === "" || ABSOLUTE_PATH.test(value),
+  { expected: "an absolute path to a directory (or ~/...)" },
 );
 
 export const OmpSettings = makeProviderSettingsSchema(
@@ -50,13 +55,31 @@ export const OmpSettings = makeProviderSettingsSchema(
         providerSettingsForm: { placeholder: "default", clearWhenEmpty: "omit" },
       }),
     ),
+    agentDir: TrimmedString.check(isAbsoluteAgentDir).pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Agent directory",
+        description:
+          "OMP's agent directory (config.yml, models.yml, sessions). Sets PI_CODING_AGENT_DIR for every omp this instance runs. Leave empty for OMP's default, or the profile's; a profile has its own, so set one or the other.",
+        providerSettingsForm: { placeholder: "~/.omp/agent", clearWhenEmpty: "omit" },
+      }),
+    ),
+    launchArgs: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Launch arguments",
+        description:
+          "Extra CLI arguments for every omp session this instance starts (threads, its RPC servers), not for `omp config`, `omp plugin` or other subcommands. Title and commit-message runs get only --thinking, --service-tier and --no-… switches. Flags Ompanel sets itself (mode, cwd, profile, config, session, approval, model) and --api-key are refused.",
+        providerSettingsForm: { placeholder: "--thinking high", clearWhenEmpty: "omit" },
+      }),
+    ),
     customModels: Schema.Array(CustomModelSetting).pipe(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
   },
   {
-    order: ["binaryPath", "profile"],
+    order: ["binaryPath", "profile", "agentDir", "launchArgs"],
   },
 );
 export type OmpSettings = typeof OmpSettings.Type;
