@@ -26,12 +26,14 @@ import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 
 // The first-run sidecar download is ~100 MB; a cold runner can take a while.
 const OMP_DOWNLOAD_TIMEOUT = Duration.minutes(5);
-// windows-latest answers / 1.5-3 s after spawn (70 runs, #192); a crash ends the wait early.
+// windows-latest answers / 1.5-3 s after spawn (70 measured runs); a crash ends the wait early.
 const READY_TIMEOUT = Duration.seconds(30);
 
 // Windows reports a crash as an NTSTATUS exit code, such as 0xC0000374 for heap corruption.
 const describeExit = (code: number) =>
-  code > 0xffff ? `code ${String(code)} (0x${code.toString(16).toUpperCase()})` : `code ${String(code)}`;
+  code > 0xffff
+    ? `code ${String(code)} (0x${code.toString(16).toUpperCase()})`
+    : `code ${String(code)}`;
 
 export class CliArchiveSmokeError extends Schema.TaggedError<CliArchiveSmokeError>()(
   "CliArchiveSmokeError",

@@ -143,7 +143,7 @@ export const pinnedOmpSidecar = Effect.fn("pinnedOmpSidecar")(function* (lock: O
     hostPlatform,
     yield* HostProcess.Architecture,
     // Only a Linux asset depends on the libc. Detecting it builds a process report, which on
-    // Windows intermittently corrupted the heap and crashed the server at startup (#192).
+    // Windows intermittently corrupted the heap and crashed the server at startup.
     hostPlatform === "linux" ? yield* OmpHostLinuxLibc : "gnu",
   );
   const pinned = platform === undefined ? undefined : lock.sidecars[platform];
