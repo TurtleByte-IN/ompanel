@@ -1,9 +1,6 @@
 /**
- * Which project owns a directory. A project owns its workspace root, and the same folder of each
- * git worktree of its repository: the worktree's path joined with the project's subpath inside
- * the repository (a project at `repo/app` owns `repo/app` and `<worktree>/app`, not the repository
- * root or a whole worktree). A folder that two projects claim, any folder inside a project, and
- * any other directory belong to no project, so none of them is trusted.
+ * A project owns its workspace root and the same folder of each git worktree (worktree path plus
+ * the project's subpath in the repository). A folder two projects claim has no owner.
  */
 import type { ProjectId } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
