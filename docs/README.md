@@ -31,7 +31,7 @@
 - [Running in the background](./user/background-service.md)
 - [Updating Ompanel](./user/updating.md)
 - OMP: [Provider guide](./user/providers-omp.md) · [Setup](./user/omp-setup.md) · [Accounts](./user/omp-accounts.md) · [Settings](./user/omp-settings.md) · [Plugins and skills](./user/omp-plugins.md) · [Composer](./user/omp-composer.md) · [Tool and turn cards](./user/omp-cards.md) · [Thread menu](./user/omp-thread-menu.md)
-- Other provider guides: [Codex](./user/providers-codex.md) · [Claude](./user/providers-claude.md) · [OpenCode](./user/providers-opencode.md) · [Antigravity](./user/providers-antigravity.md) · [Pi](./user/providers-pi.md) · [Muse Code](./user/providers-muse.md)
+- Other provider guides: [Codex](./user/providers-codex.md) · [Claude](./user/providers-claude.md) · [OpenCode](./user/providers-opencode.md) · [Antigravity](./user/providers-antigravity.md) · [Pi](./user/providers-pi.md) · [Muse Code](./user/providers-muse.md) · [fx](./user/providers-fx.md)
 
 ---
 

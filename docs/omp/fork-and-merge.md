@@ -64,6 +64,11 @@ merge can bring back upstream environment variable prefixes, `.t3` paths and ups
 `scripts/brand-marks.test.ts` fails on the upstream product name, site, variable prefix or
 founder's handle in a user-facing file outside its allowlist.
 
+`apps/server/src/provider/agentContextBudget.json` holds Ompanel's own byte counts of the text
+agents see (the fork's copy and tools differ from upstream's). When upstream changes it, set it to
+what `AgentContextBudget.test.ts` measures on the merged tree; a rise above `main` needs the
+`agent-context-increase` label.
+
 ### Resolving a T conflict
 
 The conflict issue holds the exact commands. In general:
