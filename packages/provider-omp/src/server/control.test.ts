@@ -326,6 +326,29 @@ describe("OmpControlService.probe", () => {
     }),
   );
 
+  it.effect("starts untrusted and puts the overlay back when a temp cleaner removed it", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const omp = fakeOmp();
+      const overlays = yield* withControl(omp, (control) =>
+        Effect.gen(function* () {
+          yield* control.probe(TARGET);
+          const rpc = () => omp.launches.filter((launch) => launch.args.includes("rpc"));
+          const file = rpc()[0]!.args.at(-1)!;
+          const first = yield* fileSystem.readFileString(file);
+          yield* fileSystem.remove(file);
+          // A different profile is a different cache entry: the control process spawns again.
+          yield* control.probe({ ...TARGET, profile: "other" });
+          return { first, second: yield* fileSystem.readFileString(file), count: rpc().length };
+        }),
+      );
+      // The project's own code (custom tools, plugins, MCP servers) must not load before trust.
+      assert.match(overlays.first, /workspace:\n {2}trusted: false\n/);
+      assert.strictEqual(overlays.second, overlays.first);
+      assert.strictEqual(overlays.count, 2);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("keeps a ready server whose login-provider request fails", () =>
     Effect.gen(function* () {
       const omp = fakeOmp({

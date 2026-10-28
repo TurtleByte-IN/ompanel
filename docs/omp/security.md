@@ -52,10 +52,11 @@ project, new or existing.
 - Project MCP servers and extensions load when `omp` starts. If a project's trust changed
   since its thread's `omp` started, the next turn fails with `workspace_trust_changed`,
   the overlay already holds the new value, and `omp` restarts; sending again uses it.
-- Ompanel's own `omp` processes outside threads never start a project's MCP servers,
-  trusted or not. Control servers (`omp --mode rpc` for sign-in, models and commands) run
-  in the project's directory, and `--no-tools` does not stop OMP from loading `.mcp.json`
-  there, so they get a `--config` overlay with `mcp.enableProjectConfig: false`
+- Ompanel's own `omp` processes outside threads never run a project's own code (custom
+  tools, plugin tools, extensions, hooks, MCP servers), trusted or not. Control servers
+  (`omp --mode rpc` for sign-in, models and commands) run in the project's directory, and
+  `--no-tools` stops neither custom tools nor `.mcp.json` there, so they get a `--config`
+  overlay with `workspace.trusted: false` and `mcp.enableProjectConfig: false`
   ([processes.md](processes.md)); text generation runs in an empty directory of its own.
 - Trust is per project only: there is no server-wide value, a project without its own
   value is untrusted, and the toggle shows only when a project is selected (web and mobile).

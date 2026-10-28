@@ -323,11 +323,14 @@ command line of the process that started it. Its steps:
 
 1. untrusted (the default): a Supervised thread's command still shows the
    approval card, no process started the project's MCP server (neither the
-   thread's `omp` nor a control server), and the thread's overlay holds
-   `workspace.trusted: false`;
-2. Trust project agent config turned on in Settings → General for the project
+   thread's `omp` nor a control server), nothing imported the project's custom
+   tool `.omp/tools/trust-tool-probe` (a control `omp` starts in the project
+   folder, and its own overlay carries `workspace.trusted: false`), and the
+   thread's overlay holds `workspace.trusted: false`;
+2. Trust project agent config turned on in Settings → Threads for the project
    (the setting does not say "Not enforced"): a new Supervised thread's command
-   runs without an approval card, and its `omp` started the MCP server.
+   runs without an approval card, its `omp` started the MCP server and imported
+   the custom tool.
 
 `apps/web/e2e/omp/omp-composer.spec.ts` covers the composer extras (goal mode,
 magic keywords, traits, Vibe Mode) and, last, a staged `ast_edit` card

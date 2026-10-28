@@ -2,7 +2,7 @@
 // Workspace trust (P-09, docs/omp/security.md): the workspace carries its own agent config, an
 // `.omp/config.yml` approval rule that allows every command and a project MCP server in
 // `.mcp.json`. Untrusted (the default), a real `omp` from the omp.lock tag ignores both: the
-// command still asks, the server never starts. Trusted in Settings → General for the project, a
+// command still asks, the server never starts. Trusted in Settings → Threads for the project, a
 // new thread's `omp` uses both. Steps run in order on one page.
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -52,6 +52,29 @@ const mcpStarts = () => NodePath.join(suite.current().stack.home, "trust-mcp-sta
 const mcpStartLog = () =>
   NodeFS.existsSync(mcpStarts()) ? NodeFS.readFileSync(mcpStarts(), "utf8") : "";
 
+/**
+ * A project custom tool (`.omp/tools/<name>/index.ts`) that records each time OMP imports it. A
+ * background control `omp` (model and command lists) starts in the project folder before the
+ * project is trusted, and `--no-tools` does not stop custom tools: the control overlay's
+ * `workspace.trusted: false` does.
+ */
+const toolLoads = () => NodePath.join(suite.current().stack.home, "trust-tool-loads.txt");
+const toolLoadLog = () =>
+  NodeFS.existsSync(toolLoads()) ? NodeFS.readFileSync(toolLoads(), "utf8") : "";
+const writeProbeTool = (workspace: string) => {
+  const dir = NodePath.join(workspace, ".omp", "tools", "trust-tool-probe");
+  NodeFS.mkdirSync(dir, { recursive: true });
+  NodeFS.writeFileSync(
+    NodePath.join(dir, "index.ts"),
+    [
+      'import * as fs from "node:fs";',
+      `fs.appendFileSync(${JSON.stringify(toolLoads())}, "loaded by pid " + process.pid + "\\n");`,
+      "export default () => [];",
+      "",
+    ].join("\n"),
+  );
+};
+
 test("an untrusted project's approval rule and MCP server are ignored", async () => {
   const { approvalCard, assistantSays, createOmpThread, page, screenshot, send, stack } =
     suite.current();
@@ -81,6 +104,8 @@ test("an untrusted project's approval rule and MCP server are ignored", async ()
     }),
   );
 
+  writeProbeTool(stack.workspace);
+
   await createOmpThread("Supervised");
   await send("run: echo trust-untrusted");
   // The project's `allow` is ignored: Supervised still asks.
@@ -90,6 +115,8 @@ test("an untrusted project's approval rule and MCP server are ignored", async ()
   await expect(assistantSays(`${TOOL_REPLY_PREFIX}trust-untrusted`)).toBeVisible();
   // `omp` is up and served a turn, and never started the project's MCP server.
   expect(mcpStartLog()).toBe("");
+  // Neither the thread's `omp` nor a control `omp` imported the project's custom tool.
+  expect(toolLoadLog()).toBe("");
   // The thread's `--config` overlay is what told `omp` the project is untrusted.
   const [args = ""] = suite
     .current()
@@ -131,5 +158,7 @@ test("a trusted project's approval rule and MCP server apply in a new thread", a
   expect(await sawApproval()).toBe(false);
   await expect(approvalCard()).toHaveCount(0);
   await expect.poll(mcpStartLog).toContain("started");
+  // The probe tool does load once trusted, so the untrusted step above proves something.
+  await expect.poll(toolLoadLog).toContain("loaded by pid");
   await screenshot("02b-trusted-runs");
 });

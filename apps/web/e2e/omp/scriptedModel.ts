@@ -310,6 +310,9 @@ const BASE = {
 
 const sse = (chunk: object) => `data: ${JSON.stringify(chunk)}\n\n`;
 
+/** Stalled streams still open: OMP's abort of a hung turn closes its stream. */
+let stalledStreams = 0;
+
 const sleep = (ms: number) => {
   const { promise, resolve } = Promise.withResolvers<void>();
   setTimeout(resolve, ms);
@@ -330,8 +333,13 @@ const streamReply = async (response: NodeHttp.ServerResponse, reply: Reply) => {
       }),
     );
     const deadline = Date.now() + 60_000;
-    while (!response.destroyed && !response.socket?.destroyed && Date.now() < deadline) {
-      await sleep(100);
+    stalledStreams += 1;
+    try {
+      while (!response.destroyed && !response.socket?.destroyed && Date.now() < deadline) {
+        await sleep(100);
+      }
+    } finally {
+      stalledStreams -= 1;
     }
     if (!response.writableEnded && !response.destroyed) response.end("data: [DONE]\n\n");
     return;
@@ -389,6 +397,8 @@ const completionBody = (reply: Reply) => ({
 
 export interface ScriptedModel {
   readonly calls: ReadonlyArray<ScriptedModelCall>;
+  /** How many stalled replies are still held open (a turn OMP has not aborted yet). */
+  readonly stalledStreams: () => number;
   readonly close: () => Promise<void>;
 }
 
@@ -462,6 +472,7 @@ export const startScriptedModel = async (agentDir: string): Promise<ScriptedMode
   );
   return {
     calls,
+    stalledStreams: () => stalledStreams,
     close: () => {
       const closed = Promise.withResolvers<void>();
       server.closeAllConnections();

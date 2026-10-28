@@ -209,6 +209,7 @@ test("a staged ast_edit card: Accept applies the proposal, Reject discards the n
   NodeFS.writeFileSync(file, "export const value = oldName(1);\n");
   // The scripted model stages the rewrite, then hangs: the preview waits for the user mid-turn.
   const callsBefore = stack.model.calls.length;
+  const stalledBefore = stack.model.stalledStreams();
   await send(`${AST_EDIT_PREFIX}oldName($A) => newName($A) in z05-proposal.ts`);
   const stop = page.getByRole("button", { name: "Stop generation" });
   // The model called `ast_edit` (or wrote its `xd://` device) and OMP sent it the staged preview:
@@ -254,6 +255,9 @@ test("a staged ast_edit card: Accept applies the proposal, Reject discards the n
   await screenshot("z05-proposal-applied");
   await stop.click();
   await expect(stop).toHaveCount(0);
+  // OMP aborted the hung turn: its model stream is closed, so the next turn does not queue
+  // behind it.
+  await expect.poll(() => stack.model.stalledStreams()).toBe(stalledBefore);
   // A reload replays the thread: the card still shows the outcome, with no buttons.
   await page.reload();
   await openProposal("applied");

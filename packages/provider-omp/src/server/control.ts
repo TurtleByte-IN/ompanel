@@ -145,10 +145,13 @@ export const OMP_CONTROL_RPC_ARGS = [
 
 /**
  * The `--config` overlay every `omp --mode rpc` control session runs with. The process starts in
- * the project's directory, and OMP loads a project's `.mcp.json` / `.omp/mcp.json` servers unless
- * `mcp.enableProjectConfig` is off; a `--config` overlay outranks the project layer.
+ * the project's directory, before the project is trusted. `workspace.trusted: false` (RPC contract
+ * 1.10.0's `workspace-trust`; a `--config` overlay outranks the project layer, which cannot set
+ * it) stops OMP loading the project's own code: custom tools, plugins, extensions, hooks, MCP,
+ * LSP and DAP servers. `--no-tools` and `--no-extensions` do not stop custom tools, so the
+ * overlay does. `mcp.enableProjectConfig` stays off as well.
  */
-const OMP_CONTROL_OVERLAY = "mcp:\n  enableProjectConfig: false\n";
+const OMP_CONTROL_OVERLAY = "workspace:\n  trusted: false\nmcp:\n  enableProjectConfig: false\n";
 
 /**
  * The lines `omp --mode rpc` writes to stderr before exiting 1 when no model resolves: no default
@@ -1033,6 +1036,16 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
     if (Result.isFailure(overlay)) {
       return yield* new OmpControlError({ operation, reason: "spawn", cause: overlay.failure });
     }
+    // A temp cleaner may have removed the file under a long-lived server, and OMP rejects a
+    // missing `--config` file: put it back before every spawn.
+    yield* Effect.try({
+      try: () => {
+        if (NodeFS.existsSync(overlay.success)) return;
+        NodeFS.mkdirSync(NodePath.dirname(overlay.success), { recursive: true, mode: 0o700 });
+        NodeFS.writeFileSync(overlay.success, OMP_CONTROL_OVERLAY, { mode: 0o600 });
+      },
+      catch: (cause) => new OmpControlError({ operation, reason: "spawn", cause }),
+    });
     const outgoing = yield* Queue.unbounded<Uint8Array>();
     const child = yield* spawner
       .spawn(

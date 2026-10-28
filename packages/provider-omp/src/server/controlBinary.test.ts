@@ -322,8 +322,11 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
           });
           const [start] = omp.starts();
           assert.deepStrictEqual(start?.argv.slice(0, -1), [...OMP_CONTROL_RPC_ARGS, "--config"]);
-          // The overlay keeps the project's own MCP servers (`.mcp.json`) from starting.
-          assert.deepStrictEqual(start?.configs, ["mcp:\n  enableProjectConfig: false\n"]);
+          // The overlay keeps the project's own code (custom tools, plugins, `.mcp.json` servers)
+          // from loading before the project is trusted.
+          assert.deepStrictEqual(start?.configs, [
+            "workspace:\n  trusted: false\nmcp:\n  enableProjectConfig: false\n",
+          ]);
           assert.isNull(start?.overlay);
           assert.deepStrictEqual(omp.frames(), [
             { type: "get_login_providers", id: "ompanel-control-0" },

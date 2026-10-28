@@ -29,9 +29,14 @@ flag load code despite `--no-extensions`.
 
 Every control server (`omp --mode rpc`, started in the project's directory)
 also gets `--config <overlay>`, an owner-only temp file holding
-`mcp.enableProjectConfig: false` (`OMP_CONTROL_OVERLAY` in `control.ts`):
-`--no-tools` does not stop OMP from starting a project's `.mcp.json` or
-`.omp/mcp.json` servers, and a `--config` overlay outranks the project layer.
+`workspace.trusted: false` and `mcp.enableProjectConfig: false`
+(`OMP_CONTROL_OVERLAY` in `control.ts`): `--no-tools` and `--no-extensions` do not
+stop OMP from loading a project's custom tools (`.omp/tools`, `.claude/tools`),
+plugin tools or `.mcp.json` / `.omp/mcp.json` servers, and a `--config` overlay
+outranks the project layer, which cannot set `workspace.trusted`. The file is
+put back before every spawn if a temp cleaner removed it (OMP rejects a missing
+`--config` file). `workspace.trusted` needs RPC contract 1.9.0 or later, as the
+thread overlay does.
 
 The binary is resolved (and its sha256 checked, see [sidecar.md](./sidecar.md))
 right before each spawn. The process gets the server's environment plus the
