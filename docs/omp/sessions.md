@@ -98,17 +98,33 @@ Tool results, bash runs, summaries and synthetic messages are left out.
 
 ## Import
 
-Settings → the OMP instance → **OMP sessions** lists the sessions whose header
-`cwd` is the chosen project's root (symlinks resolved), newest first, without
-empty untitled stubs, at most 500. Importing one creates a thread in that
-project whose native id is the session id
-(`server.listOmpSessions`, `server.importOmpSession`). The thread id is derived
-from the instance and session id, so importing twice returns the same thread; a
-session a thread of this instance already runs (by its record) is shown as
-imported.
+**Continue an OMP session…** opens one dialog from the sidebar header (next to
+New thread), a project's context menu in the legacy sidebar, the command
+palette, and Settings → the OMP instance → **OMP sessions**. Entry points show
+only when the environment has an OMP instance; with several, the dialog picks
+the first enabled one and offers a choice. It lists, newest first and at most
+500, the sessions whose header `cwd` (symlinks resolved) is the chosen
+project's root, one of its git worktrees, or a folder below either. Empty
+untitled stubs are left out. A project rooted below its repository's top maps
+to the same subfolder of each worktree. When nothing is found, the dialog names
+the folders it searched and the OMP sessions directory it scanned.
+**Show all sessions** lists every folder; each row names the project its folder
+belongs to, or offers to add that folder as a project first
+(`project.create`, as Add project does).
 
-Mobile lists the same sessions read-only under Settings → OMP (one project at a
-time, marking those already a thread); importing stays on web and desktop.
+Picking a session continues it: the server resolves its project and worktree
+from its `cwd` (the innermost match wins), creates a thread whose native id is
+the session id, and the dialog opens that thread. A session in a worktree
+launches in that worktree (`existing_worktree`), not the project root
+(`server.listOmpSessions`, `server.importOmpSession`). The thread id is derived
+from the instance and session id, so continuing twice opens the same thread; a
+session a thread of this instance already runs (by its record) is marked
+**Open** and only navigates. Listing needs read access and continuing needs
+task access.
+
+Mobile lists the sessions read-only under Settings → OMP (one project at a
+time, worktrees included, marking those already a thread); continuing stays on
+web and desktop.
 
 ## Rewind and fork
 
