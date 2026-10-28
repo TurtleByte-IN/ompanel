@@ -1,9 +1,20 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { SpawnExecutableResolution } from "@t3tools/shared/shell";
+import {
+  hardenSpawnEnvironment,
+  nonexistentCommandPath,
+  resolveTrustedCommandSync,
+  SpawnExecutableResolution,
+  type SpawnExecutableResolver,
+} from "@t3tools/shared/shell";
+import type {
+  SpawnedProcess as ClaudeSpawnedProcess,
+  SpawnOptions as ClaudeSpawnOptions,
+} from "@anthropic-ai/claude-agent-sdk";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 
@@ -46,7 +57,11 @@ export const resolveClaudeSdkExecutablePath = Effect.fn("resolveClaudeSdkExecuta
 
     const resolveExecutable = yield* SpawnExecutableResolution;
     const isFile = yield* ClaudeExecutableFileCheck;
-    const resolved = resolveExecutable(binaryPath, platform, environment) ?? binaryPath;
+    const explicitPath = binaryPath.includes("/") || binaryPath.includes("\\");
+    // A bare name the SDK would look up in the thread's repository must not survive a miss.
+    const resolved =
+      resolveExecutable(binaryPath, platform, environment) ??
+      (explicitPath ? binaryPath : nonexistentCommandPath(binaryPath, platform, environment));
     const extension = NodePath.win32.extname(resolved).toLowerCase();
     if (!WINDOWS_SHIM_EXTENSIONS.has(extension)) {
       return resolved;
@@ -64,6 +79,44 @@ export const resolveClaudeSdkExecutablePath = Effect.fn("resolveClaudeSdkExecuta
       "Claude launcher shim resolved but no known package entry was found next to it; the Claude Agent SDK cannot spawn launcher scripts directly.",
       { binaryPath, resolvedShimPath: resolved },
     );
-    return binaryPath;
+    return resolved;
   },
 );
+
+/**
+ * The CLI runs in the thread's repository, so neither the `node` the SDK starts for a script
+ * entry nor the PATH it searches may be answered from there: the command is resolved against the
+ * absolute PATH entries, and the environment loses its relative ones.
+ */
+export function hardenClaudeSpawnOptions(
+  options: ClaudeSpawnOptions,
+  platform: NodeJS.Platform,
+  resolveExecutable: SpawnExecutableResolver,
+): ClaudeSpawnOptions {
+  const env = hardenSpawnEnvironment(options.env, platform);
+  return {
+    ...options,
+    env,
+    command: resolveTrustedCommandSync(options.command, platform, env, resolveExecutable),
+  };
+}
+
+/** A `spawnClaudeCodeProcess` for SDK calls that have no process-group handling of their own. */
+export function makeHardenedClaudeSpawn(
+  platform: NodeJS.Platform,
+  resolveExecutable: SpawnExecutableResolver,
+  onStderr?: (chunk: string) => void,
+): (options: ClaudeSpawnOptions) => ClaudeSpawnedProcess {
+  return (unsafeOptions) => {
+    const options = hardenClaudeSpawnOptions(unsafeOptions, platform, resolveExecutable);
+    const child = NodeChildProcess.spawn(options.command, options.args, {
+      cwd: options.cwd,
+      env: options.env,
+      signal: options.signal,
+      windowsHide: true,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    child.stderr.setEncoding("utf8").on("data", (chunk: string) => onStderr?.(chunk));
+    return child;
+  };
+}

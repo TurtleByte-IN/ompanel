@@ -420,6 +420,207 @@ it.layer(layerTest)("ProjectService", (it) => {
     }),
   );
 
+  it.effect("withdraws project agent config trust when the workspace root changes", () =>
+    Effect.gen(function* () {
+      const service = yield* ProjectService.ProjectService;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const projectId = ProjectId.make("project:trust:move");
+      const sibling = ProjectId.make("project:trust:sibling");
+      yield* service.create({
+        commandId: CommandId.make("command:trust:create"),
+        projectId,
+        title: "Trusted",
+        workspaceRoot: "/work/trust-a",
+      });
+      yield* service.create({
+        commandId: CommandId.make("command:trust:sibling"),
+        projectId: sibling,
+        title: "Sibling",
+        workspaceRoot: "/work/trust-sibling",
+      });
+      yield* settings.updateSettings({
+        projectSettingsOverrides: { [projectId]: { defaultAutoPull: true } },
+        projectAgentConfigTrust: { [projectId]: true, [sibling]: true },
+      });
+
+      yield* service.update({
+        commandId: CommandId.make("command:trust:rename"),
+        projectId,
+        title: "Renamed",
+      });
+      assert.equal(
+        (yield* settings.getSettings).projectSettingsOverrides[projectId]?.trustProjectAgentConfig,
+        true,
+      );
+
+      yield* service.update({
+        commandId: CommandId.make("command:trust:move"),
+        projectId,
+        workspaceRoot: "/work/trust-b",
+      });
+      const after = (yield* settings.getSettings).projectSettingsOverrides;
+      assert.deepEqual(after[projectId], { defaultAutoPull: true });
+      assert.equal(after[sibling]?.trustProjectAgentConfig, true);
+    }),
+  );
+
+  it.effect("keeps project agent config trust when the move is rejected", () =>
+    Effect.gen(function* () {
+      const service = yield* ProjectService.ProjectService;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const projectId = ProjectId.make("project:trust:rejected");
+      yield* service.create({
+        commandId: CommandId.make("command:trust-rej:holder"),
+        projectId: ProjectId.make("project:trust-rej:holder"),
+        title: "Holder",
+        workspaceRoot: "/work/trust-rej-holder",
+      });
+      yield* service.create({
+        commandId: CommandId.make("command:trust-rej:create"),
+        projectId,
+        title: "Mover",
+        workspaceRoot: "/work/trust-rej-mover",
+      });
+      yield* settings.updateSettings({ projectAgentConfigTrust: { [projectId]: true } });
+
+      const rejected = yield* service
+        .update({
+          commandId: CommandId.make("command:trust-rej:conflict"),
+          projectId,
+          workspaceRoot: "/work/trust-rej-holder",
+        })
+        .pipe(Effect.flip);
+      assert.equal(rejected._tag, "ProjectConflictError");
+      assert.equal(
+        (yield* settings.getSettings).projectSettingsOverrides[projectId]?.trustProjectAgentConfig,
+        true,
+      );
+
+      yield* service.update({
+        commandId: CommandId.make("command:trust-rej:move"),
+        projectId,
+        workspaceRoot: "/work/trust-rej-free",
+      });
+      assert.equal((yield* settings.getSettings).projectSettingsOverrides[projectId], undefined);
+    }),
+  );
+
+  it.effect("keeps trust when a rejected move is retried after the workspace frees up", () =>
+    Effect.gen(function* () {
+      const service = yield* ProjectService.ProjectService;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const holder = ProjectId.make("project:trust-retry:holder");
+      const projectId = ProjectId.make("project:trust-retry:mover");
+      yield* service.create({
+        commandId: CommandId.make("command:trust-retry:holder"),
+        projectId: holder,
+        title: "Holder",
+        workspaceRoot: "/work/trust-retry-held",
+      });
+      yield* service.create({
+        commandId: CommandId.make("command:trust-retry:mover"),
+        projectId,
+        title: "Mover",
+        workspaceRoot: "/work/trust-retry-mover",
+      });
+      yield* settings.updateSettings({ projectAgentConfigTrust: { [projectId]: true } });
+      const move = {
+        commandId: CommandId.make("command:trust-retry:move"),
+        projectId,
+        workspaceRoot: "/work/trust-retry-held",
+      };
+      assert.equal((yield* service.update(move).pipe(Effect.flip))._tag, "ProjectConflictError");
+      yield* service.delete({
+        commandId: CommandId.make("command:trust-retry:delete"),
+        projectId: holder,
+      });
+      // The stored rejection is replayed; the root stays and so does trust.
+      assert.equal((yield* service.update(move).pipe(Effect.flip))._tag, "ProjectConflictError");
+      assert.equal(
+        Option.getOrThrow(yield* service.getById(projectId)).workspaceRoot,
+        "/work/trust-retry-mover",
+      );
+      assert.equal(
+        (yield* settings.getSettings).projectSettingsOverrides[projectId]?.trustProjectAgentConfig,
+        true,
+      );
+    }),
+  );
+
+  it.effect("does not withdraw trust granted after a move when the move is replayed", () =>
+    Effect.gen(function* () {
+      const service = yield* ProjectService.ProjectService;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const projectId = ProjectId.make("project:trust-replay");
+      yield* service.create({
+        commandId: CommandId.make("command:trust-replay:create"),
+        projectId,
+        title: "Replay",
+        workspaceRoot: "/work/trust-replay-a",
+      });
+      const move = {
+        commandId: CommandId.make("command:trust-replay:move"),
+        projectId,
+        workspaceRoot: "/work/trust-replay-b",
+      };
+      yield* service.update(move);
+      yield* settings.updateSettings({ projectAgentConfigTrust: { [projectId]: true } });
+      yield* service.update(move);
+      assert.equal(
+        (yield* settings.getSettings).projectSettingsOverrides[projectId]?.trustProjectAgentConfig,
+        true,
+      );
+    }),
+  );
+
+  it.effect("ignores trust carried by a whole-entry write from a stale client", () =>
+    Effect.gen(function* () {
+      const service = yield* ProjectService.ProjectService;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const projectId = ProjectId.make("project:trust:stale");
+      yield* service.create({
+        commandId: CommandId.make("command:trust-stale:create"),
+        projectId,
+        title: "Stale",
+        workspaceRoot: "/work/trust-stale-a",
+      });
+      yield* settings.updateSettings({ projectAgentConfigTrust: { [projectId]: true } });
+      const staleEntry = (yield* settings.getSettings).projectSettingsOverrides[projectId]!;
+      yield* service.update({
+        commandId: CommandId.make("command:trust-stale:move"),
+        projectId,
+        workspaceRoot: "/work/trust-stale-b",
+      });
+      yield* settings.updateSettings({
+        projectSettingsOverrides: { [projectId]: { ...staleEntry, defaultAutoPull: true } },
+      });
+      assert.deepEqual((yield* settings.getSettings).projectSettingsOverrides[projectId], {
+        defaultAutoPull: true,
+      });
+    }),
+  );
+
+  it.effect("drops the whole override entry when trust was its only value", () =>
+    Effect.gen(function* () {
+      const service = yield* ProjectService.ProjectService;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const projectId = ProjectId.make("project:trust:only");
+      yield* service.create({
+        commandId: CommandId.make("command:trust-only:create"),
+        projectId,
+        title: "Only",
+        workspaceRoot: "/work/trust-only-a",
+      });
+      yield* settings.updateSettings({ projectAgentConfigTrust: { [projectId]: true } });
+      yield* service.update({
+        commandId: CommandId.make("command:trust-only:move"),
+        projectId,
+        workspaceRoot: "/work/trust-only-b",
+      });
+      assert.equal((yield* settings.getSettings).projectSettingsOverrides[projectId], undefined);
+    }),
+  );
+
   it.effect("replays a workspace conflict after the workspace frees up", () =>
     Effect.gen(function* () {
       const service = yield* ProjectService.ProjectService;

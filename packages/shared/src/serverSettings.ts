@@ -275,14 +275,30 @@ function mergeProjectSettingsOverridesPatch(
       continue;
     }
     const storedProviderInstances = current[projectId]?.providerInstances;
+    // Trust changes only through `projectAgentConfigTrust`; a whole-entry write keeps what is stored.
+    const { trustProjectAgentConfig: _clientTrust, ...entryWithoutTrust } = entry;
+    const storedTrust = current[projectId]?.trustProjectAgentConfig;
     next.set(projectId, {
-      ...entry,
+      ...entryWithoutTrust,
+      ...(storedTrust === undefined ? {} : { trustProjectAgentConfig: storedTrust }),
       ...(Object.hasOwn(entry, "providerInstances") || storedProviderInstances === undefined
         ? {}
         : { providerInstances: storedProviderInstances }),
     });
   }
   return Object.fromEntries(next);
+}
+
+function applyProjectAgentConfigTrustPatch(
+  overrides: Record<string, ProjectSettingsOverrides>,
+  patch: Readonly<Record<string, boolean>>,
+): Record<string, ProjectSettingsOverrides> {
+  const next = { ...overrides };
+  for (const [projectId, trusted] of Object.entries(patch)) {
+    const { trustProjectAgentConfig: _previous, ...rest } = next[projectId] ?? {};
+    next[projectId] = trusted ? { ...rest, trustProjectAgentConfig: true } : rest;
+  }
+  return next;
 }
 
 export function deriveLegacyProjectOverrides(
@@ -399,6 +415,7 @@ export function applyServerSettingsPatch(
     usageModelAliases: usageModelAliasesPatch,
     // Entry replacement: deepMerge would keep keys the client meant to clear.
     projectSettingsOverrides: projectSettingsOverridesPatch,
+    projectAgentConfigTrust: projectAgentConfigTrustPatch,
     projectAgentBrowserAccessOverrides: _legacyBrowserAccess,
     projectAutoPullOverrides: _legacyAutoPull,
     projectScriptOverrides: _legacyScripts,
@@ -562,13 +579,16 @@ export function applyServerSettingsPatch(
           },
         }
       : {}),
-    ...(projectSettingsOverridesPatch !== undefined
+    ...(projectSettingsOverridesPatch !== undefined || projectAgentConfigTrustPatch !== undefined
       ? {
           projectSettingsOverrides: Object.fromEntries(
             Object.entries(
-              mergeProjectSettingsOverridesPatch(
-                current.projectSettingsOverrides,
-                projectSettingsOverridesPatch,
+              applyProjectAgentConfigTrustPatch(
+                mergeProjectSettingsOverridesPatch(
+                  current.projectSettingsOverrides,
+                  projectSettingsOverridesPatch ?? {},
+                ),
+                projectAgentConfigTrustPatch ?? {},
               ),
             ).filter(([, entry]) => Object.keys(entry).length > 0),
           ),

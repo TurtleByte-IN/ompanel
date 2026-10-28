@@ -96,6 +96,11 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   threadAutoSettlementScope: Schema.optionalKey(Schema.Boolean),
   threadRestartContinuation: Schema.optionalKey(Schema.Boolean),
   projectSettingsOverrides: Schema.optionalKey(Schema.Boolean),
+  /**
+   * Trust is granted and withdrawn through the `projectAgentConfigTrust` patch, and whole-entry
+   * `projectSettingsOverrides` writes keep the stored value. Absent: send trust inside the entry.
+   */
+  projectAgentConfigTrust: Schema.optionalKey(Schema.Boolean),
   /** The server's OMP enforces `trustProjectAgentConfig`; absent or false: not enforced. */
   ompWorkspaceTrust: Schema.optionalKey(Schema.Boolean),
   /** Hide the switch when absent; older servers silently drop per-project provider patches. */

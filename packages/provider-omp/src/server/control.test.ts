@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import { assert, describe, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -227,6 +228,7 @@ function fakeOmp(
     readonly skills?: Behaviour;
     readonly plugins?: Behaviour;
     readonly update?: Behaviour;
+    readonly gh?: Behaviour;
     /** RPC servers started without `--model` exit as a fresh install does; with it they run. */
     readonly unconfigured?: boolean;
   } = {},
@@ -236,23 +238,27 @@ function fakeOmp(
   const spawner = ChildProcessSpawner.make((command) => {
     if (!ChildProcess.isStandardCommand(command)) return Effect.die("Unexpected pipeline");
     launches.push(command);
-    const behaviour = command.args.includes("--version")
-      ? (input.version ?? { stdout: "omp/18.12.6\n", exitCode: 0 })
-      : command.args.includes("stats")
-        ? (input.stats ?? { stdout: `${STATS_JSON}\n`, exitCode: 0 })
-        : command.args.includes("usage")
-          ? (input.usage ?? { stdout: USAGE_JSON, exitCode: 0 })
-          : command.args.includes("config")
-            ? (input.config ?? { stdout: "{}\n", exitCode: 0 })
-            : command.args.includes("skill")
-              ? (input.skills ?? { stdout: SKILL_LIST_JSON, exitCode: 0 })
-              : command.args.includes("plugin")
-                ? (input.plugins ?? { stdout: '{"npm":[],"marketplace":[]}\n', exitCode: 0 })
-                : command.args.includes("update")
-                  ? (input.update ?? { stdout: "Current version: 18.12.6\n", exitCode: 0 })
-                  : input.unconfigured === true && !command.args.includes("--model")
-                    ? { stdout: "", exitCode: 1, stderr: NO_MODEL_STDERR }
-                    : (input.rpc ?? { rpc: answerLoginProviders });
+    // A shell-dispatched gh is one command line with no args.
+    const behaviour =
+      command.args[0] === "auth" || command.options.shell === true
+        ? (input.gh ?? { stdout: "", exitCode: 0 })
+        : command.args.includes("--version")
+          ? (input.version ?? { stdout: "omp/18.12.6\n", exitCode: 0 })
+          : command.args.includes("stats")
+            ? (input.stats ?? { stdout: `${STATS_JSON}\n`, exitCode: 0 })
+            : command.args.includes("usage")
+              ? (input.usage ?? { stdout: USAGE_JSON, exitCode: 0 })
+              : command.args.includes("config")
+                ? (input.config ?? { stdout: "{}\n", exitCode: 0 })
+                : command.args.includes("skill")
+                  ? (input.skills ?? { stdout: SKILL_LIST_JSON, exitCode: 0 })
+                  : command.args.includes("plugin")
+                    ? (input.plugins ?? { stdout: '{"npm":[],"marketplace":[]}\n', exitCode: 0 })
+                    : command.args.includes("update")
+                      ? (input.update ?? { stdout: "Current version: 18.12.6\n", exitCode: 0 })
+                      : input.unconfigured === true && !command.args.includes("--model")
+                        ? { stdout: "", exitCode: 1, stderr: NO_MODEL_STDERR }
+                        : (input.rpc ?? { rpc: answerLoginProviders });
     // The real spawner stops the process group when this scope closes.
     return Effect.addFinalizer(() => Effect.sync(() => void stopped++)).pipe(
       Effect.as(handle(command, behaviour)),
@@ -934,6 +940,75 @@ describe("OmpControlService catalogs", () => {
           assert.strictEqual(omp.stopped, 1);
         }),
       );
+    }),
+  );
+});
+
+describe("OmpControlService.gistReady", () => {
+  const WINDOWS_TARGET: OmpControlTarget = {
+    ...TARGET,
+    environment: { PATH: "C:\\Program Files\\GitHub CLI", PATHEXT: ".EXE" },
+    cwd: "C:\\repo",
+  };
+  const asWindows = <A, E, R>(
+    effect: Effect.Effect<A, E, R>,
+    resolve: (command: string) => string | undefined,
+  ) =>
+    effect.pipe(
+      Effect.provideService(HostProcess.Platform, "win32"),
+      Effect.provideService(SpawnExecutableResolution, resolve),
+    );
+
+  it.effect("runs gh by the absolute PATH location, not by name from the repository", () =>
+    Effect.gen(function* () {
+      const omp = fakeOmp();
+      const ghPath = "C:\\Program Files\\GitHub CLI\\gh.exe";
+      const state = yield* asWindows(
+        withControl(omp, (control) => control.gistReady(WINDOWS_TARGET)),
+        (command) => (command === "gh" ? ghPath : undefined),
+      );
+      assert.strictEqual(state, "ready");
+      assert.strictEqual(omp.launches[0]?.command, ghPath);
+      assert.deepStrictEqual(omp.launches[0]?.args, ["auth", "status"]);
+      assert.strictEqual(omp.launches[0]?.options.cwd, "C:\\repo");
+    }),
+  );
+
+  it.effect(
+    "runs a gh package-manager shim through the shell instead of calling it signed out",
+    () =>
+      Effect.gen(function* () {
+        const omp = fakeOmp();
+        const state = yield* asWindows(
+          withControl(omp, (control) => control.gistReady(WINDOWS_TARGET)),
+          () => "C:\\tools\\gh.cmd",
+        );
+        assert.strictEqual(state, "ready");
+        assert.strictEqual(omp.launches[0]?.options.shell, true);
+        assert.include(omp.launches[0]?.command ?? "", "gh.cmd");
+      }),
+  );
+
+  it.effect("reports a missing gh without starting anything", () =>
+    Effect.gen(function* () {
+      const omp = fakeOmp();
+      const state = yield* asWindows(
+        withControl(omp, (control) => control.gistReady(WINDOWS_TARGET)),
+        () => undefined,
+      );
+      assert.strictEqual(state, "missing");
+      assert.lengthOf(omp.launches, 0);
+    }),
+  );
+
+  it.effect("reports a signed-out gh", () =>
+    Effect.gen(function* () {
+      const omp = fakeOmp({ gh: { stdout: "", exitCode: 1 } });
+      const state = yield* asWindows(
+        withControl(omp, (control) => control.gistReady(WINDOWS_TARGET)),
+        () => "C:\\gh\\gh.exe",
+      );
+      assert.strictEqual(state, "signed_out");
     }),
   );
 });

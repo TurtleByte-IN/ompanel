@@ -791,3 +791,65 @@ describe("model selection patches at project scope", () => {
     ).toEqual({ ...saved, options });
   });
 });
+
+describe("project agent config trust", () => {
+  const environmentId = EnvironmentId.make("laptop");
+  const projectId = ProjectId.make("fleet");
+  const scope = {
+    kind: "project" as const,
+    group: {} as never,
+    environmentId: null,
+    label: "fleet",
+    members: [{ id: projectId, environmentId } as never],
+    environmentIds: [environmentId],
+  };
+  const environments = (dedicated: boolean) => [
+    {
+      environmentId,
+      label: "Laptop",
+      connection: { phase: "connected" as const },
+      serverConfig: {
+        settings: {
+          ...DEFAULT_SERVER_SETTINGS,
+          projectSettingsOverrides: { [projectId]: { defaultAutoPull: true } },
+        },
+        environment: {
+          capabilities: {
+            projectSettingsOverrides: true,
+            ...(dedicated ? { projectAgentConfigTrust: true } : {}),
+          },
+        },
+      },
+    },
+  ];
+
+  it("sends the toggle alone through the dedicated field when the server advertises it", () => {
+    expect(
+      planScopedSettingsPatch(scope, environments(true), { trustProjectAgentConfig: true })
+        .serverWrites[0]?.patch,
+    ).toEqual({ projectAgentConfigTrust: { [projectId]: true } });
+  });
+
+  it("keeps trust out of a whole-entry write next to other settings", () => {
+    expect(
+      planScopedSettingsPatch(scope, environments(true), {
+        trustProjectAgentConfig: true,
+        defaultAutoPull: false,
+      }).serverWrites[0]?.patch,
+    ).toEqual({
+      projectSettingsOverrides: { [projectId]: { defaultAutoPull: false } },
+      projectAgentConfigTrust: { [projectId]: true },
+    });
+  });
+
+  it("writes trust inside the entry for a server that does not advertise the field", () => {
+    expect(
+      planScopedSettingsPatch(scope, environments(false), { trustProjectAgentConfig: true })
+        .serverWrites[0]?.patch,
+    ).toEqual({
+      projectSettingsOverrides: {
+        [projectId]: { defaultAutoPull: true, trustProjectAgentConfig: true },
+      },
+    });
+  });
+});

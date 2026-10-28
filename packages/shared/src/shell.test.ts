@@ -20,13 +20,16 @@ import {
   isCommandAvailable,
   listLoginShellCandidates,
   mergePathEntries,
+  hardenSpawnEnvironment,
   mergePathValues,
+  nonexistentCommandPath,
   npmShimExecutable,
   preferGitForWindowsBinary,
   readEnvironmentFromLoginShell,
   readEnvironmentFromWindowsShell,
   resolveCommandPath,
   resolveSpawnCommand,
+  resolveTrustedCommandSync,
   resolveWindowsEnvironment,
   SpawnExecutableResolution,
   WindowsShellEnvironment,
@@ -427,6 +430,29 @@ describe("mergePathValues", () => {
 });
 
 effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
+  it.effect.runIf(HostProcess.Platform.defaultValue() !== "win32")(
+    "does not report a command found only through a relative PATH entry",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const repo = yield* fs.makeTempDirectoryScoped({ prefix: "t3-relative-path-" });
+          yield* fs.writeFileString(path.join(repo, "planted"), "#!/bin/sh\n", { mode: 0o755 });
+          const env = { PATH: `${path.relative(process.cwd(), repo)}:.:` };
+          const platform = <A>(
+            effect: Effect.Effect<A, never, FileSystem.FileSystem | Path.Path>,
+          ) =>
+            effect.pipe(
+              Effect.provideService(HostProcess.Platform, "linux"),
+              Effect.provideService(CommandResolutionCache, new Map()),
+            );
+          expect(yield* platform(resolveCommandPath("planted", { env }))).toBeNull();
+          expect(yield* platform(isCommandAvailable("planted", { env }))).toBe(false);
+        }),
+      ),
+  );
+
   const recordProbes = (env: NodeJS.ProcessEnv) =>
     Effect.gen(function* () {
       const probed: Array<string> = [];
@@ -687,10 +713,11 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
       }).pipe(
         Effect.provideService(HostProcess.Platform, "win32"),
         Effect.provideService(CommandResolutionCache, new Map()),
+        Effect.provideService(SpawnExecutableResolution, () => String.raw`C:\tools\node.exe`),
       );
 
       expect(command).toEqual({
-        command: "node.exe",
+        command: String.raw`C:\tools\node.exe`,
         args: ["script.js", "hello & goodbye"],
         shell: false,
       });
@@ -804,6 +831,47 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
     }),
   );
 
+  it.effect("never resolves a Windows command to a bare name the cwd could answer", () =>
+    Effect.gen(function* () {
+      const command = yield* resolveSpawnCommand("gh", ["auth", "status"], {
+        env: { PATH: "C:\\tools", SystemRoot: "C:\\Windows", PATHEXT: ".EXE;.CMD" },
+      }).pipe(
+        Effect.provideService(HostProcess.Platform, "win32"),
+        Effect.provideService(CommandResolutionCache, new Map()),
+        Effect.provideService(SpawnExecutableResolution, () => undefined),
+      );
+
+      expect(command).toEqual({
+        command: "C:\\Windows\\System32\\ompanel-command-not-found\\gh",
+        args: ["auth", "status"],
+        shell: false,
+      });
+    }),
+  );
+
+  it.effect.runIf(HostProcess.Platform.defaultValue() !== "win32")(
+    "ignores relative PATH entries, which resolve against the child's cwd",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const trusted = yield* fs.makeTempDirectoryScoped({ prefix: "t3-trusted-path-" });
+          const repo = yield* fs.makeTempDirectoryScoped({ prefix: "t3-repo-path-" });
+          yield* fs.writeFileString(path.join(repo, "gh"), "#!/bin/sh\n", { mode: 0o755 });
+          const relativeRepo = path.relative(process.cwd(), repo);
+          const resolve = yield* SpawnExecutableResolution;
+          const delimiter = ":";
+
+          expect(resolve("gh", "linux", { PATH: `${relativeRepo}${delimiter}.` })).toBeUndefined();
+          yield* fs.writeFileString(path.join(trusted, "gh"), "#!/bin/sh\n", { mode: 0o755 });
+          expect(resolve("gh", "linux", { PATH: `${relativeRepo}${delimiter}${trusted}` })).toBe(
+            path.join(trusted, "gh"),
+          );
+        }),
+      ),
+  );
+
   describe("macOS git", () => {
     // Files that exist, the git first on PATH, and what `xcrun --find git` prints.
     const setup = (options: {
@@ -838,10 +906,10 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
       }).pipe(Effect.provideService(CommandResolutionCache, new Map())),
     );
 
-    it.effect("keeps git when PATH has another git or the host is not macOS", () =>
+    it.effect("runs the git PATH found when it is not the shim, and bare git off macOS", () =>
       Effect.gen(function* () {
         const homebrew = setup({ gitOnPath: "/opt/homebrew/bin/git", xcrunGit: XCODE_GIT });
-        expect(yield* homebrew.resolve).toBe("git");
+        expect(yield* homebrew.resolve).toBe("/opt/homebrew/bin/git");
         expect(homebrew.host.xcrunCalls).toBe(0);
 
         const linux = setup({ platform: "linux", gitOnPath: "/usr/bin/git", xcrunGit: XCODE_GIT });
@@ -849,14 +917,14 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
       }).pipe(Effect.provideService(CommandResolutionCache, new Map())),
     );
 
-    it.effect("keeps git when xcrun fails or names a missing file", () =>
+    it.effect("runs the shim by absolute path when xcrun fails or names a missing file", () =>
       Effect.gen(function* () {
         const failed = setup({ gitOnPath: "/usr/bin/git", xcrunGit: undefined });
-        expect(yield* failed.resolve).toBe("git");
+        expect(yield* failed.resolve).toBe("/usr/bin/git");
 
         const missing = setup({ gitOnPath: "/usr/bin/git", xcrunGit: XCODE_GIT });
         missing.files.delete(XCODE_GIT);
-        expect(yield* missing.resolve).toBe("git");
+        expect(yield* missing.resolve).toBe("/usr/bin/git");
       }).pipe(Effect.provideService(CommandResolutionCache, new Map())),
     );
 
@@ -885,7 +953,7 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
       );
 
       expect(command).toEqual({
-        command: "missing & calc",
+        command: String.raw`C:\Windows\System32\ompanel-command-not-found\missing & calc`,
         args: ["unsafe & value"],
         shell: false,
       });
@@ -1044,4 +1112,43 @@ effectIt.layer(NodeServices.layer)("resolveWindowsEnvironment", (it) => {
       expect(commandAvailable).toHaveBeenCalledTimes(1);
     }),
   );
+});
+
+describe("spawn hardening", () => {
+  it("strips relative and empty PATH entries and stops Windows searching the cwd", () => {
+    expect(
+      hardenSpawnEnvironment({ PATH: '.:rel/bin::/usr/bin:"/opt/x":', HOME: "/h" }, "linux"),
+    ).toEqual({ PATH: "/usr/bin:/opt/x", HOME: "/h" });
+    expect(hardenSpawnEnvironment({ Path: '.;;bin;C:\\Windows;"D:\\tools"' }, "win32")).toEqual({
+      Path: "C:\\Windows;D:\\tools",
+      NoDefaultCurrentDirectoryInExePath: "1",
+    });
+  });
+
+  it("falls back to the system PATH when every entry was relative, never to the cwd", () => {
+    expect(hardenSpawnEnvironment({ PATH: ".:bin:" }, "linux").PATH).toBe(
+      "/usr/local/bin:/usr/bin:/bin",
+    );
+    expect(hardenSpawnEnvironment({ Path: ".;", SystemRoot: "D:\\Win" }, "win32").Path).toBe(
+      "D:\\Win\\System32;D:\\Win;D:\\Win\\System32\\Wbem",
+    );
+    expect(hardenSpawnEnvironment({ PATH: "" }, "linux").PATH).toBe("/usr/local/bin:/usr/bin:/bin");
+  });
+
+  it("names a command no executable can answer", () => {
+    expect(nonexistentCommandPath("node", "win32", { SystemRoot: "D:\\Win" })).toBe(
+      "D:\\Win\\System32\\ompanel-command-not-found\\node",
+    );
+    expect(nonexistentCommandPath("node", "win32")).toBe(
+      "C:\\Windows\\System32\\ompanel-command-not-found\\node",
+    );
+    expect(nonexistentCommandPath("node", "linux")).toBe("/ompanel-command-not-found/node");
+    expect(resolveTrustedCommandSync("node", "linux", {}, () => undefined)).toBe(
+      "/ompanel-command-not-found/node",
+    );
+    expect(resolveTrustedCommandSync("node", "linux", {}, () => "/usr/bin/node")).toBe(
+      "/usr/bin/node",
+    );
+    expect(resolveTrustedCommandSync("./node", "linux", {}, () => undefined)).toBe("./node");
+  });
 });

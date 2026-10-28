@@ -236,6 +236,7 @@ export const make = Effect.gen(function* () {
       threadAutoSettlementScope: true,
       threadRestartContinuation: true,
       projectSettingsOverrides: true,
+      projectAgentConfigTrust: true,
       ompWorkspaceTrust: OMP_WORKSPACE_TRUST_ENFORCED,
       projectProviderInstanceOverrides: true,
       threadSnooze: true,

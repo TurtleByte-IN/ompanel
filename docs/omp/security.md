@@ -54,6 +54,15 @@ project, new or existing.
   the overlay already holds the new value, and `omp` restarts; sending again uses it.
 - Trust is per project only: there is no server-wide value, a project without its own
   value is untrusted, and the toggle shows only when a project is selected (web and mobile).
+  Changing a project's workspace root withdraws its trust, because trust is a decision about
+  one directory's files. The withdrawal runs inside the commit that records the move
+  (`ProjectService.commit`, `beforeRecord`): a rejected or replayed move keeps trust, and a
+  failed withdrawal stops the move.
+- Trust changes only through the `projectAgentConfigTrust` settings patch (the toggle on web and
+  mobile). A whole-entry `projectSettingsOverrides` write keeps the stored trust value, so a
+  client with a copy from before a root change cannot put trust back. The server advertises
+  the field as the `projectAgentConfigTrust` capability; web and mobile use it when present and
+  write trust inside the entry for older servers.
 - The key is written only to an OMP with contract 1.9.0 or later; an older OMP would
   reject an overlay with an unknown key. On such an OMP the setting is not enforced: the
   server reports it (`ompWorkspaceTrust` capability), web and mobile say "Not enforced by
@@ -154,3 +163,23 @@ The job-object launcher, start-time lookup and tree kill run PowerShell and
 `taskkill` by absolute path under `%SystemRoot%\System32`: Windows looks a bare
 name up in the child's working directory first, which is the thread's
 repository.
+
+Every process the server starts goes through one spawner that hardens the child's
+environment (`layerHardenedSpawner`, `packages/shared/src/shell.ts`):
+
+- Relative and empty `PATH` entries are removed, on every platform, so a `.` or
+  `node_modules/.bin` entry cannot make the thread's repository answer a bare command name.
+- On Windows `NoDefaultCurrentDirectoryInExePath=1` is set, so `cmd.exe` running an npm `.cmd`
+  launcher (Codex) does not find a repository `node.exe` for the launcher's bare `node`.
+
+On top of that, `resolveSpawnCommand` resolves a name to an absolute path on Windows and for
+macOS git, and a name `PATH` does not resolve becomes `C:\ompanel-command-not-found\<name>`
+(ENOENT, never a repository file). Elsewhere a bare name is left to the hardened `PATH`.
+`resolveCommandPath` and `isCommandAvailable` ignore relative entries too, so "installed" and
+"startable" agree.
+
+`gh auth status` (the share-as-gist readiness check) runs `gh` by the absolute path found on
+`PATH`; a `.cmd`/`.bat` `gh` goes through the shell dispatch, and a missing `gh` reports
+"missing" without a spawn. The Claude Agent SDK's own `node` and executable are resolved the same
+way before the SDK spawns them (`hardenClaudeSpawnOptions`). `omp share --gist` itself starts
+`gh` inside `omp`, outside Ompanel's control.

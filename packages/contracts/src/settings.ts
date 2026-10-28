@@ -1514,6 +1514,12 @@ export const ServerSettingsPatch = Schema.Struct({
   enableAgentDeviceAccess: Schema.optionalKey(Schema.Boolean),
   /** Scoped writers route this to the selected projects; a server-wide value is never read. */
   trustProjectAgentConfig: Schema.optionalKey(Schema.Boolean),
+  /**
+   * The only way to grant or withdraw a project's agent-config trust: a whole-entry write in
+   * `projectSettingsOverrides` keeps the stored trust value, so a client holding a copy from
+   * before the project's workspace root changed cannot put trust back.
+   */
+  projectAgentConfigTrust: Schema.optionalKey(Schema.Record(ProjectId, Schema.Boolean)),
   enableDeviceSupport: Schema.optionalKey(Schema.Boolean),
   deviceOnboardingCompleted: Schema.optionalKey(Schema.Boolean),
   deviceHosts: Schema.optionalKey(SshDeviceHostConfigs),

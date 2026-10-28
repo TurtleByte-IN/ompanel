@@ -170,6 +170,11 @@ export interface EventSinkV2Shape {
     readonly commandType: string;
     readonly acceptedAt: DateTime.Utc;
     readonly event: UnsequencedProjectEvent;
+    /**
+     * Runs inside the commit, once this call is the first to use the command id and before the
+     * event is recorded. A failure rolls the commit back; a replay never runs it.
+     */
+    readonly beforeRecord?: Effect.Effect<void, unknown>;
   }) => Effect.Effect<
     { readonly receipt: CommandReceiptStore.ProjectCommandReceiptV2; readonly committed: boolean },
     EventSinkV2Error
@@ -762,6 +767,7 @@ const layerBase: Layer.Layer<
             if (!(yield* commandReceipts.insertIfAbsent(reserved))) {
               return { receipt: yield* existingProjectReceipt(input.commandId), event: undefined };
             }
+            if (input.beforeRecord !== undefined) yield* input.beforeRecord;
             const event = yield* eventStore.appendProjectEvent(input.event);
             yield* projectStore.apply(event);
             const receipt = { ...reserved, resultSequence: event.sequence };

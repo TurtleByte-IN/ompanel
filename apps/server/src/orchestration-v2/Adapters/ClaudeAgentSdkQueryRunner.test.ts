@@ -7,7 +7,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeStream from "node:stream";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, describe, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import { ProviderSessionId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -30,6 +30,7 @@ import {
   layerQueryRunner,
   spawnClaudeProcessGroup,
 } from "./ClaudeAdapterV2.ts";
+import { hardenClaudeSpawnOptions } from "../../provider/Drivers/ClaudeExecutable.ts";
 
 vi.mock("@anthropic-ai/claude-agent-sdk", { spy: true });
 
@@ -487,4 +488,40 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
       yield* Effect.promise(() => turnStopped);
     }),
   );
+});
+
+describe("hardenClaudeSpawnOptions", () => {
+  const base = {
+    command: "node",
+    args: ["cli.js"],
+    cwd: "C:\\repo",
+    env: { Path: ".;C:\\Program Files\\nodejs", PATHEXT: ".EXE" },
+    signal: new AbortController().signal,
+  };
+
+  it("starts the SDK's bare node from PATH, never from the repository, on Windows", () => {
+    const hardened = hardenClaudeSpawnOptions(base, "win32", (command) =>
+      command === "node" ? "C:\\Program Files\\nodejs\\node.exe" : undefined,
+    );
+    expect(hardened.command).toBe("C:\\Program Files\\nodejs\\node.exe");
+    expect(hardened.env).toEqual({
+      Path: "C:\\Program Files\\nodejs",
+      PATHEXT: ".EXE",
+      NoDefaultCurrentDirectoryInExePath: "1",
+    });
+    expect(hardened.cwd).toBe("C:\\repo");
+  });
+
+  it("points a node PATH cannot find at a path that does not exist", () => {
+    expect(hardenClaudeSpawnOptions(base, "win32", () => undefined).command).toBe(
+      "C:\\Windows\\System32\\ompanel-command-not-found\\node",
+    );
+    expect(
+      hardenClaudeSpawnOptions(
+        { ...base, command: "/usr/bin/claude", env: { PATH: "." } },
+        "linux",
+        () => undefined,
+      ),
+    ).toMatchObject({ command: "/usr/bin/claude", env: { PATH: "/usr/local/bin:/usr/bin:/bin" } });
+  });
 });

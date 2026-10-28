@@ -18,6 +18,7 @@ import {
   type StorageCleanupSettings,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as ServerConfig from "./config.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
@@ -993,6 +994,8 @@ describe("orphan worktree reports", () => {
         Effect.gen(function* () {
           const fixture = yield* cleanupFixture().pipe(
             Effect.provideService(HostProcess.Platform, platform === "win32" ? "win32" : "linux"),
+            // Fake Windows on a real host: the host's own `git` must still start.
+            Effect.provideService(SpawnExecutableResolution, (command) => command),
           );
           fixture.setThreads([]);
           const ancestor = `${fixture.config.worktreesDir}/repository/stack`;
@@ -1234,6 +1237,8 @@ describe("orphan worktree reports", () => {
         Effect.gen(function* () {
           const fixture = yield* cleanupFixture().pipe(
             Effect.provideService(HostProcess.Platform, platform),
+            // Fake Windows on a real host: the host's own `git` must still start.
+            Effect.provideService(SpawnExecutableResolution, (command) => command),
           );
           fixture.setThreads([]);
           const parent = `${fixture.config.worktreesDir}/repository`;

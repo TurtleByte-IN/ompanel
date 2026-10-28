@@ -35,7 +35,10 @@ interface ScopedSettingsEnvironment {
   readonly serverConfig: {
     readonly settings: ServerSettings;
     readonly environment?: {
-      readonly capabilities: { readonly projectSettingsOverrides?: boolean | undefined };
+      readonly capabilities: {
+        readonly projectSettingsOverrides?: boolean | undefined;
+        readonly projectAgentConfigTrust?: boolean | undefined;
+      };
     };
   } | null;
 }
@@ -186,7 +189,12 @@ function projectOverrideWrites(
     current: ProjectSettingsOverrides,
     settings: ServerSettings,
     projectId: ProjectId,
+    dedicatedTrust: boolean,
   ) => ProjectSettingsOverrides | null,
+  /** Trust travels apart from the entry: the server keeps the stored value on whole-entry writes. */
+  trust?: boolean | undefined,
+  /** False when only trust changes, so no stale entry is written back. */
+  writesEntries = true,
 ): ScopedServerWrite[] {
   const byId = new Map(environments.map((environment) => [environment.environmentId, environment]));
   const writes = new Map<EnvironmentId, ScopedServerWrite>();
@@ -200,17 +208,33 @@ function projectOverrideWrites(
       continue;
     }
     const settings = environment.serverConfig.settings;
-    const entry = update(settings.projectSettingsOverrides[member.id] ?? {}, settings, member.id);
     const existing = writes.get(member.environmentId);
+    // Older servers read trust from the entry; newer ones only from `projectAgentConfigTrust`.
+    const dedicatedTrust =
+      environment.serverConfig.environment.capabilities.projectAgentConfigTrust === true;
+    const entries =
+      writesEntries || !dedicatedTrust
+        ? {
+            ...existing?.patch.projectSettingsOverrides,
+            [member.id]: update(
+              settings.projectSettingsOverrides[member.id] ?? {},
+              settings,
+              member.id,
+              dedicatedTrust,
+            ),
+          }
+        : undefined;
+    const trustEntries =
+      trust === undefined || !dedicatedTrust
+        ? existing?.patch.projectAgentConfigTrust
+        : { ...existing?.patch.projectAgentConfigTrust, [member.id]: trust };
     writes.set(member.environmentId, {
       environmentId: member.environmentId,
       label: environment.label,
       previous: settings,
       patch: {
-        projectSettingsOverrides: {
-          ...existing?.patch.projectSettingsOverrides,
-          [member.id]: entry,
-        },
+        ...(entries === undefined ? {} : { projectSettingsOverrides: entries }),
+        ...(trustEntries === undefined ? {} : { projectAgentConfigTrust: trustEntries }),
       },
     });
   }
@@ -247,49 +271,56 @@ export function planScopedSettingsPatch(
       : isProjectScope
         ? unscopableKeys.length > 0
           ? []
-          : projectOverrideWrites(scope, environments, (current, settings, projectId) => {
-              // Override entries store whole objects; complete partial patches from each target's effective
-              // value.
-              const effective = resolveProjectSettings(settings, projectId).settings;
-              const next: Record<string, unknown> = { ...current };
-              for (const [key, value] of Object.entries<unknown>(serverPatch)) {
-                if (key === "worktreeCleanup" && serverPatch.worktreeCleanup?.mode === "custom") {
-                  next[key] = {
-                    mode: "custom",
-                    rules: {
-                      ...resolveWorktreeCleanup(settings, projectId),
-                      ...serverPatch.worktreeCleanup.rules,
-                    },
-                  };
-                  continue;
+          : projectOverrideWrites(
+              scope,
+              environments,
+              (current, settings, projectId, dedicatedTrust) => {
+                // Override entries store whole objects; complete partial patches from each target's effective
+                // value.
+                const effective = resolveProjectSettings(settings, projectId).settings;
+                const next: Record<string, unknown> = { ...current };
+                for (const [key, value] of Object.entries<unknown>(serverPatch)) {
+                  if (key === "trustProjectAgentConfig" && dedicatedTrust) continue;
+                  if (key === "worktreeCleanup" && serverPatch.worktreeCleanup?.mode === "custom") {
+                    next[key] = {
+                      mode: "custom",
+                      rules: {
+                        ...resolveWorktreeCleanup(settings, projectId),
+                        ...serverPatch.worktreeCleanup.rules,
+                      },
+                    };
+                    continue;
+                  }
+                  // Inherit sends null; remove overrides whose keys cannot store null.
+                  if (
+                    value === null &&
+                    !isNullableProjectSettingsOverride(key as ProjectScopedServerSettingKey)
+                  ) {
+                    delete next[key];
+                    continue;
+                  }
+                  const base: unknown = effective[key as keyof ServerSettings];
+                  // A new model must not inherit the previous model's options.
+                  if (
+                    isPlainObject(value) &&
+                    isPlainObject(base) &&
+                    (key === "defaultModelSelection" ||
+                      key === "sourceControlWriterModelSelection" ||
+                      key === "reviewGuideModelSelection" ||
+                      key === "textGenerationModelSelection") &&
+                    (value.instanceId !== undefined || value.model !== undefined)
+                  ) {
+                    next[key] = { instanceId: base.instanceId, model: base.model, ...value };
+                    continue;
+                  }
+                  next[key] =
+                    isPlainObject(value) && isPlainObject(base) ? { ...base, ...value } : value;
                 }
-                // Inherit sends null; remove overrides whose keys cannot store null.
-                if (
-                  value === null &&
-                  !isNullableProjectSettingsOverride(key as ProjectScopedServerSettingKey)
-                ) {
-                  delete next[key];
-                  continue;
-                }
-                const base: unknown = effective[key as keyof ServerSettings];
-                // A new model must not inherit the previous model's options.
-                if (
-                  isPlainObject(value) &&
-                  isPlainObject(base) &&
-                  (key === "defaultModelSelection" ||
-                    key === "sourceControlWriterModelSelection" ||
-                    key === "reviewGuideModelSelection" ||
-                    key === "textGenerationModelSelection") &&
-                  (value.instanceId !== undefined || value.model !== undefined)
-                ) {
-                  next[key] = { instanceId: base.instanceId, model: base.model, ...value };
-                  continue;
-                }
-                next[key] =
-                  isPlainObject(value) && isPlainObject(base) ? { ...base, ...value } : value;
-              }
-              return next as ProjectSettingsOverrides;
-            })
+                return next as ProjectSettingsOverrides;
+              },
+              serverPatch.trustProjectAgentConfig,
+              serverKeys.some((key) => key !== "trustProjectAgentConfig"),
+            )
         : scope.kind === "all" || scope.kind === "environment"
           ? connectedEnvironments.flatMap((environment) => {
               const previous = environment.serverConfig?.settings;
@@ -348,8 +379,12 @@ export function planScopedSettingsClear(
 ) {
   const serverWrites =
     scope.kind === "project" || scope.kind === "checkout"
-      ? projectOverrideWrites(scope, environments, (_current, settings, projectId) =>
-          clearProjectSettingsOverrides(settings, projectId, keys),
+      ? projectOverrideWrites(
+          scope,
+          environments,
+          (_current, settings, projectId) =>
+            clearProjectSettingsOverrides(settings, projectId, keys),
+          keys.includes("trustProjectAgentConfig") ? false : undefined,
         )
       : [];
   return {

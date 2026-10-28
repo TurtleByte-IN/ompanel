@@ -8,6 +8,8 @@ import {
   parseGenericCliVersion,
   spawnAndCollect,
 } from "@t3tools/provider-core/server/snapshotProbe";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { resolveSpawnCommand, SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -1499,13 +1501,25 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
   });
 
   /** A deadline, a failed spawn or a non-zero exit all mean `omp share` would not make a gist. */
-  const gistReady = (target: OmpControlTarget) =>
-    withDeadline(
+  const gistReady = Effect.fn("OmpControl.gistReady")(function* (target: OmpControlTarget) {
+    // Windows runs a bare `gh` from the thread's repository before PATH, so `gh` is resolved
+    // here to an absolute PATH entry and a repository-local gh.exe is never started.
+    const platform = yield* HostProcess.Platform;
+    const resolveExecutable = yield* SpawnExecutableResolution;
+    const ghPath = resolveExecutable("gh", platform, target.environment);
+    if (ghPath === undefined) return "missing" as const;
+    // A .cmd/.bat gh (a package-manager shim) needs the shell dispatch resolveSpawnCommand builds.
+    const launch = yield* resolveSpawnCommand(ghPath, ["auth", "status"], {
+      env: target.environment,
+      extendEnv: false,
+    });
+    return yield* withDeadline(
       "gh_auth",
       "ghAuth",
       spawnAndCollect(
-        "gh",
-        ChildProcess.make("gh", ["auth", "status"], {
+        ghPath,
+        ChildProcess.make(launch.command, launch.args, {
+          shell: launch.shell,
           cwd: target.cwd,
           env: target.environment,
           extendEnv: false,
@@ -1521,8 +1535,8 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
           isCommandMissingCause(cause) ? ("missing" as const) : ("signed_out" as const),
         ),
       ),
-      Effect.withSpan("OmpControl.gistReady"),
     );
+  });
 
   const shareGist = Effect.fn("OmpControl.shareGist")(function* (
     target: OmpControlTarget,

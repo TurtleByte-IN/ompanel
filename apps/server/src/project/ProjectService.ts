@@ -93,6 +93,7 @@ export class ProjectOperationError extends Schema.TaggedError<ProjectOperationEr
       "list-projects",
       "list-threads",
       "delete-thread",
+      "clear-agent-config-trust",
       "dispatch-project-command",
     ]),
     projectId: Schema.optional(ProjectId),
@@ -211,6 +212,16 @@ export const make = Effect.gen(function* () {
         ),
       );
 
+  const clearProjectAgentConfigTrust = (projectId: ProjectId) =>
+    serverSettings.updateSettings({ projectAgentConfigTrust: { [projectId]: false } }).pipe(
+      Effect.asVoid,
+      Effect.mapError(
+        (cause) =>
+          new ProjectOperationError({ operation: "clear-agent-config-trust", projectId, cause }),
+      ),
+      Effect.withSpan("ProjectService.clearProjectAgentConfigTrust"),
+    );
+
   const commit = Effect.fn("ProjectService.commit")(function* (command: ProjectCommand) {
     const { projectId } = command;
     const dispatchError = (cause: unknown) =>
@@ -237,12 +248,21 @@ export const make = Effect.gen(function* () {
         now,
       });
       if (Result.isSuccess(planned)) {
+        // Trust is a decision about one directory's files. It is withdrawn inside the commit that
+        // records the move: never for a rejected or replayed command, and a failed withdrawal
+        // stops the move. If recording fails afterwards the project is merely left untrusted.
+        const movesRoot =
+          command.type === "project.meta.update" &&
+          command.workspaceRoot !== undefined &&
+          project !== undefined &&
+          project.workspaceRoot !== command.workspaceRoot;
         const { receipt } = yield* eventSink.commitProjectCommand({
           commandId: command.commandId,
           projectId,
           commandType: command.type,
           acceptedAt: now,
           event: planned.success,
+          ...(movesRoot ? { beforeRecord: clearProjectAgentConfigTrust(projectId) } : {}),
         });
         return receipt;
       }

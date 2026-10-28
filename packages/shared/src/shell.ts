@@ -12,6 +12,9 @@ import * as Path from "effect/Path";
 
 import * as HostProcess from "./HostProcess.ts";
 import * as Context from "effect/Context";
+import * as Layer from "effect/Layer";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 const SHELL_ENV_NAME_PATTERN = /^[A-Z0-9_]+$/;
 const WINDOWS_PATH_DELIMITER = ";";
 const POSIX_PATH_DELIMITER = ":";
@@ -101,7 +104,8 @@ function resolveSpawnExecutableWithNode(
 
   for (const pathEntry of (readEnvPath(env) ?? "").split(pathDelimiterForPlatform(platform))) {
     const normalizedPathEntry = stripWrappingQuotes(pathEntry.trim());
-    if (normalizedPathEntry.length === 0) continue;
+    // A relative entry is resolved against the child's cwd, which can be an untrusted repository.
+    if (normalizedPathEntry.length === 0 || !path.isAbsolute(normalizedPathEntry)) continue;
     for (const candidate of candidates) {
       const candidatePath = path.join(normalizedPathEntry, candidate);
       if (isExecutable(candidatePath)) return candidatePath;
@@ -400,6 +404,94 @@ function pathDelimiterForPlatform(platform: NodeJS.Platform): string {
   return platform === "win32" ? WINDOWS_PATH_DELIMITER : POSIX_PATH_DELIMITER;
 }
 
+function pathModuleForPlatform(platform: NodeJS.Platform): typeof NodePath.posix {
+  return platform === "win32" ? NodePath.win32 : NodePath.posix;
+}
+
+/** Only absolute entries stay: `.`, relative and empty entries resolve against the child's cwd. */
+function absolutePathEntries(pathValue: string, platform: NodeJS.Platform): string {
+  const path = pathModuleForPlatform(platform);
+  return pathValue
+    .split(pathDelimiterForPlatform(platform))
+    .map((entry) => stripWrappingQuotes(entry.trim()))
+    .filter((entry) => entry.length > 0 && path.isAbsolute(entry))
+    .join(pathDelimiterForPlatform(platform));
+}
+
+/** What a child searches when every PATH entry it was given was relative: never the cwd. */
+function defaultSystemPath(platform: NodeJS.Platform, env: NodeJS.ProcessEnv): string {
+  if (platform !== "win32") return "/usr/local/bin:/usr/bin:/bin";
+  const root = env.SystemRoot || env.windir || "C:\\Windows";
+  return [`${root}\\System32`, root, `${root}\\System32\\Wbem`].join(";");
+}
+
+/**
+ * The environment a child process may start with when its working directory is untrusted: no
+ * relative or empty PATH entry, and on Windows no implicit search of the working directory
+ * (cmd.exe and the CRT honour NoDefaultCurrentDirectoryInExePath), which also covers the bare
+ * `node` that npm's .cmd launchers call.
+ */
+export function hardenSpawnEnvironment(
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
+): NodeJS.ProcessEnv {
+  const hardened: NodeJS.ProcessEnv = { ...env };
+  for (const key of Object.keys(hardened)) {
+    if (key.toUpperCase() === "PATH" && hardened[key] !== undefined) {
+      hardened[key] =
+        absolutePathEntries(hardened[key], platform) || defaultSystemPath(platform, env);
+    }
+  }
+  if (platform === "win32") hardened.NoDefaultCurrentDirectoryInExePath = "1";
+  return hardened;
+}
+
+/**
+ * A bare command resolved against `env`'s absolute PATH entries, or a path that does not exist.
+ * Explicit paths pass through.
+ */
+export function resolveTrustedCommandSync(
+  command: string,
+  platform: NodeJS.Platform,
+  env: NodeJS.ProcessEnv,
+  resolveExecutable: SpawnExecutableResolver = resolveSpawnExecutableWithNode,
+): string {
+  if (command.includes("/") || command.includes("\\")) return command;
+  return (
+    resolveExecutable(command, platform, env) ?? nonexistentCommandPath(command, platform, env)
+  );
+}
+
+function hardenCommand(
+  command: ChildProcess.Command,
+  platform: NodeJS.Platform,
+): ChildProcess.Command {
+  if (command._tag === "PipedCommand") {
+    return ChildProcess.pipeTo(
+      hardenCommand(command.left, platform),
+      hardenCommand(command.right, platform),
+      command.options,
+    );
+  }
+  const options = command.options;
+  const base = options.extendEnv ? { ...globalThis.process.env, ...options.env } : options.env;
+  return ChildProcess.make(command.command, [...command.args], {
+    ...options,
+    env: hardenSpawnEnvironment(base ?? globalThis.process.env, platform),
+    extendEnv: false,
+  });
+}
+
+/** Every process the server starts goes through this: see {@link hardenSpawnEnvironment}. */
+export const layerHardenedSpawner = Layer.effect(
+  ChildProcessSpawner.ChildProcessSpawner,
+  Effect.gen(function* () {
+    const inner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const platform = yield* HostProcess.Platform;
+    return ChildProcessSpawner.make((command) => inner.spawn(hardenCommand(command, platform)));
+  }),
+);
+
 function normalizePathEntryForComparison(entry: string, platform: NodeJS.Platform): string {
   const normalized = stripWrappingQuotes(entry.trim());
   return platform === "win32" ? normalized.toLowerCase() : normalized;
@@ -637,7 +729,14 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
   const seenPathEntries = new Set<string>();
   for (const entry of pathValue.split(pathDelimiterForPlatform(platform))) {
     const pathEntry = stripWrappingQuotes(entry.trim());
-    if (pathEntry.length === 0 || seenPathEntries.has(pathEntry)) continue;
+    // A relative entry resolves against the working directory of whoever spawns the result.
+    if (
+      pathEntry.length === 0 ||
+      !pathModuleForPlatform(platform).isAbsolute(pathEntry) ||
+      seenPathEntries.has(pathEntry)
+    ) {
+      continue;
+    }
 
     seenPathEntries.add(pathEntry);
     pathEntries.push(pathEntry);
@@ -799,19 +898,40 @@ const resolveMacosGit = Effect.fnUntraced(function* (
   ) {
     return cached.resolvedPath ?? "git";
   }
-  const located =
-    resolveExecutable("git", "darwin", env) === MACOS_GIT_SHIM ? locateXcodeGit(env) : undefined;
+  const onPath = resolveExecutable("git", "darwin", env);
+  const located = onPath === MACOS_GIT_SHIM ? locateXcodeGit(env) : undefined;
   const realGit =
     located !== undefined && resolveExecutable(located, "darwin", env) !== undefined
       ? located
       : null;
-  cacheCommandResolution(cache, cacheKey, realGit, nowNanos);
-  return realGit ?? "git";
+  // Absolute whenever PATH resolves git, so a bare name never reaches the repository.
+  const chosen = realGit ?? onPath ?? null;
+  cacheCommandResolution(cache, cacheKey, chosen, nowNanos);
+  return chosen ?? "git";
 });
 
 export interface SpawnCommandOptions extends CommandAvailabilityOptions {
   /** Bypass npm cmd-shims; see npmShimExecutable for process-lifetime semantics. */
   readonly bypassNpmShim?: boolean;
+}
+
+/**
+ * Where an unresolved command is pointed so the spawn fails with ENOENT: a folder that does not
+ * exist and that a non-administrator cannot create (under System32, not a drive root).
+ */
+export function nonexistentCommandPath(
+  command: string,
+  platform: NodeJS.Platform,
+  env: NodeJS.ProcessEnv = {},
+): string {
+  return platform === "win32"
+    ? NodePath.win32.join(
+        env.SystemRoot || env.windir || "C:\\Windows",
+        "System32",
+        "ompanel-command-not-found",
+        command,
+      )
+    : NodePath.posix.join("/ompanel-command-not-found", command);
 }
 
 export const resolveSpawnCommand = Effect.fnUntraced(function* (
@@ -867,7 +987,8 @@ export const resolveSpawnCommand = Effect.fnUntraced(function* (
       cacheCommandResolution(cache, cacheKey, resolvedExecutable, nowNanos);
     }
   }
-  const resolvedCommand = resolvedExecutable ?? command;
+  const resolvedCommand =
+    resolvedExecutable ?? (explicitPath ? command : nonexistentCommandPath(command, platform, env));
   const extension = NodePath.win32.extname(resolvedCommand).toLowerCase();
   if (extension !== ".cmd" && extension !== ".bat") {
     return { command: resolvedCommand, args: [...args], shell: false };

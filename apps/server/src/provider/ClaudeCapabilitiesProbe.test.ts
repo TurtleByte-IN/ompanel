@@ -1,9 +1,11 @@
 // @effect-diagnostics nodeBuiltinImport:off - cleanup uses Node's retrying rm, which the FileSystem service does not expose.
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ClaudeSettings, type ServerProvider } from "@t3tools/contracts";
+import { query } from "@anthropic-ai/claude-agent-sdk";
 import { vi } from "vite-plus/test";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 
 import {
@@ -40,4 +42,23 @@ it.effect("reports a deleted worktree's scan as finished, not pending", () =>
     );
     assert.strictEqual(snapshot.slashCommandsPending, false);
   }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("starts the capability probe's CLI through the hardened spawner", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const repo = yield* fs.makeTempDirectoryScoped({ prefix: "t3-probe-repo-" });
+    let captured: Parameters<typeof query>[0]["options"];
+    vi.mocked(query).mockImplementationOnce((input) => {
+      captured = input.options;
+      throw new Error("stop before the CLI starts");
+    });
+    yield* probeClaudeWorkspaceSnapshot(
+      yield* decodeClaudeSettings({}),
+      { skills: [], slashCommands: [] } as unknown as ServerProvider,
+      repo,
+      { HOME: "/nonexistent/t3-home" },
+    );
+    assert.isFunction(captured?.spawnClaudeCodeProcess);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
