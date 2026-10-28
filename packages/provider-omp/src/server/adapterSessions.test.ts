@@ -238,7 +238,7 @@ posixOnly("OMP thread sessions", () => {
       assert.deepStrictEqual([payload.sessionId, payload.sessionFile], [sessionId, sessionFile]);
       // The branch view's tree (sessionBranches.ts): the turn's two messages, on the active path.
       assert.lengthOf(payload.branchTree?.activePath ?? [], 2);
-      const listed = yield* listOmpSessions(state.sessions, work);
+      const listed = yield* listOmpSessions(state.sessions, { roots: [work], within: [work] });
       assert.deepStrictEqual(
         listed.map((session) => [session.sessionId, session.firstMessage]),
         [[sessionId, "hello"]],
@@ -489,7 +489,7 @@ posixOnly("OMP thread sessions", () => {
           ),
         ].join("\n") + "\n",
       );
-      const listed = yield* listOmpSessions(state.sessions, work);
+      const listed = yield* listOmpSessions(state.sessions, { roots: [work], within: [work] });
       assert.deepStrictEqual(
         listed.map((session) => [session.sessionId, session.title]),
         [[sessionId, "From the terminal"]],

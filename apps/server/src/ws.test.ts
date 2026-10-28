@@ -978,46 +978,91 @@ it.effect("thread resume across compacted history keeps message order and final 
   ),
 );
 
-it.effect("lists OMP sessions with their threads and imports one as a thread", () =>
+it.effect("lists OMP sessions per project and worktree and imports one as a thread", () =>
   Effect.gen(function* () {
     const instanceId = ProviderInstanceId.make("omp");
     const driver = ProviderDriverKind.make("omp");
     const projectId = ProjectId.make("project-omp");
+    const otherProjectId = ProjectId.make("project-other");
     const workspaceRoot = "/workspace/omp";
+    const otherRoot = "/workspace/other";
+    const worktree = "/worktrees/omp-feature";
+    const sessionsDirectory = "/home/.omp/agent/sessions";
     const derivedThreadId = (sessionId: string) =>
       IdAllocator.deriveThreadFromProviderThread({
         driver,
         providerInstanceId: instanceId,
         nativeThreadId: sessionId,
       });
-    const session = (sessionId: string, threadId: ThreadId | null) => ({
+    const session = (
+      sessionId: string,
+      threadId: ThreadId | null,
+      cwd: string,
+      roots: ReadonlyArray<string>,
+    ) => ({
       sessionId,
-      cwd: workspaceRoot,
+      cwd,
       title: null,
       firstMessage: `  Fix the ${sessionId} bug  `,
       createdAt: "2026-10-25T00:00:00.000Z",
       updatedAt: "2026-10-26T00:00:00.000Z",
       threadId,
+      roots,
     });
     const boundThread = ThreadId.make("thread-bound");
     const sessions = [
       // Bound by this instance to a thread that still exists.
-      session("bound", boundThread),
+      session("bound", boundThread, workspaceRoot, [workspaceRoot]),
       // Imported earlier; the bound thread was since deleted.
-      session("imported", ThreadId.make("thread-deleted")),
-      session("fresh", null),
+      session("imported", ThreadId.make("thread-deleted"), workspaceRoot, [workspaceRoot]),
+      session("fresh", null, workspaceRoot, [workspaceRoot]),
+      // In a subfolder of the project's other git worktree.
+      session("worktree", null, `${worktree}/src`, [worktree]),
+      session("other", null, otherRoot, [otherRoot]),
+      session("orphan", null, "/elsewhere", []),
     ];
     const existingThreads = new Set<string>([boundThread, derivedThreadId("imported")]);
-    const listedCwds: Array<string> = [];
+    const listInputs: Array<{
+      readonly roots: ReadonlyArray<string>;
+      readonly within: ReadonlyArray<string> | null;
+      readonly sessionId?: string;
+    }> = [];
+    const refreshedRefs: Array<string> = [];
     const launches: Array<ThreadLaunchService.ThreadLaunchInput> = [];
     const responses = yield* Queue.unbounded<unknown>();
     const services = Layer.mergeAll(
       layerUnusedConfigRpcServices,
       Layer.mock(ProjectService.ProjectService)({
-        getById: (id) =>
-          Effect.succeed(
-            id === projectId ? Option.some({ id, workspaceRoot } as never) : Option.none(),
-          ),
+        listShells: () =>
+          Effect.succeed([
+            { id: projectId, title: "OMP", workspaceRoot } as never,
+            { id: otherProjectId, title: "Other", workspaceRoot: otherRoot } as never,
+          ]),
+      }),
+      Layer.mock(GitWorkflowService.GitWorkflowService)({
+        listRefs: (input) =>
+          Effect.sync(() => {
+            if (input.refresh === true) refreshedRefs.push(input.cwd);
+            return input.cwd === workspaceRoot
+              ? ({
+                  isRepo: true,
+                  hasPrimaryRemote: false,
+                  nextCursor: null,
+                  totalCount: 3,
+                  refs: [
+                    { name: "main", current: true, isDefault: true, worktreePath: workspaceRoot },
+                    { name: "feature", current: false, isDefault: false, worktreePath: worktree },
+                    { name: "idle", current: false, isDefault: false, worktreePath: null },
+                  ],
+                } as never)
+              : ({
+                  isRepo: false,
+                  hasPrimaryRemote: false,
+                  nextCursor: null,
+                  totalCount: 0,
+                  refs: [],
+                } as never);
+          }),
       }),
       Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
         getInstance: (id) =>
@@ -1026,10 +1071,17 @@ it.effect("lists OMP sessions with their threads and imports one as a thread", (
               ? ({
                   driverKind: driver,
                   ompSessions: {
-                    list: ({ cwd }: { readonly cwd: string }) =>
+                    sessionsDirectory,
+                    list: (input: (typeof listInputs)[number]) =>
                       Effect.sync(() => {
-                        listedCwds.push(cwd);
-                        return sessions;
+                        listInputs.push(input);
+                        return sessions.filter(
+                          (candidate) =>
+                            (input.sessionId === undefined ||
+                              candidate.sessionId === input.sessionId) &&
+                            (input.within === null ||
+                              candidate.roots.some((root) => input.within?.includes(root))),
+                        );
                       }),
                   },
                 } as never)
@@ -1110,51 +1162,116 @@ it.effect("lists OMP sessions with their threads and imports one as a thread", (
         })
         .pipe(Effect.andThen(Queue.take(responses)));
 
+    type Listed = {
+      readonly sessions: ReadonlyArray<{
+        readonly sessionId: string;
+        readonly importedThreadId: unknown;
+        readonly projectId: unknown;
+        readonly worktreePath: unknown;
+        readonly branch: unknown;
+      }>;
+      readonly searchedDirectories: ReadonlyArray<string>;
+      readonly sessionsDirectory: string;
+    };
+    const rows = (result: Listed) =>
+      result.sessions.map((entry) => [
+        entry.sessionId,
+        entry.importedThreadId,
+        entry.projectId,
+        entry.worktreePath,
+        entry.branch,
+      ]);
+
     const listed = (yield* request("list", WS_METHODS.serverListOmpSessions, {
       instanceId,
       projectId,
-    })) as { readonly sessions: ReadonlyArray<{ sessionId: string; importedThreadId: unknown }> };
-    assert.deepEqual(listedCwds, [workspaceRoot]);
-    assert.deepEqual(
-      listed.sessions.map((entry) => [entry.sessionId, entry.importedThreadId]),
-      [
-        ["bound", boundThread],
-        ["imported", derivedThreadId("imported")],
-        ["fresh", null],
-      ],
-    );
+    })) as Listed;
+    // Every project's folders attribute sessions; the chosen project's bound the listing.
+    assert.deepEqual(listInputs[0], {
+      roots: [workspaceRoot, worktree, otherRoot],
+      within: [workspaceRoot, worktree],
+    });
+    assert.deepEqual(refreshedRefs, [workspaceRoot]);
+    assert.deepEqual(rows(listed), [
+      ["bound", boundThread, projectId, null, null],
+      ["imported", derivedThreadId("imported"), projectId, null, null],
+      ["fresh", null, projectId, null, null],
+      ["worktree", null, projectId, worktree, "feature"],
+    ]);
+    assert.deepEqual(listed.searchedDirectories, [workspaceRoot, worktree]);
+    assert.equal(listed.sessionsDirectory, sessionsDirectory);
     assert.notProperty(listed.sessions[0], "threadId");
+    assert.notProperty(listed.sessions[0], "roots");
+
+    const everywhere = (yield* request("list-all", WS_METHODS.serverListOmpSessions, {
+      instanceId,
+      scope: "all",
+    })) as Listed;
+    assert.equal(listInputs[1]?.within, null);
+    assert.deepEqual(rows(everywhere).slice(4), [
+      ["other", null, otherProjectId, null, null],
+      ["orphan", null, null, null, null],
+    ]);
+    assert.deepEqual(everywhere.searchedDirectories, []);
 
     const alreadyImported = yield* request("import-bound", WS_METHODS.serverImportOmpSession, {
       instanceId,
-      projectId,
       sessionId: "bound",
     });
     assert.deepEqual(alreadyImported, { threadId: boundThread, imported: false });
 
     const imported = yield* request("import-fresh", WS_METHODS.serverImportOmpSession, {
       instanceId,
-      projectId,
       sessionId: "fresh",
     });
     assert.deepEqual(imported, { threadId: derivedThreadId("fresh"), imported: true });
+    assert.deepEqual(listInputs.at(-1), {
+      roots: [workspaceRoot, worktree, otherRoot],
+      within: null,
+      sessionId: "fresh",
+    });
     assert.equal(launches.length, 1);
     const launch = launches[0]!;
     assert.equal(launch.threadId, derivedThreadId("fresh"));
+    assert.equal(launch.projectId, projectId);
     assert.equal(launch.title, "Fix the fresh bug");
+    assert.deepEqual(launch.workspaceStrategy, { type: "root" });
     assert.deepEqual(launch.modelSelection, { instanceId, model: "omp-default" });
     assert.deepEqual(launch.importedNativeThread, {
       ref: { driver, nativeId: "fresh", strength: "strong" },
       metadata: { updatedAt: "2026-10-26T00:00:00.000Z" },
     });
 
+    const inWorktree = yield* request("import-worktree", WS_METHODS.serverImportOmpSession, {
+      instanceId,
+      sessionId: "worktree",
+    });
+    assert.deepEqual(inWorktree, { threadId: derivedThreadId("worktree"), imported: true });
+    assert.equal(launches[1]?.projectId, projectId);
+    assert.deepEqual(launches[1]?.workspaceStrategy, {
+      type: "existing_worktree",
+      worktreePath: worktree,
+      branch: "feature",
+    });
+
+    const again = yield* request("import-worktree-again", WS_METHODS.serverImportOmpSession, {
+      instanceId,
+      sessionId: "worktree",
+    });
+    assert.deepEqual(again, { threadId: derivedThreadId("worktree"), imported: false });
+
+    const orphan = yield* request("import-orphan", WS_METHODS.serverImportOmpSession, {
+      instanceId,
+      sessionId: "orphan",
+    });
+    assert.include(JSON.stringify(orphan), "project_not_found");
+
     const missing = yield* request("import-missing", WS_METHODS.serverImportOmpSession, {
       instanceId,
-      projectId,
       sessionId: "missing",
     });
     assert.include(JSON.stringify(missing), "session_not_found");
-    assert.equal(launches.length, 1);
+    assert.equal(launches.length, 2);
   }).pipe(
     Effect.provide(
       Layer.mergeAll(

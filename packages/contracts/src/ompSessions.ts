@@ -22,25 +22,46 @@ export const OmpSessionSummary = Schema.Struct({
   updatedAt: IsoDateTime,
   /** The Ompanel thread already bound to this session, if it was imported or started here. */
   importedThreadId: Schema.NullOr(ThreadId),
+  /**
+   * The project the session continues in: the one whose root or git worktree holds `cwd` (the
+   * innermost when several do). Null when no project does.
+   */
+  projectId: Schema.NullOr(ProjectId),
+  /** The project's git worktree holding `cwd`; null when it is the project root itself. */
+  worktreePath: Schema.NullOr(TrimmedNonEmptyString.check(Schema.isMaxLength(4_096))),
+  /** The branch checked out in `worktreePath`. */
+  branch: Schema.NullOr(TrimmedNonEmptyString.check(Schema.isMaxLength(512))),
 });
 export type OmpSessionSummary = typeof OmpSessionSummary.Type;
 
+export const OmpListSessionsScope = Schema.Literals(["project", "all"]);
+export type OmpListSessionsScope = typeof OmpListSessionsScope.Type;
+
 export const OmpListSessionsInput = Schema.Struct({
   instanceId: ProviderInstanceId,
-  /** Sessions working in this project's root are listed. */
-  projectId: ProjectId,
+  /**
+   * With scope `project` (the default), sessions working in this project's root, its git
+   * worktrees or below are listed. Required for that scope.
+   */
+  projectId: Schema.optionalKey(ProjectId),
+  /** `all` lists sessions from every folder. */
+  scope: Schema.optionalKey(OmpListSessionsScope),
 });
 export type OmpListSessionsInput = typeof OmpListSessionsInput.Type;
 
 export const OmpListSessionsResult = Schema.Struct({
   /** Newest first. */
   sessions: Schema.Array(OmpSessionSummary).check(Schema.isMaxLength(500)),
+  /** The folders sessions were listed for; empty with scope `all`. */
+  searchedDirectories: Schema.Array(Schema.String),
+  /** The OMP sessions directory that was scanned. */
+  sessionsDirectory: Schema.String,
 });
 export type OmpListSessionsResult = typeof OmpListSessionsResult.Type;
 
 export const OmpImportSessionInput = Schema.Struct({
   instanceId: ProviderInstanceId,
-  projectId: ProjectId,
+  /** The project and worktree come from the session's `cwd`. */
   sessionId: OmpSessionId,
 });
 export type OmpImportSessionInput = typeof OmpImportSessionInput.Type;

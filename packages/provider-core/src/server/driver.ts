@@ -239,16 +239,28 @@ export interface ProviderOmpAgentFilesController {
 
 /**
  * A session as OMP stores it. `threadId` is the thread this instance last bound to it (which may
- * since have been deleted); the server resolves `importedThreadId` from it.
+ * since have been deleted); the server resolves `importedThreadId` from it. `roots` are the
+ * listing's roots holding its `cwd`; the server attributes the session to a project from them.
  */
-export type ProviderOmpSession = Omit<OmpSessionSummary, "importedThreadId"> & {
+export type ProviderOmpSession = Omit<
+  OmpSessionSummary,
+  "importedThreadId" | "projectId" | "worktreePath" | "branch"
+> & {
   readonly threadId: ThreadId | null;
+  readonly roots: ReadonlyArray<string>;
 };
 
 export interface ProviderOmpSessionsController {
-  /** Sessions whose working directory is `cwd`, newest first. */
+  /** The directory the instance's `omp` keeps its sessions in. */
+  readonly sessionsDirectory: string;
+  /**
+   * Sessions newest first. `within` keeps those working in one of its folders or below (null
+   * keeps all); `sessionId` keeps only that session.
+   */
   readonly list: (input: {
-    readonly cwd: string;
+    readonly roots: ReadonlyArray<string>;
+    readonly within: ReadonlyArray<string> | null;
+    readonly sessionId?: string;
   }) => Effect.Effect<ReadonlyArray<ProviderOmpSession>, OmpSessionsOperationError>;
 }
 
