@@ -2,8 +2,10 @@
 // P-07 (FR-22, ompanel#144): a fresh OMP install — no default model, no credentials — against a
 // real `omp` built from the omp.lock tag. OMP refuses `--mode rpc` there; Ompanel shows it as
 // needing setup (never "Unavailable"), offers `omp setup` in an embedded terminal, then hands over
-// to Accounts. `omp setup`'s own wizard is OMP's TUI; the test leaves the OMP home as the wizard
+// to Accounts. Z-09 (ompanel#199): the stack never writes `enabled`, so OMP is on only by the
+// product default, as on a first launch. `omp setup`'s own wizard is OMP's TUI; the test leaves the OMP home as the wizard
 // would (`completeOmpSetup`) while the terminal is open. Steps run in order on one page.
+import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import { expect, type Page, test } from "@playwright/test";
@@ -21,7 +23,7 @@ test.describe.configure({ mode: "serial" });
 
 const suite = useOmpSuite({
   artifacts: ARTIFACTS,
-  stack: () => ({ fakeSignIn: true, freshOmpHome: true }),
+  stack: () => ({ fakeSignIn: true, freshOmpHome: true, ompEnabledByDefault: true }),
 });
 
 const openPage = async (page: Page, path: string) => {
@@ -29,6 +31,40 @@ const openPage = async (page: Page, path: string) => {
 };
 
 const setupSteps = (page: Page) => page.getByRole("list", { name: "OMP setup steps" });
+
+test("starts with OMP on and first in the setup screen's agents", async () => {
+  const { page, stack, screenshot } = suite.current();
+  // No explicit enable anywhere: the saved instance has no `enabled` flag.
+  const saved = JSON.parse(
+    NodeFS.readFileSync(
+      NodePath.join(stack.home, "..", "ompanel", "userdata", "settings.json"),
+      "utf8",
+    ),
+  );
+  expect(saved.providerInstances.omp).not.toHaveProperty("enabled");
+
+  const environment = await page.request.get(
+    new URL("/.well-known/t3/environment", page.url()).href,
+  );
+  const { environmentId } = (await environment.json()) as { environmentId: string };
+  await page.goto(new URL(`/welcome#agents:${environmentId}`, page.url()).href);
+  await expect(page.getByRole("heading", { name: "Connect your agents" })).toBeVisible({
+    timeout: 60_000,
+  });
+  const agents = page.locator("[data-onboarding-agent]");
+  // OMP leads, is recommended, and is neither disabled nor still unchecked.
+  await expect(agents.first()).toHaveAttribute("data-onboarding-agent", "omp");
+  const omp = page.locator('[data-onboarding-agent="omp"]');
+  await expect(omp).toContainText("Recommended");
+  await expect(omp).not.toContainText("Disabled");
+  await expect(omp).not.toContainText("Preview");
+  // A fresh OMP home has no model yet: the card offers setup, never "Disabled".
+  await expect(omp).toHaveAttribute("data-onboarding-state", "signIn", { timeout: 60_000 });
+  await expect(omp.getByRole("button", { name: "Set up" })).toBeVisible();
+  // The installed sidecar's version is shown.
+  await expect(omp.locator("code")).toHaveText(/^v\d+\.\d+\.\d+/);
+  await screenshot("00-setup-screen-agents");
+});
 
 test("shows a fresh install as needing setup, not as unavailable", async () => {
   const { page, screenshot } = suite.current();

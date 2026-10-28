@@ -6,6 +6,28 @@ import { OmpSettings } from "./settings.ts";
 
 const decode = Schema.decodeUnknownResult(OmpSettings);
 
+describe("OmpSettings.enabled", () => {
+  // Z-09: a fresh profile (no saved OMP settings) must start with OMP on; only an explicit
+  // `enabled: false` turns it off.
+  it("is on when the profile has no saved OMP settings", () => {
+    const decoded = decode({});
+    assert.isTrue(Result.isSuccess(decoded));
+    if (Result.isSuccess(decoded)) assert.isTrue(decoded.success.enabled);
+  });
+
+  it("is on when only other fields were saved", () => {
+    const decoded = decode({ binaryPath: "/opt/omp/bin/omp" });
+    assert.isTrue(Result.isSuccess(decoded));
+    if (Result.isSuccess(decoded)) assert.isTrue(decoded.success.enabled);
+  });
+
+  it("keeps an explicit off", () => {
+    const decoded = decode({ enabled: false });
+    assert.isTrue(Result.isSuccess(decoded));
+    if (Result.isSuccess(decoded)) assert.isFalse(decoded.success.enabled);
+  });
+});
+
 describe("OmpSettings.binaryPath", () => {
   it.each([
     "",

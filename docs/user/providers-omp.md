@@ -4,8 +4,10 @@ OMP (Oh My Pi) is Ompanel's own coding agent. Ompanel pins one OMP release and
 runs it as a sidecar, so OMP does not need to be on the server's `PATH`.
 
 OMP threads, commit messages and thread titles all run through the sidecar.
-The OMP provider is off by default; enable it below, then follow
-[OMP setup](./omp-setup.md) if OMP has no model or sign-in yet.
+OMP is on by default, including for installs that never touched its switch,
+and leads the agent list on the first-run setup screen. Follow
+[OMP setup](./omp-setup.md) if OMP has no model or sign-in yet. Turning OMP off
+in **Settings → Providers** is kept; Ompanel never switches it back on.
 
 More on OMP:
 
@@ -18,7 +20,8 @@ More on OMP:
 
 ## Set Up OMP
 
-1. Open **Settings → Providers** and enable OMP.
+1. Open **Settings → Providers** and pick OMP. Use its switch only to turn it
+   off, or back on.
 2. Leave **Binary path** empty to use the sidecar Ompanel manages, or set it to
    the absolute path of an `omp` executable, such as a development build.
    Ompanel runs that file as given and does not check it.

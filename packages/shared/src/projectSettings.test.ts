@@ -136,7 +136,7 @@ describe("resolveProjectSettings", () => {
     ).toEqual(settings.textGenerationModelSelection);
   });
 
-  it("falls back to a configured instance when every built-in one is off for the project", () => {
+  it("prefers a configured instance over the never-saved default OMP when Codex and Claude are off (Z-09)", () => {
     const codex = ProviderInstanceId.make("codex");
     const codexWork = ProviderInstanceId.make("codex_work");
     const settings = {

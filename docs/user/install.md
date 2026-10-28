@@ -127,7 +127,7 @@ computer.
 
 | Provider    | Install and authenticate                                                                                                                                  |
 | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| OMP         | Preview: enable [OMP](./providers-omp.md) in Settings → Providers; Ompanel finds its pinned OMP sidecar.                                                  |
+| OMP         | Nothing to install: [OMP](./providers-omp.md) is on by default and Ompanel finds its pinned OMP sidecar. Run `omp setup` for a model or sign-in.          |
 | Codex       | [Connect with ChatGPT](./providers-codex.md#connect-with-chatgpt), or install [Codex CLI](https://developers.openai.com/codex/cli) and run `codex login`. |
 | Claude      | Install [Claude Code](https://claude.com/product/claude-code), then run `claude auth login`.                                                              |
 | Cursor      | Install [Cursor CLI](https://cursor.com/cli), then run `agent login`.                                                                                     |

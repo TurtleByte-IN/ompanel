@@ -78,6 +78,8 @@ export function isModelSelectionProviderEnabled(
   return isUnconfiguredDefaultInstanceEnabled(selection.instanceId);
 }
 
+const OMP_DRIVER = ProviderDriverKind.make("omp");
+
 const TEXT_GENERATION_FALLBACK_DRIVERS = [
   "codex",
   "claudeAgent",
@@ -99,10 +101,16 @@ export function fallbackTextGenerationModelSelection(
     readonly defaultModelSelection?: ModelSelection | null;
   },
 ): ModelSelection | null {
+  const defaultSlots = TEXT_GENERATION_FALLBACK_DRIVERS.map(
+    (driver) => [defaultInstanceIdForDriver(driver), driver] as const,
+  );
+  // OMP starts on without being saved, so a never-saved default OMP must not outrank an instance
+  // the user configured (Z-09): it goes after them, which also covers an OMP with no model yet.
+  const unsavedOmp = defaultSlots.filter(
+    ([instanceId, driver]) => driver === OMP_DRIVER && providerInstances[instanceId] === undefined,
+  );
   const candidates = [
-    ...TEXT_GENERATION_FALLBACK_DRIVERS.map(
-      (driver) => [defaultInstanceIdForDriver(driver), driver] as const,
-    ),
+    ...defaultSlots.filter((slot) => !unsavedOmp.includes(slot)),
     ...(options?.includeConfiguredInstances === true
       ? Object.entries(providerInstances).flatMap(([instanceId, instance]) =>
           TEXT_GENERATION_FALLBACK_DRIVERS.includes(instance.driver)
@@ -110,6 +118,7 @@ export function fallbackTextGenerationModelSelection(
             : [],
         )
       : []),
+    ...unsavedOmp,
   ];
   const match = candidates.find(([instanceId, driver]) => isEnabled(instanceId, driver));
   if (match === undefined) return null;

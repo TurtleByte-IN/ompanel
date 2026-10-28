@@ -1,7 +1,7 @@
-// Launches the built app (`dist-electron/boot.cjs`), or the installed release app named by
-// OMPANEL_DESKTOP_SMOKE_EXECUTABLE, in a throwaway home with OMP enabled and no binary path. Passes
-// only when the backend is healthy and OMP turns ready on this platform's omp.lock sidecar:
-// downloaded and sha256-verified, or for a release app its bundled copy (docs/omp/release.md).
+// Launches the built app, or the release app in OMPANEL_DESKTOP_SMOKE_EXECUTABLE, in a throwaway
+// home with NO settings (nothing enables OMP: Z-09, ompanel#199). Passes only when the setup screen
+// lists OMP first and enabled, and OMP turns ready on this platform's omp.lock sidecar, downloaded
+// and sha256-verified or bundled (docs/omp/release.md).
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
@@ -66,11 +66,9 @@ const profile = {
   XDG_CACHE_HOME: NodePath.join(home, ".cache"),
 };
 for (const dir of [userdata, ...Object.values(profile)]) NodeFS.mkdirSync(dir, { recursive: true });
-// OMP enabled with no binary path: the backend has to find the pinned sidecar itself.
-NodeFS.writeFileSync(
-  NodePath.join(userdata, "settings.json"),
-  `${JSON.stringify({ providerInstances: { omp: { driver: "omp", enabled: true } } }, null, 2)}\n`,
-);
+// No settings.json at all: OMP is on only by the product default, and the backend has to find the
+// pinned sidecar itself. Never write an `enabled` flag here.
+const settingsPath = NodePath.join(userdata, "settings.json");
 
 // `omp --mode rpc` exits unless a default model resolves, so the throwaway OMP home gets one: a
 // loopback OpenAI-compatible provider that only lists its model (the probe never prompts).
@@ -237,6 +235,11 @@ if (!(health instanceof Response) || !health.ok) {
 }
 record(`[smoke-omp] backend healthy at ${backendUrl}`);
 
+const descriptor = await health.json().catch(() => null);
+if (typeof descriptor?.environmentId !== "string") {
+  await fail(`the environment descriptor has no environmentId: ${JSON.stringify(descriptor)}`, app);
+}
+
 // The main window serves the web app over the app's own protocol, with hash routes.
 const page = await waitFor(
   () => app.windows().find((candidate) => candidate.url().includes("://app/")),
@@ -257,6 +260,72 @@ await within(
   10_000,
   undefined,
 );
+
+// First launch: the setup screen's "Connect your agents" step lists OMP first, recommended and
+// not disabled, with the version it probed. The hash route resumes at that step, as the app does
+// after pairing; the DOM answers whether or not the window paints.
+await within(
+  page.evaluate((environmentId) => {
+    window.location.hash = `#/welcome#agents:${environmentId}`;
+  }, descriptor.environmentId),
+  10_000,
+  undefined,
+);
+const readAgents = () =>
+  within(
+    page.evaluate(() =>
+      [...document.querySelectorAll("[data-onboarding-agent]")].map((card) => ({
+        driver: card.getAttribute("data-onboarding-agent"),
+        state: card.getAttribute("data-onboarding-state"),
+        text: (card instanceof HTMLElement ? card.innerText : (card.textContent ?? ""))
+          .replace(/\s+/g, " ")
+          .trim(),
+      })),
+    ),
+    10_000,
+    [],
+  );
+// `checking` covers the first probe (and the sidecar download on a cold runner).
+const agents = await waitFor(async () => {
+  const cards = await readAgents();
+  const omp = cards.find((card) => card.driver === "omp");
+  return omp !== undefined && omp.state !== "checking" ? cards : undefined;
+}, OMP_READY_TIMEOUT_MS);
+await within(
+  page.screenshot({
+    path: NodePath.join(artifactsDir, `setup-agents-${hostPlatform}-${hostArch}.png`),
+    timeout: 10_000,
+  }),
+  15_000,
+  undefined,
+);
+const setupOmp = agents?.find((card) => card.driver === "omp");
+if (agents === undefined || setupOmp === undefined) {
+  await fail(
+    `the setup screen never listed a probed OMP: ${JSON.stringify(await readAgents())}`,
+    app,
+    page,
+  );
+}
+// Ready, or reachable but still needing a model (`signIn`: "Set up"); never disabled, unchecked
+// or missing. OMP must also lead the list and show the version of the sidecar it ran.
+if (!["ready", "signIn"].includes(setupOmp.state) || /Disabled/.test(setupOmp.text)) {
+  await fail(`the setup screen shows OMP as ${setupOmp.state}: ${setupOmp.text}`, app, page);
+}
+if (agents[0].driver !== "omp") {
+  await fail(
+    `OMP is not the first agent on the setup screen: ${JSON.stringify(agents)}`,
+    app,
+    page,
+  );
+}
+if (!/Recommended/.test(setupOmp.text) || /Preview/.test(setupOmp.text)) {
+  await fail(`OMP is not shown as recommended, or still as a preview: ${setupOmp.text}`, app, page);
+}
+if (!/\bv\d+\.\d+\.\d+/.test(setupOmp.text)) {
+  await fail(`the setup screen shows no OMP version: ${setupOmp.text}`, app, page);
+}
+record(`[smoke-omp] setup screen: ${setupOmp.text}`);
 
 // The providers page lists each instance; its row carries the status key (providerStatus.ts).
 // Polled through the DOM, which answers whether or not the window paints.
@@ -319,7 +388,21 @@ if (row?.status !== "ready") {
   const last = row ?? (await readRow());
   await fail(`OMP provider is ${String(last?.status)}, not ready: ${last?.text ?? ""}`, app, page);
 }
+if (/Preview/.test(row.text)) {
+  await fail(`OMP still carries a Preview badge: ${row.text}`, app, page);
+}
 record(`[smoke-omp] OMP provider ready: ${row.text}`);
+// Nothing the app wrote may have switched OMP off (the smoke itself never wrote a setting).
+if (NodeFS.existsSync(settingsPath)) {
+  const saved = JSON.parse(NodeFS.readFileSync(settingsPath, "utf8"));
+  if (saved.providerInstances?.omp?.enabled === false) {
+    await fail(
+      `the app saved OMP as disabled: ${JSON.stringify(saved.providerInstances.omp)}`,
+      app,
+      page,
+    );
+  }
+}
 
 if (packagedExecutable !== undefined) {
   // The server checks a bundled sidecar against the omp.lock it was built with before it runs

@@ -1,13 +1,64 @@
 import { assert, describe, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { OMP_LOCK } from "../ompLock.ts";
 import { OmpSettings } from "../settings.ts";
 import { OmpSidecarError } from "./sidecar.ts";
-import { OMP_NEEDS_SETUP_MESSAGE, ompProviderSnapshot, ompVersionAdvisory } from "./status.ts";
+import {
+  buildInitialOmpProviderSnapshot,
+  OMP_NEEDS_SETUP_MESSAGE,
+  ompProviderSnapshot,
+  ompVersionAdvisory,
+} from "./status.ts";
 
-const settings = { ...Schema.decodeSync(OmpSettings)({}), enabled: true };
+// A fresh profile's settings, untouched: OMP is on by default (Z-09).
+const freshSettings = Schema.decodeSync(OmpSettings)({});
+const settings = freshSettings;
 const checkedAt = "2026-10-26T00:00:00.000Z";
+
+describe("a fresh OMP profile (Z-09)", () => {
+  it.effect("starts enabled, checking the sidecar, with no Preview badge", () =>
+    Effect.gen(function* () {
+      assert.isTrue(freshSettings.enabled);
+      const snapshot = yield* buildInitialOmpProviderSnapshot(freshSettings);
+      assert.isTrue(snapshot.enabled);
+      assert.notStrictEqual(snapshot.status, "disabled");
+      assert.strictEqual(snapshot.message, "Checking the OMP sidecar...");
+      assert.isUndefined(snapshot.badgeLabel);
+    }),
+  );
+
+  it("reports a probed fresh profile as enabled with its version, and no badge", () => {
+    const snapshot = ompProviderSnapshot({
+      settings: freshSettings,
+      checkedAt,
+      resolution: {
+        kind: "probed",
+        probe: {
+          status: "ready",
+          version: "18.12.6",
+          ready: { contractVersion: OMP_LOCK.contract.version },
+          loginProviders: null,
+          models: null,
+        },
+      },
+    });
+    assert.isTrue(snapshot.enabled);
+    assert.isTrue(snapshot.installed);
+    assert.strictEqual(snapshot.version, "18.12.6");
+    assert.isUndefined(snapshot.badgeLabel);
+  });
+
+  it.effect("an explicit off stays disabled", () =>
+    Effect.gen(function* () {
+      const snapshot = yield* buildInitialOmpProviderSnapshot({ ...freshSettings, enabled: false });
+      assert.isFalse(snapshot.enabled);
+      assert.strictEqual(snapshot.status, "disabled");
+      assert.strictEqual(snapshot.message, "OMP is disabled in Ompanel settings.");
+    }),
+  );
+});
 
 describe("ompProviderSnapshot", () => {
   it("is ready only when the sidecar speaks the pinned contract", () => {

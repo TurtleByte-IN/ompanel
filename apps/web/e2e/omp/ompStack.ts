@@ -41,6 +41,12 @@ export interface OmpStackOptions {
    * refuses to start until {@link OmpStack.completeOmpSetup}.
    */
   readonly freshOmpHome?: boolean;
+  /**
+   * Leave OMP's on/off switch alone, as a profile that never touched it: the saved instance names
+   * the binary but carries no `enabled`, so only the product default turns OMP on (Z-09). Other
+   * suites enable it explicitly and cannot notice a default that is off.
+   */
+  readonly ompEnabledByDefault?: boolean;
 }
 
 export interface OmpProcess {
@@ -239,8 +245,8 @@ export const startOmpStack = async (options: OmpStackOptions = {}): Promise<OmpS
             vendor,
           ),
         };
-  // OMP enabled at the given binary (or the fake sign-in wrapper around it); commit messages are
-  // generated through it.
+  // OMP at the given binary (or the fake sign-in wrapper around it), enabled explicitly unless the
+  // suite checks the default; commit messages are generated through it.
   NodeFS.writeFileSync(
     NodePath.join(userdata, "settings.json"),
     `${JSON.stringify(
@@ -248,7 +254,7 @@ export const startOmpStack = async (options: OmpStackOptions = {}): Promise<OmpS
         providerInstances: {
           omp: {
             driver: "omp",
-            enabled: true,
+            ...(options.ompEnabledByDefault === true ? {} : { enabled: true }),
             config: { binaryPath: signIn?.binary ?? binary },
           },
         },

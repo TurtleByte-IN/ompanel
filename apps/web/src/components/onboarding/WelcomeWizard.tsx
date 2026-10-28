@@ -69,7 +69,7 @@ import {
 } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { connectPairing } from "../../connection/onboarding";
-import { getProviderSummary } from "../settings/providerStatus";
+import { getProviderSummary, getProviderVersionLabel } from "../settings/providerStatus";
 import { providerClients } from "../settings/providerDriverMeta";
 import { ChatGptWelcomeCoordinator } from "../settings/ChatGptWelcomeCoordinator";
 import { AddManagedCodexAccountDialog, CodexSetupSection } from "../settings/CodexSetupSection";
@@ -909,16 +909,29 @@ function AgentCard({
     provider?.displayName || (driver === "claudeAgent" ? "Claude Code" : (meta?.label ?? driver));
   const summary = getProviderSummary(provider);
   const providerState = getOnboardingProviderState(provider);
+  const versionLabel = getProviderVersionLabel(provider?.version);
 
   return (
-    <div className="flex items-center gap-3 rounded-lg border border-border bg-background px-4 py-4">
+    <div
+      data-onboarding-agent={driver}
+      data-onboarding-state={providerState}
+      className="flex items-center gap-3 rounded-lg border border-border bg-background px-4 py-4"
+    >
       <ProviderInstanceIcon
         driverKind={ProviderDriverKind.make(driver)}
         displayName={displayName}
         iconClassName="size-5"
       />
       <div className="min-w-0 flex-1">
-        <span className="block text-sm font-medium text-foreground">{displayName}</span>
+        <span className="flex flex-wrap items-baseline gap-x-2 text-sm font-medium text-foreground">
+          {displayName}
+          {driver === "omp" ? (
+            <span className="text-xs font-normal text-muted-foreground">Recommended</span>
+          ) : null}
+          {provider?.installed && versionLabel ? (
+            <code className="text-xs font-normal text-muted-foreground">{versionLabel}</code>
+          ) : null}
+        </span>
         <p className="mt-0.5 text-xs leading-relaxed break-words whitespace-pre-wrap text-muted-foreground">
           {providerState === "ready" ? "Ready to code." : summary.headline}
           {providerState !== "ready" && summary.detail ? ` · ${summary.detail}` : ""}

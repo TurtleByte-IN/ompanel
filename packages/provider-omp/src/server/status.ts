@@ -29,7 +29,6 @@ import type { OmpSidecar, OmpSidecarError } from "./sidecar.ts";
 
 const OMP_PRESENTATION = {
   displayName: "OMP",
-  badgeLabel: "Preview",
   showInteractionModeToggle: false,
   // OMP enforces these natively through `--approval-mode`; T3 never imitates Auto.
   supportedRuntimeModes: ["approval-required", "auto-accept-edits", "full-access"],

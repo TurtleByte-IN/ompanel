@@ -60,6 +60,52 @@ describe("fallbackTextGenerationModelSelection", () => {
   });
 });
 
+describe("fallbackTextGenerationModelSelection with OMP on by default (Z-09)", () => {
+  const omp = ProviderInstanceId.make("omp");
+  const codexWork = ProviderInstanceId.make("codex_work");
+  const configured = { [codexWork]: { driver: ProviderDriverKind.make("codex"), config: {} } };
+  const everythingOn = () => true;
+
+  it("ranks a configured instance ahead of a never-saved default OMP", () => {
+    const fallback = fallbackTextGenerationModelSelection(
+      configured,
+      (instanceId) => instanceId === codexWork || instanceId === omp,
+      { includeConfiguredInstances: true },
+    );
+    expect(fallback?.instanceId).toBe(codexWork);
+  });
+
+  it("keeps a saved OMP instance in its default position", () => {
+    const fallback = fallbackTextGenerationModelSelection(
+      {
+        ...configured,
+        [omp]: { driver: ProviderDriverKind.make("omp"), enabled: true },
+      },
+      (instanceId) => instanceId === codexWork || instanceId === omp,
+      { includeConfiguredInstances: true },
+    );
+    expect(fallback?.instanceId).toBe(omp);
+  });
+
+  it("still falls back to the default OMP when nothing else is on", () => {
+    const fallback = fallbackTextGenerationModelSelection(
+      configured,
+      (instanceId) => instanceId === omp,
+      { includeConfiguredInstances: true },
+    );
+    expect(fallback?.instanceId).toBe(omp);
+    expect(
+      fallbackTextGenerationModelSelection({}, (instanceId) => instanceId === omp)?.instanceId,
+    ).toBe(omp);
+  });
+
+  it("still prefers Codex over OMP when both are on", () => {
+    expect(fallbackTextGenerationModelSelection({}, everythingOn)?.instanceId).toBe(
+      ProviderInstanceId.make("codex"),
+    );
+  });
+});
+
 describe("serverSettings helpers", () => {
   it("translates a shipped client's idle compaction switch into a mode", () => {
     const off = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, { idleCompaction: "off" });
