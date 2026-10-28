@@ -20,7 +20,7 @@ export interface WorkspaceOwnerDeps {
 }
 
 /** How long one project's worktree listing is reused; a new worktree shows up within it. */
-export const WORKSPACE_OWNER_CACHE_TTL_MS = 5_000;
+const WORKSPACE_OWNER_CACHE_TTL_MS = 5_000;
 
 /** Local branches' worktree directories of the repository at `cwd`; none when it is not one. */
 const listWorktreePaths = Effect.fn("WorkspaceOwner.listWorktreePaths")(
