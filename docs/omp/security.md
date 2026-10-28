@@ -54,6 +54,8 @@ project, new or existing.
   the overlay already holds the new value, and `omp` restarts; sending again uses it.
 - Trust is per project only: there is no server-wide value, a project without its own
   value is untrusted, and the toggle shows only when a project is selected (web and mobile).
+  Changing a project's workspace root withdraws its trust (`ProjectService.update`,
+  before the root changes): trust is a decision about one directory's files.
 - The key is written only to an OMP with contract 1.9.0 or later; an older OMP would
   reject an overlay with an unknown key. On such an OMP the setting is not enforced: the
   server reports it (`ompWorkspaceTrust` capability), web and mobile say "Not enforced by
@@ -154,3 +156,11 @@ The job-object launcher, start-time lookup and tree kill run PowerShell and
 `taskkill` by absolute path under `%SystemRoot%\System32`: Windows looks a bare
 name up in the child's working directory first, which is the thread's
 repository.
+
+`gh auth status` (the share-as-gist readiness check) runs `gh` by the absolute
+path found on `PATH`; a relative `PATH` entry is ignored, and a missing `gh`
+reports "missing" without a spawn. Server-side spawns that go through
+`resolveSpawnCommand` (git, source-control CLIs, provider CLIs) resolve the same
+way, and a name `PATH` does not resolve becomes a nonexistent `System32` path, so
+a same-named executable in the repository cannot run. `omp share --gist` itself
+starts `gh` inside `omp`, outside Ompanel's control.

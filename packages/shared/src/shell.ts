@@ -101,7 +101,8 @@ function resolveSpawnExecutableWithNode(
 
   for (const pathEntry of (readEnvPath(env) ?? "").split(pathDelimiterForPlatform(platform))) {
     const normalizedPathEntry = stripWrappingQuotes(pathEntry.trim());
-    if (normalizedPathEntry.length === 0) continue;
+    // A relative entry is resolved against the child's cwd, which can be an untrusted repository.
+    if (normalizedPathEntry.length === 0 || !path.isAbsolute(normalizedPathEntry)) continue;
     for (const candidate of candidates) {
       const candidatePath = path.join(normalizedPathEntry, candidate);
       if (isExecutable(candidatePath)) return candidatePath;
@@ -814,6 +815,22 @@ export interface SpawnCommandOptions extends CommandAvailabilityOptions {
   readonly bypassNpmShim?: boolean;
 }
 
+/**
+ * Windows looks a bare command name up in the child's working directory before `PATH`, and the
+ * working directory is often an untrusted repository. A command that PATH did not resolve is
+ * therefore pointed at a System32 path that does not exist: the spawn still fails with ENOENT,
+ * but a same-named executable in the repository is never run.
+ */
+function windowsUnresolvedCommand(
+  command: string,
+  explicitPath: boolean,
+  env: NodeJS.ProcessEnv,
+): string {
+  if (explicitPath) return command;
+  const root = env.SystemRoot || env.windir || "C:\\Windows";
+  return NodePath.win32.join(root, "System32", command);
+}
+
 export const resolveSpawnCommand = Effect.fnUntraced(function* (
   command: string,
   args: ReadonlyArray<string>,
@@ -867,7 +884,8 @@ export const resolveSpawnCommand = Effect.fnUntraced(function* (
       cacheCommandResolution(cache, cacheKey, resolvedExecutable, nowNanos);
     }
   }
-  const resolvedCommand = resolvedExecutable ?? command;
+  const resolvedCommand =
+    resolvedExecutable ?? windowsUnresolvedCommand(command, explicitPath, env);
   const extension = NodePath.win32.extname(resolvedCommand).toLowerCase();
   if (extension !== ".cmd" && extension !== ".bat") {
     return { command: resolvedCommand, args: [...args], shell: false };

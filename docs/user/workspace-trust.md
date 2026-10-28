@@ -22,6 +22,10 @@ or existing, and is set per project only.
 
 A running OMP thread restarts its agent on its next message after you change trust.
 
+Trust belongs to the folder the project pointed at when you granted it. If you change the
+project's workspace root, Ompanel turns trust off, and you decide again for the new folder. Your
+other project settings stay as they were. Renaming a project or editing its scripts keeps trust.
+
 Trust needs OMP RPC contract 1.9.0. When the server's OMP is older, the setting reads "Not
 enforced by this server's OMP version": OMP still uses the project's own config whatever you
 choose.

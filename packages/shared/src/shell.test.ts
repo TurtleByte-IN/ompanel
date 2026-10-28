@@ -690,7 +690,7 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
       );
 
       expect(command).toEqual({
-        command: "node.exe",
+        command: String.raw`C:\Windows\System32\node.exe`,
         args: ["script.js", "hello & goodbye"],
         shell: false,
       });
@@ -804,6 +804,47 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
     }),
   );
 
+  it.effect("never resolves a Windows command to a bare name the cwd could answer", () =>
+    Effect.gen(function* () {
+      const command = yield* resolveSpawnCommand("gh", ["auth", "status"], {
+        env: { PATH: "C:\\tools", SystemRoot: "C:\\Windows", PATHEXT: ".EXE;.CMD" },
+      }).pipe(
+        Effect.provideService(HostProcess.Platform, "win32"),
+        Effect.provideService(CommandResolutionCache, new Map()),
+        Effect.provideService(SpawnExecutableResolution, () => undefined),
+      );
+
+      expect(command).toEqual({
+        command: "C:\\Windows\\System32\\gh",
+        args: ["auth", "status"],
+        shell: false,
+      });
+    }),
+  );
+
+  it.effect.runIf(HostProcess.Platform.defaultValue() !== "win32")(
+    "ignores relative PATH entries, which resolve against the child's cwd",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const trusted = yield* fs.makeTempDirectoryScoped({ prefix: "t3-trusted-path-" });
+          const repo = yield* fs.makeTempDirectoryScoped({ prefix: "t3-repo-path-" });
+          yield* fs.writeFileString(path.join(repo, "gh"), "#!/bin/sh\n", { mode: 0o755 });
+          const relativeRepo = path.relative(process.cwd(), repo);
+          const resolve = yield* SpawnExecutableResolution;
+          const delimiter = ":";
+
+          expect(resolve("gh", "linux", { PATH: `${relativeRepo}${delimiter}.` })).toBeUndefined();
+          yield* fs.writeFileString(path.join(trusted, "gh"), "#!/bin/sh\n", { mode: 0o755 });
+          expect(resolve("gh", "linux", { PATH: `${relativeRepo}${delimiter}${trusted}` })).toBe(
+            path.join(trusted, "gh"),
+          );
+        }),
+      ),
+  );
+
   describe("macOS git", () => {
     // Files that exist, the git first on PATH, and what `xcrun --find git` prints.
     const setup = (options: {
@@ -885,7 +926,7 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
       );
 
       expect(command).toEqual({
-        command: "missing & calc",
+        command: String.raw`C:\Windows\System32\missing & calc`,
         args: ["unsafe & value"],
         shell: false,
       });

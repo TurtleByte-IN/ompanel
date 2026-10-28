@@ -420,6 +420,75 @@ it.layer(layerTest)("ProjectService", (it) => {
     }),
   );
 
+  it.effect("withdraws project agent config trust when the workspace root changes", () =>
+    Effect.gen(function* () {
+      const service = yield* ProjectService.ProjectService;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const projectId = ProjectId.make("project:trust:move");
+      const sibling = ProjectId.make("project:trust:sibling");
+      yield* service.create({
+        commandId: CommandId.make("command:trust:create"),
+        projectId,
+        title: "Trusted",
+        workspaceRoot: "/work/trust-a",
+      });
+      yield* service.create({
+        commandId: CommandId.make("command:trust:sibling"),
+        projectId: sibling,
+        title: "Sibling",
+        workspaceRoot: "/work/trust-sibling",
+      });
+      yield* settings.updateSettings({
+        projectSettingsOverrides: {
+          [projectId]: { trustProjectAgentConfig: true, defaultAutoPull: true },
+          [sibling]: { trustProjectAgentConfig: true },
+        },
+      });
+
+      yield* service.update({
+        commandId: CommandId.make("command:trust:rename"),
+        projectId,
+        title: "Renamed",
+      });
+      assert.equal(
+        (yield* settings.getSettings).projectSettingsOverrides[projectId]?.trustProjectAgentConfig,
+        true,
+      );
+
+      yield* service.update({
+        commandId: CommandId.make("command:trust:move"),
+        projectId,
+        workspaceRoot: "/work/trust-b",
+      });
+      const after = (yield* settings.getSettings).projectSettingsOverrides;
+      assert.deepEqual(after[projectId], { defaultAutoPull: true });
+      assert.equal(after[sibling]?.trustProjectAgentConfig, true);
+    }),
+  );
+
+  it.effect("drops the whole override entry when trust was its only value", () =>
+    Effect.gen(function* () {
+      const service = yield* ProjectService.ProjectService;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const projectId = ProjectId.make("project:trust:only");
+      yield* service.create({
+        commandId: CommandId.make("command:trust-only:create"),
+        projectId,
+        title: "Only",
+        workspaceRoot: "/work/trust-only-a",
+      });
+      yield* settings.updateSettings({
+        projectSettingsOverrides: { [projectId]: { trustProjectAgentConfig: true } },
+      });
+      yield* service.update({
+        commandId: CommandId.make("command:trust-only:move"),
+        projectId,
+        workspaceRoot: "/work/trust-only-b",
+      });
+      assert.equal((yield* settings.getSettings).projectSettingsOverrides[projectId], undefined);
+    }),
+  );
+
   it.effect("replays a workspace conflict after the workspace frees up", () =>
     Effect.gen(function* () {
       const service = yield* ProjectService.ProjectService;
