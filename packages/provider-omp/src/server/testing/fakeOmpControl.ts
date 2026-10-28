@@ -89,8 +89,9 @@ const FAKE_OMP_CONTROL_FIXTURE = NodeURL.fileURLToPath(
   new URL("./fakeOmpControl.fixture.mjs", import.meta.url),
 );
 
-// Captured in a scratch HOME: CLI output from v18.12.6-ompanel.3 (its CLI is unchanged at .4), RPC
-// frames from v18.12.6-ompanel.4. Shapes are checked against the vendored contracts; long values
+// Captured in a scratch HOME: CLI output from v18.12.6-ompanel.3 (unchanged at .6, whose CLI contract 1.1.0 only adds
+// `config list --scope`), RPC
+// frames from v18.12.6-ompanel.6. Shapes are checked against the vendored contracts; long values
 // (URLs, provider and setting lists) are cut down, never reshaped.
 
 const pretty = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
@@ -220,7 +221,7 @@ export const PINNED_READY = {
   supportedProtocolVersions: [1, 2],
   maxFrameBytes: 1_048_576,
   maxReassembledFrameBytes: 67_108_864,
-  contractVersion: "1.8.0",
+  contractVersion: "1.10.0",
 } satisfies ReadyEvent;
 
 /** Frames OMP writes unprompted right after `ready` (the command list is cut to one entry). */

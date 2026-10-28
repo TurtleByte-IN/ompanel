@@ -176,26 +176,26 @@ from one `server.listOmpAgentFiles` read; and OMP sessions, one project at a tim
 reload, update check, open, create, unpack or import action: those change the host and stay on
 web and desktop. Session import in particular creates a thread and is not offered on mobile.
 
-| Page              | Keys                                                                                                                                                                                                         |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Models & Roles    | `modelRoles` (one field per role), `modelRoleStorage`, `modelTags`, `modelProviderOrder`, `cycleOrder`, `enabledModels`, `disabledProviders`, `includeModelInPrompt`                                         |
-| Routing           | `retry.*` (incl. `retry.fallbackChains`), `auth.accountPolicies`, `task.agentAccountPools`, `enabledModels` / `enabledProviders` / `disabledProviders` (read-only), `providers.anthropic.serverSideFallback` |
-| Thinking          | `defaultThinkingLevel`, `hideThinkingBlock`, `thinkingBudgets.*`, `providers.autoThinkingMaxEffort`                                                                                                          |
-| Advisor & Agents  | `advisor.*`, `task.agentAdvisor` (one rule per subagent: `on`, `off` or a model), plus the `WATCHDOG.yml` and `agents/` file editors below                                                                   |
-| Sampling          | `temperature`, `topP`, `topK`, `minP`, `presencePenalty`, `repetitionPenalty`, `textVerbosity`, `personality`, `tier.*`                                                                                      |
-| Approvals & Tools | `tools.approvalMode`, `tools.approval` (rules editor), `bash.patterns` (ordered rules editor), `bashInterceptor.*`, `tools.intentTracing`, `tools.xdev`, `tools.xdevDocs`, `tools.xdevInlineDevices`         |
-| Memory            | `memory.backend` (`off` `local` `hindsight` `mnemopi` `sharpshooter`), `memories.*` (local), `hindsight.*`, `mnemopi.*`, `sharpshooter.*`; `hindsight.apiToken`, `mnemopi.*ApiKey` are reset-only            |
-| Context           | `compaction.*` (incl. `compaction.methodOrder`)                                                                                                                                                              |
-| Modes             | `plan.*`, `goal.*`, `loop.*`                                                                                                                                                                                 |
-| Runtime           | `eval.*` (incl. `eval.py`, `eval.js`), `providers.tinyModelDevice`, `providers.tinyModelDtype`, `telemetry.otlpExportEnabled`, plus a read-only PTY row                                                      |
-| Search            | `web_search.enabled`, `modelRoles` (`web` role only), `retry.fallbackChains` (`web` chain only), `providers.webSearchTimeoutSeconds`, `exa.*`, `searxng.*`                                                   |
-| Discovery         | `enabledProviders` / `disabledProviders` (read-only), `skills.enabled`, `skills.enable*` sources, `commands.enableClaudeUser/Project`, `mcp.enableProjectConfig`, `contextFiles.extra`                       |
-| MCP               | `mcp.*`, plus the MCP server list below                                                                                                                                                                      |
-| Customization     | `ttsr.*`, `skills.customDirectories`, `skills.ignoredSkills`, `skills.includeSkills`, plus the agent-directory files below                                                                                   |
-| Plugins           | `extensions`, `disabledExtensions`, `extensionHandlers.*`, `marketplace.*`, plus the plugin list, marketplaces and update check below                                                                        |
-| Skills            | `skills.registryUrl`, plus the resolved skill list below                                                                                                                                                     |
-| Terminal prefs    | `startup.*`, `theme.*`, `statusLine.*`, `tui.*`, `terminal.*`, all read-only and marked terminal-only, plus a `keybindings.yml` note                                                                         |
-| All settings      | every other key, in key order (e.g. `bash.enabled`, `browser.*`, `ask.*`, `async.*`, `autoResume`)                                                                                                           |
+| Page              | Keys                                                                                                                                                                                                           |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Models & Roles    | `modelRoles` (one field per role), `modelRoleStorage`, `modelTags`, `modelProviderOrder`, `cycleOrder`, `enabledModels`, `disabledProviders`, `includeModelInPrompt`                                           |
+| Routing           | `retry.*` (incl. `retry.fallbackChains`), `auth.accountPolicies`, `task.agentAccountPools`, `enabledModels` / `enabledProviders` / `disabledProviders` (path-scoped), `providers.anthropic.serverSideFallback` |
+| Thinking          | `defaultThinkingLevel`, `hideThinkingBlock`, `thinkingBudgets.*`, `providers.autoThinkingMaxEffort`                                                                                                            |
+| Advisor & Agents  | `advisor.*`, `task.agentAdvisor` (one rule per subagent: `on`, `off` or a model), plus the `WATCHDOG.yml` and `agents/` file editors below                                                                     |
+| Sampling          | `temperature`, `topP`, `topK`, `minP`, `presencePenalty`, `repetitionPenalty`, `textVerbosity`, `personality`, `tier.*`                                                                                        |
+| Approvals & Tools | `tools.approvalMode`, `tools.approval` (rules editor), `bash.patterns` (ordered rules editor), `bashInterceptor.*`, `tools.intentTracing`, `tools.xdev`, `tools.xdevDocs`, `tools.xdevInlineDevices`           |
+| Memory            | `memory.backend` (`off` `local` `hindsight` `mnemopi` `sharpshooter`), `memories.*` (local), `hindsight.*`, `mnemopi.*`, `sharpshooter.*`; `hindsight.apiToken`, `mnemopi.*ApiKey` are reset-only              |
+| Context           | `compaction.*` (incl. `compaction.methodOrder`)                                                                                                                                                                |
+| Modes             | `plan.*`, `goal.*`, `loop.*`                                                                                                                                                                                   |
+| Runtime           | `eval.*` (incl. `eval.py`, `eval.js`), `providers.tinyModelDevice`, `providers.tinyModelDtype`, `telemetry.otlpExportEnabled`, plus a read-only PTY row                                                        |
+| Search            | `web_search.enabled`, `modelRoles` (`web` role only), `retry.fallbackChains` (`web` chain only), `providers.webSearchTimeoutSeconds`, `exa.*`, `searxng.*`                                                     |
+| Discovery         | `enabledProviders` / `disabledProviders` (path-scoped), `skills.enabled`, `skills.enable*` sources, `commands.enableClaudeUser/Project`, `mcp.enableProjectConfig`, `contextFiles.extra`                       |
+| MCP               | `mcp.*`, plus the MCP server list below                                                                                                                                                                        |
+| Customization     | `ttsr.*`, `skills.customDirectories`, `skills.ignoredSkills`, `skills.includeSkills`, plus the agent-directory files below                                                                                     |
+| Plugins           | `extensions`, `disabledExtensions`, `extensionHandlers.*`, `marketplace.*`, plus the plugin list, marketplaces and update check below                                                                          |
+| Skills            | `skills.registryUrl`, plus the resolved skill list below                                                                                                                                                       |
+| Terminal prefs    | `startup.*`, `theme.*`, `statusLine.*`, `tui.*`, `terminal.*`, all read-only and marked terminal-only, plus a `keybindings.yml` note                                                                           |
+| All settings      | every other key, in key order (e.g. `bash.enabled`, `browser.*`, `ask.*`, `async.*`, `autoResume`)                                                                                                             |
 
 `modelRoles` covers OMP's 16 roles: `default smol slow vision plan commit tiny
 memory task advisor widget image web speech dictation judge` (OMP has no
@@ -211,9 +211,9 @@ oh-my-pi#60), the engine reads the global layer next to every `config list` and
 gives these fields `globalEntries`; the web pages then edit the global list's
 plain entries (one per line) and list the folder entries read-only. Every write
 appends the global layer's folder entries again, and Reset removes only the plain
-entries. Project-scope writes of these keys are refused (`path_scoped`). With the
-pinned OMP, which refuses `--scope` on `list`, the fields stay read-only, as on
-mobile.
+entries. Project-scope writes of these keys are refused (`path_scoped`). The
+pinned OMP (`v18.12.6-ompanel.6`) lists layers this way. With an older OMP, which
+refuses `--scope` on `list`, the fields stay read-only, as on mobile.
 
 ### Memory, runtime, search and terminal prefs
 

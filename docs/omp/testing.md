@@ -2,14 +2,14 @@
 
 Six layers, from fastest to most faithful.
 
-| Layer           | Where                                                                                                                                                | Drives                                                           |
-| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| Unit            | `packages/provider-omp/src/**/*.test.ts`                                                                                                             | Pure functions: launch arguments, approval-mode mapping, frames  |
-| Adapter         | `packages/provider-omp/src/server/adapter.test.ts` (and the process-layer tests next to it)                                                          | The adapter and thread process against the scripted fake `omp`   |
-| Control plane   | `packages/provider-omp/src/server/controlBinary.test.ts`                                                                                             | `OmpControlService` against the scripted control fake `omp`      |
-| Replay fixtures | `apps/server/src/orchestration-v2/testkit/OmpReplayFixtures.integration.test.ts`, fixtures in `testkit/fixtures/omp_*`                               | The process layer against stdout recorded from the pinned fork   |
-| End-to-end      | `apps/web/e2e/omp/omp-thread.spec.ts`, `omp-settings.spec.ts`, `omp-onboarding.spec.ts`, `omp-notify.spec.ts`, `omp-host-tools.spec.ts` (Playwright) | The web app and server against a real `omp` and a scripted model |
-| Live            | `apps/web/e2e/omp/omp-live.spec.ts` (Playwright, `OMPANEL_LIVE=1`)                                                                                   | The web app and server against a real `omp` and a real model     |
+| Layer           | Where                                                                                                                                                                                             | Drives                                                           |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| Unit            | `packages/provider-omp/src/**/*.test.ts`                                                                                                                                                          | Pure functions: launch arguments, approval-mode mapping, frames  |
+| Adapter         | `packages/provider-omp/src/server/adapter.test.ts` (and the process-layer tests next to it)                                                                                                       | The adapter and thread process against the scripted fake `omp`   |
+| Control plane   | `packages/provider-omp/src/server/controlBinary.test.ts`                                                                                                                                          | `OmpControlService` against the scripted control fake `omp`      |
+| Replay fixtures | `apps/server/src/orchestration-v2/testkit/OmpReplayFixtures.integration.test.ts`, fixtures in `testkit/fixtures/omp_*`                                                                            | The process layer against stdout recorded from the pinned fork   |
+| End-to-end      | `apps/web/e2e/omp/omp-thread.spec.ts`, `omp-settings.spec.ts`, `omp-onboarding.spec.ts`, `omp-notify.spec.ts`, `omp-trust.spec.ts`, `omp-composer.spec.ts`, `omp-host-tools.spec.ts` (Playwright) | The web app and server against a real `omp` and a scripted model |
+| Live            | `apps/web/e2e/omp/omp-live.spec.ts` (Playwright, `OMPANEL_LIVE=1`)                                                                                                                                | The web app and server against a real `omp` and a real model     |
 
 The first four run in CI with the rest of the suite; none needs a model, an
 account or a built `omp`. The end-to-end test has its own CI job, `OMP E2E`,
@@ -107,8 +107,8 @@ argv, cwd of every process) and `frames()` (every RPC line it read).
 
 `target(script)` returns an `OmpControlTarget` whose `omp` answers with the
 pinned fork's output (`PINNED_*`, captured in a scratch `HOME`: CLI output from
-the v18.12.6-ompanel.3 sidecar, whose CLI the pinned v18.12.6-ompanel.4 keeps,
-and the `ready` frame from v18.12.6-ompanel.4; typed against the vendored CLI
+the v18.12.6-ompanel.3 sidecar, unchanged in the pinned v18.12.6-ompanel.6, whose CLI
+contract 1.1.0 only adds `config list --scope`, and the `ready` frame from v18.12.6-ompanel.6; typed against the vendored CLI
 and wire contracts) unless `script` replaces a command:
 
 ```ts
@@ -258,14 +258,19 @@ with a full page load:
 6. the layer switch on Routing writes `retry.maxRetries` to the workspace
    project's `.omp/config.yml`: `config list` reports it with source `project`
    in the workspace and the global value outside it; Reset removes it;
-7. Custom providers: a provider and model added in the form and saved (OMP
+7. Models & Roles edits `enabledModels`' global entries (CLI contract 1.1.0,
+   `omp config list --scope global`): with a plain entry and an entry scoped to
+   another folder in the global layer, the field shows the plain entry and lists
+   the folder entry read-only; a new plain entry written from the form lands in
+   the global layer next to the folder entry, which is kept as written;
+8. Custom providers: a provider and model added in the form and saved (OMP
    checks the file first); `omp models <provider> --json` lists the model;
-8. Terminal prefs stay read-only, and `omp config get` is unchanged;
-9. Plugins: a marketplace on disk added, its plugin installed, disabled and
-   enabled again, each after the confirmation that shows the command; `omp
-   plugin list --json` agrees; Skills lists the plugin's skill, as `omp skill
-   list` does. Nothing needs the network;
-10. Accounts → Auth broker: the broker URL written and read back with `omp
+9. Terminal prefs stay read-only, and `omp config get` is unchanged;
+10. Plugins: a marketplace on disk added, its plugin installed, disabled and
+    enabled again, each after the confirmation that shows the command; `omp
+    plugin list --json` agrees; Skills lists the plugin's skill, as `omp skill
+    list` does. Nothing needs the network;
+11. Accounts → Auth broker: the broker URL written and read back with `omp
     config get`, a literal token refused in the form with nothing written, an
     environment variable name accepted (`config list` reports it stored and
     redacted), then both reset so later steps run without a broker.
@@ -309,6 +314,29 @@ agent-activity publish and 404s every other route. Its steps:
    `agentMessage`, and the thread shows it as a notification row;
 3. turn Agent messages off; the next notify still reaches the relay (phones
    decide per device) but shows no toast.
+
+`apps/web/e2e/omp/omp-trust.spec.ts` covers [workspace trust](security.md#workspace-trust).
+The workspace gets its own agent config: an `.omp/config.yml` that allows every
+command (`tools.approval`, `bash.patterns`) and turns on project MCP config, and
+an `.mcp.json` naming a stdio MCP server that records every start with the
+command line of the process that started it. Its steps:
+
+1. untrusted (the default): a Supervised thread's command still shows the
+   approval card, no process started the project's MCP server (neither the
+   thread's `omp` nor a control server), and the thread's overlay holds
+   `workspace.trusted: false`;
+2. Trust project agent config turned on in Settings → General for the project
+   (the setting does not say "Not enforced"): a new Supervised thread's command
+   runs without an approval card, and its `omp` started the MCP server.
+
+`apps/web/e2e/omp/omp-composer.spec.ts` covers the composer extras (goal mode,
+magic keywords, traits, Vibe Mode) and, last, a staged `ast_edit` card
+([frames.md](frames.md)): `ast edit: <pattern> => <replacement> in <file>`
+makes the scripted model call `ast_edit` (or write its `xd://` device), and the
+model then hangs so the preview waits mid-turn. The card shows the proposal with
+Accept and Reject while the file is untouched; Accept applies it (the file
+changes, the card reads applied, no buttons, also after a reload); a second
+proposal is rejected and the file keeps its text.
 
 `apps/web/e2e/omp/omp-host-tools.spec.ts` covers T3's MCP tools in an OMP
 thread ([host-tools.md](host-tools.md)). Ompanel issues the thread an MCP
