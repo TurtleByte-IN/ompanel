@@ -106,17 +106,9 @@ test("an untrusted project's approval rule and MCP server are ignored", async ()
 });
 
 test("a trusted project's approval rule and MCP server apply in a new thread", async () => {
-  const {
-    approvalCard,
-    assistantSays,
-    createOmpThread,
-    page,
-    screenshot,
-    send,
-    stack,
-    watchFor,
-  } = suite.current();
-  await page.goto(new URL("/settings/general", page.url()).href);
+  const { approvalCard, assistantSays, createOmpThread, page, screenshot, send, stack, watchFor } =
+    suite.current();
+  await page.goto(new URL("/settings/threads", page.url()).href);
   await page.getByRole("button", { name: /^Project scope: / }).click();
   await page
     .getByRole("menuitemradio", { name: NodePath.basename(stack.workspace), exact: true })
