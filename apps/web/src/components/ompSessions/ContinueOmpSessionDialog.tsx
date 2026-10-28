@@ -67,7 +67,7 @@ export function openContinueOmpSessionDialog(request: ContinueOmpSessionRequest)
 }
 
 /** The environment's OMP provider instances, enabled ones first. */
-export function ompProviderInstances(
+function ompProviderInstances(
   providers: ReadonlyArray<ServerProvider> | undefined,
 ): ReadonlyArray<ServerProvider> {
   const omp = (providers ?? []).filter((provider) => provider.driver === "omp");
@@ -286,88 +286,95 @@ export function ContinueOmpSessionDialog(props: {
             Pick a session OMP saved, in a terminal or elsewhere, to continue it as a thread.
           </DialogDescription>
         </DialogHeader>
-        <DialogPanel className="flex flex-col gap-3">
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="flex items-center gap-2">
-              <Label htmlFor={`${id}-project`}>Project</Label>
-              <Select
-                value={projectId ?? ""}
-                disabled={showAll || projects.length === 0}
-                onValueChange={(value) => {
-                  if (value !== null && value !== "") setPickedProjectId(value as ProjectId);
-                }}
-              >
-                <SelectTrigger id={`${id}-project`} aria-label="Project" className="w-44" size="sm">
-                  <SelectValue>{project?.title ?? "No projects"}</SelectValue>
-                </SelectTrigger>
-                <SelectPopup>
-                  {projects.map((candidate) => (
-                    <SelectItem key={candidate.id} value={candidate.id}>
-                      {candidate.title}
-                    </SelectItem>
-                  ))}
-                </SelectPopup>
-              </Select>
-            </div>
-            {instances.length > 1 ? (
+        <DialogPanel>
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-wrap items-center gap-3">
               <div className="flex items-center gap-2">
-                <Label htmlFor={`${id}-instance`}>OMP</Label>
+                <Label htmlFor={`${id}-project`}>Project</Label>
                 <Select
-                  value={instanceId ?? ""}
+                  value={projectId ?? ""}
+                  disabled={showAll || projects.length === 0}
                   onValueChange={(value) => {
-                    if (value !== null && value !== "") {
-                      setPickedInstanceId(value as ProviderInstanceId);
-                    }
+                    if (value !== null && value !== "") setPickedProjectId(value as ProjectId);
                   }}
                 >
                   <SelectTrigger
-                    id={`${id}-instance`}
-                    aria-label="OMP instance"
-                    className="w-40"
+                    id={`${id}-project`}
+                    aria-label="Project"
+                    className="w-44"
                     size="sm"
                   >
-                    <SelectValue>
-                      {instances.find((instance) => instance.instanceId === instanceId)
-                        ?.displayName ?? instanceId}
-                    </SelectValue>
+                    <SelectValue>{project?.title ?? "No projects"}</SelectValue>
                   </SelectTrigger>
                   <SelectPopup>
-                    {instances.map((instance) => (
-                      <SelectItem key={instance.instanceId} value={instance.instanceId}>
-                        {instance.displayName ?? instance.instanceId}
+                    {projects.map((candidate) => (
+                      <SelectItem key={candidate.id} value={candidate.id}>
+                        {candidate.title}
                       </SelectItem>
                     ))}
                   </SelectPopup>
                 </Select>
               </div>
-            ) : null}
-            <div className="ml-auto flex items-center gap-2">
-              <Switch
-                id={`${id}-all`}
-                size="sm"
-                checked={showAll}
-                onCheckedChange={(checked) => setShowAll(Boolean(checked))}
-              />
-              <Label htmlFor={`${id}-all`}>Show all sessions</Label>
+              {instances.length > 1 ? (
+                <div className="flex items-center gap-2">
+                  <Label htmlFor={`${id}-instance`}>OMP</Label>
+                  <Select
+                    value={instanceId ?? ""}
+                    onValueChange={(value) => {
+                      if (value !== null && value !== "") {
+                        setPickedInstanceId(value as ProviderInstanceId);
+                      }
+                    }}
+                  >
+                    <SelectTrigger
+                      id={`${id}-instance`}
+                      aria-label="OMP instance"
+                      className="w-40"
+                      size="sm"
+                    >
+                      <SelectValue>
+                        {instances.find((instance) => instance.instanceId === instanceId)
+                          ?.displayName ?? instanceId}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectPopup>
+                      {instances.map((instance) => (
+                        <SelectItem key={instance.instanceId} value={instance.instanceId}>
+                          {instance.displayName ?? instance.instanceId}
+                        </SelectItem>
+                      ))}
+                    </SelectPopup>
+                  </Select>
+                </div>
+              ) : null}
+              <div className="ml-auto flex items-center gap-2">
+                <Switch
+                  id={`${id}-all`}
+                  size="sm"
+                  checked={showAll}
+                  onCheckedChange={(checked) => setShowAll(Boolean(checked))}
+                />
+                <Label htmlFor={`${id}-all`}>Show all sessions</Label>
+              </div>
             </div>
+            <SessionList
+              read={
+                instanceId === null
+                  ? { status: "error", message: "This environment has no OMP provider." }
+                  : !canRead
+                    ? { status: "error", message: "This connection cannot read sessions." }
+                    : !canList
+                      ? { status: "error", message: "Add a project, or show all sessions." }
+                      : read
+              }
+              showAll={showAll}
+              projectRoot={project?.workspaceRoot ?? null}
+              canOperate={canOperate}
+              busySessionId={busySessionId}
+              projectTitle={projectTitle}
+              onContinue={(session) => void continueSession(session)}
+            />
           </div>
-          <SessionList
-            read={
-              instanceId === null
-                ? { status: "error", message: "This environment has no OMP provider." }
-                : !canRead
-                  ? { status: "error", message: "This connection cannot read sessions." }
-                  : !canList
-                    ? { status: "error", message: "Add a project, or show all sessions." }
-                    : read
-            }
-            showAll={showAll}
-            projectRoot={project?.workspaceRoot ?? null}
-            canOperate={canOperate}
-            busySessionId={busySessionId}
-            projectTitle={projectTitle}
-            onContinue={(session) => void continueSession(session)}
-          />
         </DialogPanel>
       </DialogPopup>
     </Dialog>
@@ -444,7 +451,7 @@ function SessionList(props: {
                 {folder === null ? null : (
                   <>
                     {" · "}
-                    <code title={folder}>{folder}</code>
+                    <code>{folder}</code>
                   </>
                 )}
               </p>
