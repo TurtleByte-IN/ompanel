@@ -283,8 +283,9 @@ const TARGET: OmpControlTarget = {
 const withControl = <A, E>(
   omp: FakeOmp,
   use: (control: OmpControlService) => Effect.Effect<A, E>,
+  options?: Parameters<typeof makeOmpControlService>[0],
 ) =>
-  makeOmpControlService().pipe(
+  makeOmpControlService(options).pipe(
     Effect.flatMap(use),
     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, omp.spawner),
     Effect.scoped,
@@ -307,7 +308,13 @@ describe("OmpControlService.probe", () => {
       const [version, rpc] = omp.launches;
       assert.strictEqual(version?.command, "/opt/ompanel/omp");
       assert.deepStrictEqual(version?.args, ["--version"]);
-      assert.deepStrictEqual(rpc?.args, ["--profile", "work", ...OMP_CONTROL_RPC_ARGS]);
+      assert.deepStrictEqual(rpc?.args.slice(0, -1), [
+        "--profile",
+        "work",
+        ...OMP_CONTROL_RPC_ARGS,
+        "--config",
+      ]);
+      assert.match(rpc?.args.at(-1) ?? "", /control-overlay\.yml$/);
       assert.strictEqual(rpc?.options.cwd, "/workspace");
       assert.strictEqual(rpc?.options.extendEnv, false);
       for (const launch of omp.launches) {
@@ -318,6 +325,136 @@ describe("OmpControlService.probe", () => {
       }
       assert.strictEqual(omp.stopped, 2);
     }),
+  );
+
+  it.effect("starts untrusted and puts the overlay back when a temp cleaner removed it", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const omp = fakeOmp();
+      const overlays = yield* withControl(omp, (control) =>
+        Effect.gen(function* () {
+          yield* control.probe(TARGET);
+          const rpc = () => omp.launches.filter((launch) => launch.args.includes("rpc"));
+          const file = rpc()[0]!.args.at(-1)!;
+          const first = yield* fileSystem.readFileString(file);
+          yield* fileSystem.remove(file);
+          // A different profile is a different cache entry: the control process spawns again.
+          yield* control.probe({ ...TARGET, profile: "other" });
+          return { first, second: yield* fileSystem.readFileString(file), count: rpc().length };
+        }),
+      );
+      // The project's own code (custom tools, plugins, MCP servers) must not load before trust.
+      assert.match(overlays.first, /workspace:\n {2}trusted: false\n/);
+      assert.strictEqual(overlays.second, overlays.first);
+      assert.strictEqual(overlays.count, 2);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    "keys control sessions by trust: a trusted project gets its own overlay and cache",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const omp = fakeOmp();
+        const result = yield* withControl(omp, (control) =>
+          Effect.gen(function* () {
+            const rpc = () => omp.launches.filter((launch) => launch.args.includes("rpc"));
+            const overlayText = (index: number) =>
+              fileSystem.readFileString(rpc()[index]!.args.at(-1)!);
+            yield* control.probe(TARGET);
+            yield* control.probe({ ...TARGET, workspaceTrusted: true });
+            // Each state is cached on its own: neither answer serves the other.
+            yield* control.probe(TARGET);
+            yield* control.probe({ ...TARGET, workspaceTrusted: true });
+            return {
+              count: rpc().length,
+              files: [rpc()[0]!.args.at(-1), rpc()[1]!.args.at(-1)],
+              untrusted: yield* overlayText(0),
+              trusted: yield* overlayText(1),
+            };
+          }),
+        );
+        assert.strictEqual(result.count, 2);
+        assert.notStrictEqual(result.files[0], result.files[1]);
+        assert.match(result.untrusted, /workspace:\n {2}trusted: false\n/);
+        // Trusted leaves `workspace.trusted` to the user's config, as a thread's overlay does.
+        assert.notInclude(result.trusted, "workspace");
+        assert.include(result.trusted, "enableProjectConfig: false");
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("keeps its overlays in the private directory it is given, owner-only", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "ompanel-overlay-test-" });
+      const overlayDir = path.join(root, "state", "omp", "control");
+      const omp = fakeOmp();
+      yield* withControl(
+        omp,
+        (control) =>
+          Effect.gen(function* () {
+            yield* control.probe(TARGET);
+            yield* control.probe({ ...TARGET, workspaceTrusted: true });
+          }),
+        { overlayDir },
+      );
+      const files = (yield* fileSystem.readDirectory(overlayDir)).toSorted();
+      // Written by rename: no staging file is left behind.
+      assert.deepStrictEqual(files, ["control-overlay-trusted.yml", "control-overlay.yml"]);
+      const rpc = omp.launches.filter((launch) => launch.args.includes("rpc"));
+      assert.deepStrictEqual(
+        rpc.map((launch) => path.dirname(launch.args.at(-1)!)),
+        [overlayDir, overlayDir],
+      );
+      if (HostProcess.Platform.defaultValue() !== "win32") {
+        assert.strictEqual((yield* fileSystem.stat(overlayDir)).mode & 0o777, 0o700);
+      }
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("tightens a loose overlay directory and replaces a planted overlay file", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "ompanel-overlay-test-" });
+      const overlayDir = path.join(root, "control");
+      yield* fileSystem.makeDirectory(overlayDir, { mode: 0o777 });
+      yield* fileSystem.chmod(overlayDir, 0o777);
+      yield* fileSystem.writeFileString(
+        path.join(overlayDir, "control-overlay.yml"),
+        "planted: 1\n",
+      );
+      yield* withControl(fakeOmp(), (control) => control.probe(TARGET), { overlayDir });
+      const text = yield* fileSystem.readFileString(path.join(overlayDir, "control-overlay.yml"));
+      assert.match(text, /workspace:\n {2}trusted: false\n/);
+      if (HostProcess.Platform.defaultValue() !== "win32") {
+        assert.strictEqual((yield* fileSystem.stat(overlayDir)).mode & 0o777, 0o700);
+      }
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("refuses an overlay directory that is a symlink", () =>
+    Effect.gen(function* () {
+      if (HostProcess.Platform.defaultValue() === "win32") return;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "ompanel-overlay-test-" });
+      const elsewhere = path.join(root, "elsewhere");
+      yield* fileSystem.makeDirectory(elsewhere);
+      const overlayDir = path.join(root, "control");
+      yield* fileSystem.symlink(elsewhere, overlayDir);
+      const omp = fakeOmp();
+      const probed = yield* withControl(omp, (control) => control.probe(TARGET), {
+        overlayDir,
+      }).pipe(Effect.result);
+      assert.isTrue(Result.isFailure(probed) || probed.success.status !== "ready");
+      assert.deepStrictEqual(yield* fileSystem.readDirectory(elsewhere), []);
+      assert.lengthOf(
+        omp.launches.filter((launch) => launch.args.includes("rpc")),
+        0,
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("keeps a ready server whose login-provider request fails", () =>
@@ -409,6 +546,11 @@ describe("OmpControlService.probe", () => {
       const rpcLaunches = omp.launches.filter((launch) => launch.args.includes("rpc"));
       assert.lengthOf(rpcLaunches, 2);
       assert.isFalse(rpcLaunches[0]!.args.includes("--model"));
+      // Both servers share the service's one overlay file.
+      const [first, second] = rpcLaunches.map(
+        (launch) => launch.args[launch.args.indexOf("--config") + 1],
+      );
+      assert.strictEqual(second, first);
       assert.deepStrictEqual(rpcLaunches[1]!.args.slice(-2), [
         "--model",
         OMP_SETUP_PLACEHOLDER_MODEL,
@@ -917,7 +1059,10 @@ describe("OmpControlService catalogs", () => {
         },
         { name: "deploy", source: "file" },
       ]);
-      assert.deepStrictEqual(omp.launches[0]?.args, [...OMP_CONTROL_RPC_ARGS]);
+      assert.deepStrictEqual(omp.launches[0]?.args.slice(0, -1), [
+        ...OMP_CONTROL_RPC_ARGS,
+        "--config",
+      ]);
       assert.strictEqual(omp.launches[0]?.options.cwd, "/workspace");
       assert.strictEqual(omp.stopped, 1);
     }),

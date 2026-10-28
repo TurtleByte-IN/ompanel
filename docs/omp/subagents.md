@@ -71,4 +71,4 @@ provider session and calls the adapter.
 - Every OMP subagent record carries `controls`. `revive` is true only when the
   pinned contract (`omp.lock`) is 1.4.0 or later: `revive_subagent` is not in
   earlier contracts, so the adapter refuses it before sending anything. The
-  current pin (`v18.12.6-ompanel.4`, contract 1.8.0) has revive.
+  current pin (`v18.12.6-ompanel.6`, contract 1.10.0) has revive.

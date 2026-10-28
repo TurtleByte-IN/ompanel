@@ -191,6 +191,8 @@ interface ActiveTurn {
   queueCard: { readonly nativeItemId: string; readonly startedAt: DateTime.Utc } | null;
   /** A Stop is waiting for OMP's answer; queue snapshots no longer mean delivery. */
   stopping: boolean;
+  /** A Stop for this turn was answered: OMP cancelled what it ran and withdrew its queue. */
+  stopAnswered: boolean;
   /** Steers and follow-ups sent for this turn that OMP has not answered yet. */
   steersInFlight: number;
   /** The prompt's outcome, held while a message sent for the turn has not run (`prompt_result`). */
@@ -954,6 +956,7 @@ export class OmpThreadMapper {
       agentEnded: false,
       queueCard: null,
       stopping: false,
+      stopAnswered: false,
       steersInFlight: 0,
       heldOutcome: null,
       backgroundCommand: BACKGROUND_COMMAND.test(input.message.text.trimStart()),
@@ -1073,7 +1076,10 @@ export class OmpThreadMapper {
           // A builtin slash command finished locally; no `prompt_result` follows. A background
           // one ends with its `command_output`, unless that came first (a usage error).
           if (turn.backgroundCommand && !turn.commandOutputSeen) {
-            turn.awaitingCommandOutput = true;
+            // The acknowledgement can be read after the Stop's answer: that Stop already
+            // cancelled the command, nothing follows, and the turn ends here.
+            if (turn.stopAnswered) settled = { status: "interrupted" };
+            else turn.awaitingCommandOutput = true;
           } else {
             settled = { status: "completed" };
           }
@@ -1621,6 +1627,7 @@ export class OmpThreadMapper {
     const turn = this.#turn;
     if (turn === null) return [];
     turn.stopping = false;
+    if (restored !== null) turn.stopAnswered = true;
     const withdrawn = restored === null ? [] : [...restored.steering, ...restored.followUp];
     if (restored !== null) this.#queue = EMPTY_QUEUE;
     if (withdrawn.length === 0) return this.#queueCard(turn, now);

@@ -130,6 +130,7 @@ const recordingHostTools = (mcpTools: ReadonlyArray<ProviderHostTools.ProviderHo
           : Effect.succeed(workspace);
       }),
     moveThreadWorkspace: (input) => Effect.sync(() => void calls.moved.push(input)),
+    workspaceTrusted: () => Effect.succeed(false),
     connectMcp: (session) =>
       Effect.sync(() => {
         calls.mcp.push({ endpoint: session.endpoint });

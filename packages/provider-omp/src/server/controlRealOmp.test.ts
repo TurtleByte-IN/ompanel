@@ -43,20 +43,21 @@ describe.runIf(binary !== undefined && HostProcess.Platform.defaultValue() !== "
           NodeFS.mkdirSync(dir, { recursive: true });
         }
         NodeFS.writeFileSync(NodePath.join(agentDir, "models.yml"), MODELS);
-        // The project's own config limits sessions there to lab-a.
+        // The project's own config limits sessions there to lab-a, once the project is trusted.
         NodeFS.writeFileSync(
           NodePath.join(project, ".omp", "config.yml"),
           "enabledModels: [lab/lab-a]\n",
         );
 
         const control = yield* makeOmpControlService();
-        const models = (cwd: string) =>
+        const models = (cwd: string, workspaceTrusted = false) =>
           control
             .availableModels({
               binaryPath: binary!,
               profile: "",
               environment: { HOME: home, PATH: process.env["PATH"] ?? "/usr/bin:/bin" },
               cwd,
+              workspaceTrusted,
             })
             .pipe(
               Effect.map((listed) =>
@@ -67,7 +68,10 @@ describe.runIf(binary !== undefined && HostProcess.Platform.defaultValue() !== "
               ),
             );
 
-        assert.deepStrictEqual(yield* models(project), ["lab-a"]);
+        // An untrusted control session ignores the project's own `enabledModels`; a trusted one
+        // applies it.
+        assert.deepStrictEqual(yield* models(project), ["lab-a", "lab-b"]);
+        assert.deepStrictEqual(yield* models(project, true), ["lab-a"]);
         assert.deepStrictEqual(yield* models(other), ["lab-a", "lab-b"]);
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );

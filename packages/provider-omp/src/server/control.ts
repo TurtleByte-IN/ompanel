@@ -1,8 +1,14 @@
+// @effect-diagnostics nodeBuiltinImport:off - the owner-only control overlay is written synchronously while the service is built, so the service needs no FileSystem and no session waits on it.
 /**
  * OmpControlService: every short-lived `omp` process Ompanel starts outside a thread runs here
  * under a hard deadline; on it the process group gets SIGTERM, then SIGKILL after
  * {@link OMP_CONTROL_KILL_GRACE_MS}, so a hung omp never outlives the call.
  */
+import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
 import {
   isCommandMissingCause,
   parseGenericCliVersion,
@@ -17,6 +23,7 @@ import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Redacted from "effect/Redacted";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -120,9 +127,10 @@ export const ompContractAtLeast = (version: string | undefined, minimum: string)
 };
 
 /**
- * A control process must not open a session, start MCP servers, run hooks or extensions: no
- * session file, no tools (which also disables MCP), no extensions, skills, rules, LSP or title
- * model. Login providers that extensions contribute are therefore not listed.
+ * A control process must not open a session, run hooks or extensions, or start MCP servers: no
+ * session file, no built-in tools, no extensions, skills, rules, LSP or title model. Login
+ * providers that extensions contribute are therefore not listed. `--no-tools` does not stop MCP
+ * discovery, so every control session also loads {@link OMP_CONTROL_OVERLAYS}.
  */
 export const OMP_CONTROL_RPC_ARGS = [
   "--mode",
@@ -135,6 +143,20 @@ export const OMP_CONTROL_RPC_ARGS = [
   "--no-lsp",
   "--no-title",
 ] as const;
+
+/**
+ * The `--config` overlays of a control session, which starts in the project's directory. Untrusted
+ * (the default): `workspace.trusted: false` stops OMP loading the project's own code
+ * (`--no-tools` does not). Trusted: the key is left to the user's config, as in a thread's overlay,
+ * so the project's commands and model scope apply. Either way the project's MCP servers stay off.
+ */
+const OMP_CONTROL_OVERLAYS = {
+  untrusted: {
+    file: "control-overlay.yml",
+    text: "workspace:\n  trusted: false\nmcp:\n  enableProjectConfig: false\n",
+  },
+  trusted: { file: "control-overlay-trusted.yml", text: "mcp:\n  enableProjectConfig: false\n" },
+} as const;
 
 /**
  * The lines `omp --mode rpc` writes to stderr before exiting 1 when no model resolves: no default
@@ -166,6 +188,11 @@ export interface OmpControlTarget {
   readonly launchArgs?: ReadonlyArray<string>;
   readonly environment: NodeJS.ProcessEnv;
   readonly cwd: string;
+  /**
+   * The server decided the project at `cwd` is trusted (`trustProjectAgentConfig`): a control
+   * `omp --mode rpc` there may load the project's own commands and settings. Absent: untrusted.
+   */
+  readonly workspaceTrusted?: boolean;
 }
 
 export type OmpControlOperation =
@@ -738,6 +765,11 @@ export interface OmpControlServiceOptions {
   readonly timeoutsMs?: Partial<Record<OmpControlBudget, number>>;
   readonly killGraceMs?: number;
   readonly cacheTtlMs?: number;
+  /**
+   * Where the control overlay files go: a directory in Ompanel's private state, created 0700.
+   * Without it each service uses its own random temp directory.
+   */
+  readonly overlayDir?: string;
 }
 
 const profileArgs = (profile: string): ReadonlyArray<string> =>
@@ -786,6 +818,56 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
   const timeouts = { ...OMP_CONTROL_TIMEOUTS_MS, ...options.timeoutsMs };
   const killGraceMs = options.killGraceMs ?? OMP_CONTROL_KILL_GRACE_MS;
   const cacheTtlMs = options.cacheTtlMs ?? OMP_CONTROL_CACHE_TTL_MS;
+
+  // The control overlays live in an owner-only directory: Ompanel's private state directory when
+  // the instance gives one, else a fresh random temp directory the service scope removes. A failed
+  // setup fails every control session instead of running one that would load the project's code.
+  const overlayDir = yield* Effect.acquireRelease(
+    Effect.try(() => {
+      if (options.overlayDir === undefined) {
+        return {
+          dir: NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "ompanel-omp-control-")),
+          temp: true,
+        };
+      }
+      return { dir: options.overlayDir, temp: false };
+    }).pipe(Effect.result),
+    (made) =>
+      Result.isSuccess(made) && made.success.temp
+        ? Effect.sync(() => NodeFS.rmSync(made.success.dir, { recursive: true, force: true }))
+        : Effect.void,
+  );
+  /**
+   * The overlay file for the target's trust state, written afresh before every spawn: the file is
+   * replaced atomically (a spawn never reads half a file) and a temp cleaner or another user
+   * cannot leave us a stale or foreign one. The directory is created 0700 and must be ours.
+   */
+  const ensureOverlay = (target: OmpControlTarget, dir: string) => {
+    NodeFS.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const uid = process.getuid?.();
+    if (uid !== undefined) {
+      const stat = NodeFS.lstatSync(dir);
+      if (!stat.isDirectory() || stat.uid !== uid) {
+        throw new Error(`control overlay directory ${dir} is not a directory owned by this user`);
+      }
+      if ((stat.mode & 0o077) !== 0) NodeFS.chmodSync(dir, 0o700);
+    }
+    const overlay =
+      OMP_CONTROL_OVERLAYS[target.workspaceTrusted === true ? "trusted" : "untrusted"];
+    const file = NodePath.join(dir, overlay.file);
+    const staging = NodePath.join(
+      dir,
+      `.${overlay.file}.${process.pid}.${NodeCrypto.randomUUID()}`,
+    );
+    try {
+      NodeFS.writeFileSync(staging, overlay.text, { mode: 0o600, flag: "wx" });
+      NodeFS.renameSync(staging, file);
+    } catch (cause) {
+      NodeFS.rmSync(staging, { force: true });
+      throw cause;
+    }
+    return file;
+  };
 
   const command = (
     target: OmpControlTarget,
@@ -993,6 +1075,13 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
     extraArgs: ReadonlyArray<string> = [],
   ): Effect.fn.Return<RpcSession, OmpControlError, Scope.Scope> {
     const sessionScope = yield* Effect.scope;
+    if (Result.isFailure(overlayDir)) {
+      return yield* new OmpControlError({ operation, reason: "spawn", cause: overlayDir.failure });
+    }
+    const overlayFile = yield* Effect.try({
+      try: () => ensureOverlay(target, overlayDir.success.dir),
+      catch: (cause) => new OmpControlError({ operation, reason: "spawn", cause }),
+    });
     const outgoing = yield* Queue.unbounded<Uint8Array>();
     const child = yield* spawner
       .spawn(
@@ -1001,6 +1090,8 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
           [
             ...profileArgs(target.profile),
             ...OMP_CONTROL_RPC_ARGS,
+            "--config",
+            overlayFile,
             ...extraArgs,
             ...(target.launchArgs ?? []),
           ],
@@ -1588,7 +1679,13 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
     });
 
   const targetKey = (target: OmpControlTarget) =>
-    [target.binaryPath, target.binaryIdentity ?? "", target.profile, target.cwd].join("\0");
+    [
+      target.binaryPath,
+      target.binaryIdentity ?? "",
+      target.profile,
+      target.cwd,
+      target.workspaceTrusted === true ? "trusted" : "untrusted",
+    ].join("\0");
 
   const invalidate = Effect.sync(() => entries.clear());
 

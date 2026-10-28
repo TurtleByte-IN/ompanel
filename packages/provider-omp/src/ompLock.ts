@@ -48,49 +48,49 @@ export interface OmpLock {
 
 export const OMP_LOCK: OmpLock = {
   repository: "TurtleByte-IN/oh-my-pi",
-  tag: "v18.12.6-ompanel.4",
-  commit: "8d699e7c1a953acda3097f7d99c5a66f8ad700dd",
+  tag: "v18.12.6-ompanel.6",
+  commit: "989009119bd2df391c8f2dd52891da9abcede556",
   version: "18.12.6",
   contract: {
-    version: "1.8.0",
-    schemaHash: "sha256:4ded2ddb80d417c1190a6ff3371fe5e6d702100deaae08f7d301e49e03e11087",
+    version: "1.10.0",
+    schemaHash: "sha256:d897f2aeeb735e5e81735118dbce5cc5083512323957242b44ebf5f6b95c69e2",
   },
   cliContract: {
-    version: "1.0.0",
-    schemaHash: "sha256:c69d63a87d5f91f918f9afb03f6aed8d637262e9c2f783e1524f62c1e6d14540",
+    version: "1.1.0",
+    schemaHash: "sha256:678ce0308cd99c3419c023beeedd8783c662436a3da185007def26a6b7ea6e6c",
   },
   sidecars: {
     "darwin-arm64": {
       asset: "omp-darwin-arm64",
-      sha256: "1a244df0cc5a7a5cf256f1c5a384417a8abf14cdfea6cb3ea522b826e7cf2b1b",
+      sha256: "3183fb1ff93c7d664df29a0eedb75cb30cc807bf55d227b8e94bae0470002ff0",
     },
     "darwin-x64": {
       asset: "omp-darwin-x64",
-      sha256: "f71add8ee5d61caddf2be367236bb0b122b85c3cffb9ce27b134feaa88d74384",
+      sha256: "f081578652fad02f5aa9f6d7f310bfa06f5545afb274d8da339752689950fd14",
     },
     "linux-arm64": {
       asset: "omp-linux-arm64",
-      sha256: "a269864ea53ad0d5dd01596e9f17d5e204b21f8873ef921f0ba4d82ecd185de7",
+      sha256: "16ddcb311fedda1920db01d88743c66e31424a06dfac349411af4c39505ffb4f",
     },
     "linux-x64": {
       asset: "omp-linux-x64",
-      sha256: "33eb1b74a6c5eb63663ba8054d2e0e9dc56b112bfabfcccffb8b659e921aa27b",
+      sha256: "70ab8545536dfa37a18d9777ed989efa4feaffaa7445edc980d6086d6898b5d5",
     },
     "linux-musl-arm64": {
       asset: "omp-linux-musl-arm64",
-      sha256: "754ac5592249e0457eeb6a1a8916c78f995007fb7adc79364a20dc09016b00e4",
+      sha256: "5c8112380296e554abaa3e03d4d1d94699e21ec914870754442fbfcbee61c4c0",
     },
     "linux-musl-x64": {
       asset: "omp-linux-musl-x64",
-      sha256: "a345739b6af499111b3407cd2b41153a50c0a5dbfb9d5c7a5986d1f484073f48",
+      sha256: "2b7d638da2c6a984373f1224ad8b5fd86e23b4120b02154c4affab4f5258fe13",
     },
     "win32-arm64": {
       asset: "omp-windows-arm64.exe",
-      sha256: "460773179a9cc7b880490b23e4038c73597716ca4a8b748e2593b9a6ea2a83b0",
+      sha256: "8999061efd11f76c96c35008535e6e6879da536451bed8b0d980a804999247ba",
     },
     "win32-x64": {
       asset: "omp-windows-x64.exe",
-      sha256: "d9fcfa0bfbb8c4d1a30151dcde3497708505e703926b5e01a70e6973da0d7773",
+      sha256: "08698cd441ccf85a215329f397e491816f7a819aacbf465007e8f61d7afc1e7c",
     },
   },
 };

@@ -167,6 +167,11 @@ export interface OmpCommandCatalog extends OmpCommandHooks {
   readonly workspaceSnapshots: Stream.Stream<ReadonlyArray<ServerProviderWorkspaceSnapshot>>;
   /** Drops discovered lists; lists a thread's server pushed stay until it pushes again. */
   readonly invalidate: Effect.Effect<void>;
+  /**
+   * Rediscovers every directory whose lists came from a control session of the other trust
+   * state, after a project's trust changed.
+   */
+  readonly refreshTrust: Effect.Effect<void>;
 }
 
 export interface OmpCommandCatalogOptions {
@@ -182,6 +187,11 @@ type CatalogError = OmpControlError | OmpSidecarError;
 
 interface Entry<A> {
   readonly deferred: Deferred.Deferred<A, CatalogError>;
+  /**
+   * The trust state of the control session that ran it; a list found for the other state is
+   * never reused. `undefined`: trust does not change the result.
+   */
+  readonly trusted: boolean | undefined;
   /** Set once the run succeeded. */
   value: A | undefined;
   settledAt: number | null;
@@ -203,18 +213,22 @@ export const makeOmpCommandCatalog = Effect.fn("makeOmpCommandCatalog")(function
   const memo = <A>(
     entries: Map<string, Entry<A>>,
     cwd: string,
+    trusted: boolean | undefined,
     run: Effect.Effect<A, CatalogError>,
   ): Effect.Effect<A, CatalogError> =>
     Effect.flatMap(Clock.currentTimeMillis, (now) => {
       const existing = entries.get(cwd);
       if (
         existing !== undefined &&
-        (existing.pushed || existing.settledAt === null || now - existing.settledAt < ttlMs)
+        (existing.pushed ||
+          (existing.trusted === trusted &&
+            (existing.settledAt === null || now - existing.settledAt < ttlMs)))
       ) {
         return Deferred.await(existing.deferred);
       }
       const entry: Entry<A> = {
         deferred: Deferred.makeUnsafe<A, CatalogError>(),
+        trusted,
         value: undefined,
         settledAt: null,
         pushed: false,
@@ -240,18 +254,18 @@ export const makeOmpCommandCatalog = Effect.fn("makeOmpCommandCatalog")(function
 
   const discoverSkills = (cwd: string) =>
     options.target(cwd).pipe(Effect.flatMap(options.control.skillList), Effect.map(ompSkills));
+  const isTrusted = (target: OmpControlTarget) => target.workspaceTrusted === true;
 
   /**
    * The directory's model list, or `undefined` when OMP could not list it: the picker then keeps
    * the instance's list, and the menu and skills still arrive.
    */
-  const discoverModels = (cwd: string) =>
+  const discoverModels = (cwd: string, target: OmpControlTarget) =>
     memo(
       models,
       cwd,
-      options
-        .target(cwd)
-        .pipe(Effect.flatMap(options.control.availableModels), Effect.map(options.models)),
+      isTrusted(target),
+      options.control.availableModels(target).pipe(Effect.map(options.models)),
     ).pipe(
       Effect.catch((error) =>
         Effect.logWarning("omp models not listed", { cwd, detail: error.message }).pipe(
@@ -282,17 +296,18 @@ export const makeOmpCommandCatalog = Effect.fn("makeOmpCommandCatalog")(function
   });
 
   const forCwd = Effect.fn("OmpCommandCatalog.forCwd")(function* (cwd: string) {
+    // One target, so the trust state is read once for the commands and the models.
+    const target = yield* options.target(cwd);
     const [discoveredCommands, discoveredSkills, discoveredModels] = yield* Effect.all(
       [
         memo(
           commands,
           cwd,
-          options
-            .target(cwd)
-            .pipe(Effect.flatMap(options.control.availableCommands), Effect.map(ompSlashCommands)),
+          isTrusted(target),
+          options.control.availableCommands(target).pipe(Effect.map(ompSlashCommands)),
         ),
-        memo(skills, cwd, discoverSkills(cwd)),
-        discoverModels(cwd),
+        memo(skills, cwd, undefined, discoverSkills(cwd)),
+        discoverModels(cwd, target),
       ],
       { concurrency: 3 },
     );
@@ -312,6 +327,7 @@ export const makeOmpCommandCatalog = Effect.fn("makeOmpCommandCatalog")(function
     const value = ompSlashCommands(pushed);
     const entry: Entry<ReadonlyArray<ServerProviderSlashCommand>> = {
       deferred: Deferred.makeUnsafe(),
+      trusted: undefined,
       value,
       settledAt: yield* Clock.currentTimeMillis,
       pushed: true,
@@ -333,7 +349,7 @@ export const makeOmpCommandCatalog = Effect.fn("makeOmpCommandCatalog")(function
     text: string,
   ) {
     if (!mayMentionSkill(text)) return text;
-    return yield* memo(skills, cwd, discoverSkills(cwd)).pipe(
+    return yield* memo(skills, cwd, undefined, discoverSkills(cwd)).pipe(
       Effect.map((list) => rewriteOmpSkillMention(text, new Set(list.map((skill) => skill.name)))),
       // Without the skill list the prompt goes as typed.
       Effect.catch((error) =>
@@ -350,8 +366,37 @@ export const makeOmpCommandCatalog = Effect.fn("makeOmpCommandCatalog")(function
     for (const [cwd, entry] of commands) if (!entry.pushed) commands.delete(cwd);
   });
 
+  const refreshTrust = Effect.gen(function* () {
+    const cwds = new Set([...commands.keys(), ...models.keys()]);
+    yield* Effect.forEach(
+      cwds,
+      (cwd) =>
+        options.target(cwd).pipe(
+          Effect.flatMap((target) => {
+            const trusted = isTrusted(target);
+            const stale = [commands.get(cwd), models.get(cwd)].some(
+              (entry) =>
+                entry !== undefined &&
+                !entry.pushed &&
+                entry.trusted !== undefined &&
+                entry.trusted !== trusted,
+            );
+            return stale ? forCwd(cwd) : Effect.void;
+          }),
+          Effect.catch((error) =>
+            Effect.logWarning("omp lists not refreshed after a trust change", {
+              cwd,
+              detail: error.message,
+            }),
+          ),
+        ),
+      { discard: true },
+    );
+  });
+
   return {
     forCwd,
+    refreshTrust,
     onAvailableCommands,
     resolvePrompt,
     workspaceSnapshots: SubscriptionRef.changes(published),

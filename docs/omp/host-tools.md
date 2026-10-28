@@ -193,4 +193,4 @@ The session turns on `set_host_cwd_change`. After that, OMP sends a
 
 The session compares the pinned contract (`omp.lock`) against these versions.
 It leaves out what the pinned sidecar cannot do. The current pin
-(v18.12.6-ompanel.4, RPC 1.8.0) has all of them.
+(v18.12.6-ompanel.6, RPC 1.10.0) has all of them.

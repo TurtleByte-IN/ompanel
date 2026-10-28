@@ -619,6 +619,24 @@ describe("OmpThreadMapper", () => {
     assert.strictEqual(thread?.nativeThreadRef?.nativeId, "session-a");
   });
 
+  it("ends a /handoff Stopped before its acknowledgement is read, with no output to wait for", () => {
+    const { mapper } = startedTurn("/handoff");
+    mapper.beginStop();
+    mapper.endStop({ steering: [], followUp: [] }, at(1));
+    const ack = mapper.handleFrame(
+      {
+        type: "response",
+        id: "ompanel-3",
+        command: "prompt",
+        success: true,
+        data: { agentInvoked: false },
+      } as never,
+      at(2),
+    );
+    assert.deepStrictEqual(ack.settled, { status: "interrupted" });
+    assert.isFalse(mapper.awaitingCommandOutput);
+  });
+
   it("shows /compact's compaction card and output before ending its turn", () => {
     const { mapper } = startedTurn("/compact");
     const frames = [

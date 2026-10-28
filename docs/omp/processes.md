@@ -27,6 +27,37 @@ control server's command line, never a subcommand's. Text generation's
 overrides `--no-tools`, and `-e`, `--hook`, `--plugin-dir` or an extension's
 flag load code despite `--no-extensions`.
 
+Every control server (`omp --mode rpc`, started in the project's directory)
+also gets `--config <overlay>`, a file chosen by the project's trust. The
+server decides trust (`trustProjectAgentConfig`, per project) for a directory
+that is a project's own workspace root, or the same folder of one of its git
+worktrees (the worktree path plus the project's subpath inside the repository,
+from the listing `vcs.listRefs` and threads use; a project at `repo/app` owns
+`repo/app` and `<worktree>/app`, not the repository root). A folder two projects
+claim, a folder inside a project and any other directory are untrusted. Each
+project's worktree listing is reused for 5 seconds:
+
+- untrusted holds `workspace.trusted: false` and `mcp.enableProjectConfig: false`.
+  `--no-tools` and `--no-extensions` do not stop OMP from loading a project's
+  custom tools (`.omp/tools`, `.claude/tools`), plugin tools or MCP servers, and a
+  `--config` overlay outranks the project layer, which cannot set
+  `workspace.trusted`. The project's own commands and `enabledModels` do not apply.
+- trusted holds only `mcp.enableProjectConfig: false`, so the user's own
+  `workspace.trusted` still applies (as in a thread's overlay): the project's
+  commands, tools and model scope load, and its MCP servers still do not.
+
+Control sessions and the lists found through them are keyed by the directory and
+the trust state, so a list found for one state is never served for the other.
+When a server setting changes, every cached directory whose project's trust
+differs from what its lists were found under is rediscovered and republished.
+`OMP_CONTROL_OVERLAYS` in `control.ts` holds both. The files live in
+`<stateDir>/omp/control`, Ompanel's private state (directory created 0700, a
+symlink or a directory owned by another user is refused, a loose mode is
+tightened); a temp directory would let another local user plant a file. Every
+spawn writes the file afresh through a staging file and a rename, so a removed,
+stale or planted file never reaches `omp` (which rejects a missing `--config`).
+`workspace.trusted` needs RPC contract 1.9.0 or later, as the thread overlay does.
+
 The binary is resolved (and its sha256 checked, see [sidecar.md](./sidecar.md))
 right before each spawn. The process gets the server's environment plus the
 instance's environment overrides. An instance **Agent directory** sets
@@ -62,8 +93,8 @@ carry `--approval-mode` followed by one of `always-ask`, `always-ask-cached`,
 (`reason: "spawn"`) and no process is created. This covers a runtime mode the
 build does not know as well as a caller that builds its own command line. The
 fork's `omp --mode rpc-ui` refuses to start without the flag as well from tag
-v18.12.6-ompanel.4 (TurtleByte-IN/oh-my-pi#46); while `omp.lock` pins an
-earlier tag, the check here is the only one.
+v18.12.6-ompanel.4 (TurtleByte-IN/oh-my-pi#46), which `omp.lock` pins or exceeds; the check
+here stays as the earlier, structured failure.
 
 ## Permission mode changes
 

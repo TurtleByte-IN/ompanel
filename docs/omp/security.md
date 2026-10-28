@@ -52,6 +52,17 @@ project, new or existing.
 - Project MCP servers and extensions load when `omp` starts. If a project's trust changed
   since its thread's `omp` started, the next turn fails with `workspace_trust_changed`,
   the overlay already holds the new value, and `omp` restarts; sending again uses it.
+- Ompanel's own `omp` processes outside threads never start a project's MCP servers. A
+  control server (`omp --mode rpc` for sign-in, models and commands) runs in the project's
+  directory and gets a `--config` overlay by the project's trust (granted only to a project's
+  own root or git worktree, never to a folder inside it or to a worktree of another project under
+  a trusted parent; `serverRefreshProviders` scans only such folders), kept in Ompanel's private
+  state directory, not a temp one: untrusted it holds
+  `workspace.trusted: false`, so no project custom tool, plugin tool or extension loads
+  (`--no-tools` does not stop them); trusted it leaves that key to the user's config, so the
+  project's commands and model scope appear in the composer. Control sessions and their
+  cached lists are keyed by directory and trust, and a trust change rediscovers them
+  ([processes.md](processes.md)); text generation runs in an empty directory of its own.
 - Trust is per project only: there is no server-wide value, a project without its own
   value is untrusted, and the toggle shows only when a project is selected (web and mobile).
   Changing a project's workspace root withdraws its trust, because trust is a decision about
@@ -67,7 +78,8 @@ project, new or existing.
   reject an overlay with an unknown key. On such an OMP the setting is not enforced: the
   server reports it (`ompWorkspaceTrust` capability), web and mobile say "Not enforced by
   this server's OMP version", and opening an untrusted thread logs a warning with the
-  contract versions (no paths). Until `omp.lock` pins such a release, that is the state.
+  contract versions (no paths). The pinned sidecar (`v18.12.6-ompanel.6`, contract 1.10.0)
+  enforces it; `e2e/omp/omp-trust.spec.ts` checks it end to end.
 - Ompanel's thread overlay is a loaded `--config` file, so outside Full access OMP asks
   before any write to it, whatever the mode or a remembered grant
   (oh-my-pi `d1dd9c852`: `config/settings.ts:762` registers loaded overlays,

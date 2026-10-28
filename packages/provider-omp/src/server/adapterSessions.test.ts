@@ -553,6 +553,7 @@ posixOnly("OMP thread sessions", () => {
         resolveThreadWorkspace: () => Effect.die("unused"),
         moveThreadWorkspace: () => Effect.die("unused"),
         connectMcp: () => Effect.die("unused"),
+        workspaceTrusted: () => Effect.succeed(false),
       });
       const script = {
         commands: {
