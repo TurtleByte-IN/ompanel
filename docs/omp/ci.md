@@ -46,14 +46,17 @@ cancelled job fails it. Through it, every pull request is gated on:
   desktop app and server (`vp run --filter @t3tools/desktop --filter t3 build`)
   on its own runner, then runs `node apps/desktop/scripts/smoke-omp.mjs`
   (under `xvfb-run` on Linux). The script launches `dist-electron/boot.cjs`,
-  the entry the packaged app runs, with a throwaway home and OMP enabled with
-  no binary path. `omp --mode rpc` exits when no default model resolves
+  the entry the packaged app runs, with a throwaway home and no settings at
+  all: nothing enables OMP, so it passes only if OMP is on by default (Z-09), and
+  there is no binary path. `omp --mode rpc` exits when no default model resolves
   (ompanel#144), so the throwaway OMP home gets a loopback model provider
   that is never prompted. On macOS the app runs with `--use-mock-keychain`,
   since a locked runner keychain would block the main process with a prompt.
   It passes only when the backend logs ready and answers
   `/.well-known/t3/environment`, the main window opens, and the OMP row on
-  Settings → Providers turns ready. It then checks that the sidecar that ran
+  Settings → Providers turns ready; before that, the first-run setup screen
+  ("Connect your agents") must list OMP first, Recommended, enabled and with its
+  version, and neither place may show a Preview badge. It then checks that the sidecar that ran
   is this platform's `omp.lock` asset: downloaded into
   `<OMPANEL_HOME>/tools/omp/<tag>/` with the sha256 in the lock. A screenshot
   of the providers page and the app's log are uploaded as

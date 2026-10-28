@@ -8,8 +8,9 @@ steps: find the sidecar, run `omp setup` in an embedded terminal, then sign in u
 
 - **Settings → Providers → an OMP instance → Setup.** The three steps, each marked done, current
   or pending. It shows for an enabled OMP instance, above OMP sessions and Accounts.
-- **First-run wizard → Agents.** OMP is listed first. An OMP that needs setup gets a **Set up**
-  button, which opens the same terminal.
+- **First-run wizard → Agents.** OMP is listed first, marked Recommended, with the version of the
+  sidecar it probed. An OMP that needs setup gets a **Set up** button, which opens the same
+  terminal.
 - The composer, model picker and provider banner offer **Open provider setup** for OMP. It goes to
   the OMP instance on Settings → Providers.
 
@@ -38,6 +39,20 @@ steps: find the sidecar, run `omp setup` in an embedded terminal, then sign in u
    providers ([accounts.md](accounts.md)). This step is optional: a local model or an API key in
    the environment needs no sign-in. The step is marked done when OMP reports a signed-in OAuth
    provider.
+
+## OMP is on by default (Z-09, ompanel#199)
+
+A fresh profile has no OMP settings, and OMP must still be enabled and probed from the bundled
+sidecar. Three places carry that default, and they must agree: `OmpSettings.enabled` decodes to
+`true` (`packages/provider-omp/src/settings.ts`), `omp` is not in `DEFAULT_DISABLED_PROVIDER_DRIVERS`
+and is in `DEFAULT_ENABLED_DEFAULT_INSTANCES` (`packages/contracts/src/settings.ts`). Until Z-09 all
+three said "off" (the F-09b scaffold shipped OMP as an opt-in Preview), so the first-run screen showed
+**Disabled · OMP is disabled in Ompanel settings.**
+
+Only an explicit `enabled: false` (the Providers switch writes it) turns OMP off, and it survives
+upgrades. An instance saved without an `enabled` flag, or no instance at all, is on. The OMP E2E suite
+(`ompEnabledByDefault`) and the Desktop Smoke start with no `enabled` flag so a regression shows up
+there; every other suite enables OMP explicitly and could not notice one.
 
 ## A fresh install is not an error (ompanel#144)
 

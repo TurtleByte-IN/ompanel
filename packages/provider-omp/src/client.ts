@@ -6,7 +6,6 @@ import { OmpSettings } from "./settings.ts";
 export const ompClient = defineProviderClient({
   driverKind: ProviderDriverKind.make("omp"),
   label: "OMP",
-  badgeLabel: "Preview",
   settingsSchema: OmpSettings,
   icon: {
     viewBox: "0 0 24 24",

@@ -50,7 +50,7 @@ See [Install Ompanel](./docs/user/install.md) for details, including the mobile 
 
 ## The OMP sidecar
 
-OMP needs no separate install: each Ompanel release bundles the OMP release it pins, and OMP updates arrive with Ompanel updates. The OMP provider is off by default. Enable it under **Settings → Providers**, then run [OMP setup](./docs/user/omp-setup.md) to sign in and pick a default model.
+OMP needs no separate install: each Ompanel release bundles the OMP release it pins, and OMP updates arrive with Ompanel updates. The OMP provider is on by default (turn it off under **Settings → Providers**); run [OMP setup](./docs/user/omp-setup.md) to sign in and pick a default model.
 
 - [OMP provider guide](./docs/user/providers-omp.md)
 - [OMP accounts](./docs/user/omp-accounts.md), [settings](./docs/user/omp-settings.md) and [plugins and skills](./docs/user/omp-plugins.md)

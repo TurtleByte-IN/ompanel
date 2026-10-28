@@ -33,8 +33,10 @@ const isAbsoluteAgentDir = Schema.makeFilter(
 
 export const OmpSettings = makeProviderSettingsSchema(
   {
+    // On unless the user turned it off: OMP is Ompanel's own agent. Keep `omp` out of the contracts'
+    // default-off driver list too (settings.ts), which must match this default.
     enabled: Schema.Boolean.pipe(
-      Schema.withDecodingDefault(Effect.succeed(false)),
+      Schema.withDecodingDefault(Effect.succeed(true)),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
     binaryPath: TrimmedString.check(isAbsoluteBinaryPath).pipe(

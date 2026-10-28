@@ -148,6 +148,8 @@ describe("resolveProjectSettings", () => {
           providerInstances: {
             [codex]: { enabled: false },
             [ProviderInstanceId.make("claudeAgent")]: { enabled: false },
+            // OMP is a built-in that starts on (Z-09), so "every built-in" includes it.
+            [ProviderInstanceId.make("omp")]: { enabled: false },
           },
         },
       },

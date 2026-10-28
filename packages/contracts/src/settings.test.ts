@@ -10,6 +10,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   globalIdleCompaction,
   idleCompactionPatch,
+  isUnconfiguredDefaultInstanceEnabled,
   requiredScopesForProjectMutation,
   resolveIdleCompaction,
   resolveProjectProviderInstanceEnabled,
@@ -230,6 +231,29 @@ describe("provider enabled defaults", () => {
     expect(
       resolveProviderInstanceEnabled({ driver: codex, enabled: false, config: { enabled: true } }),
     ).toBe(false);
+  });
+});
+
+describe("OMP enabled default (Z-09)", () => {
+  const omp = ProviderDriverKind.make("omp");
+
+  it("starts enabled on a fresh settings profile", () => {
+    const fresh = decodeServerSettings({});
+    expect(fresh.providerInstances).toEqual({});
+    // No saved instance: the built-in default slot is what the server probes.
+    expect(resolveProviderInstanceEnabled({ driver: omp, config: {} })).toBe(true);
+    expect(isUnconfiguredDefaultInstanceEnabled(ProviderInstanceId.make("omp"))).toBe(true);
+    expect(resolveProjectProviderInstanceEnabled(fresh, null, ProviderInstanceId.make("omp"))).toBe(
+      true,
+    );
+  });
+
+  it("treats a saved instance with no decision as enabled and keeps an explicit off", () => {
+    expect(resolveProviderInstanceEnabled({ driver: omp, config: { binaryPath: "/x" } })).toBe(
+      true,
+    );
+    expect(resolveProviderInstanceEnabled({ driver: omp, enabled: false, config: {} })).toBe(false);
+    expect(resolveProviderInstanceEnabled({ driver: omp, config: { enabled: false } })).toBe(false);
   });
 });
 

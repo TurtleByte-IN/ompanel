@@ -18,12 +18,33 @@ function settingsWith(overrides: Partial<ServerSettings>): ServerSettings {
 }
 
 describe("deriveProviderInstanceConfigMap", () => {
-  it("lists the built-in OMP driver as a default instance that starts disabled", () => {
+  it("lists the built-in OMP driver as a default instance that starts enabled (Z-09)", () => {
     const merged = deriveProviderInstanceConfigMap(DEFAULT_SERVER_SETTINGS);
     const omp = merged[ProviderInstanceId.make("omp")];
 
     expect(omp).toEqual({ driver: ProviderDriverKind.make("omp") });
-    expect(resolveProviderInstanceEnabled(omp!)).toBe(false);
+    expect(resolveProviderInstanceEnabled(omp!)).toBe(true);
+  });
+
+  it("keeps an explicit OMP off and leaves a saved OMP instance with no decision on", () => {
+    const ompId = ProviderInstanceId.make("omp");
+    const off = deriveProviderInstanceConfigMap(
+      settingsWith({
+        providerInstances: {
+          [ompId]: { driver: ProviderDriverKind.make("omp"), enabled: false },
+        },
+      }),
+    );
+    expect(resolveProviderInstanceEnabled(off[ompId]!)).toBe(false);
+
+    const undecided = deriveProviderInstanceConfigMap(
+      settingsWith({
+        providerInstances: {
+          [ompId]: { driver: ProviderDriverKind.make("omp"), config: { binaryPath: "/x/omp" } },
+        },
+      }),
+    );
+    expect(resolveProviderInstanceEnabled(undecided[ompId]!)).toBe(true);
   });
 
   it("turns a machine-disabled instance on when a project enables it", () => {

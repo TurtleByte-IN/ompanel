@@ -700,7 +700,8 @@ jobs:
         run: node scripts/smoke-server-boot.ts --target node --target electron
 
   # The desktop app on every OS it ships for: builds it as `pnpm build:desktop` does, launches
-  # `dist-electron/boot.cjs` in a throwaway home with OMP enabled and no binary path, and fails
+  # `dist-electron/boot.cjs` in a throwaway home with no settings (nothing enables OMP: it must be on
+  # by default) and no binary path, and fails
   # unless the window opens, the backend answers, and the OMP provider turns ready with the
   # omp.lock sidecar for this platform downloaded and sha256-verified (docs/omp/ci.md). The
   # Windows runners also kill real process trees under the job-object launcher.
