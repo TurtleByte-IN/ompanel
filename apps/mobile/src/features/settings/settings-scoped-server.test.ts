@@ -162,3 +162,50 @@ describe("mobile project settings scope", () => {
     ).toEqual([]);
   });
 });
+
+describe("mobile project agent config trust", () => {
+  const withCapability = (dedicated: boolean): SettingsTarget =>
+    ({
+      environmentId: firstId,
+      serverConfig: {
+        settings: {
+          ...DEFAULT_SERVER_SETTINGS,
+          projectSettingsOverrides: { [firstProject]: { defaultAutoPull: true } },
+        },
+        environment: {
+          capabilities: {
+            projectSettingsOverrides: true,
+            ...(dedicated ? { projectAgentConfigTrust: true } : {}),
+          },
+        },
+      },
+    }) as SettingsTarget;
+  const plan = (dedicated: boolean) =>
+    planMobileScopedSettingsPatch(
+      resolveMobileSettingsTargets(
+        [withCapability(dedicated)],
+        [{ environmentId: firstId, id: firstProject }],
+      ),
+      true,
+      { trustProjectAgentConfig: true },
+    );
+
+  it("uses the dedicated field when the server advertises it", () => {
+    expect(plan(true)).toEqual([
+      { environmentId: firstId, patch: { projectAgentConfigTrust: { [firstProject]: true } } },
+    ]);
+  });
+
+  it("writes trust inside the entry for an older server", () => {
+    expect(plan(false)).toEqual([
+      {
+        environmentId: firstId,
+        patch: {
+          projectSettingsOverrides: {
+            [firstProject]: { defaultAutoPull: true, trustProjectAgentConfig: true },
+          },
+        },
+      },
+    ]);
+  });
+});

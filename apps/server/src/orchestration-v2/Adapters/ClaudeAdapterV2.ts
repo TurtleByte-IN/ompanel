@@ -57,12 +57,7 @@ import { parseCliArgs } from "@t3tools/shared/cliArgs";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import {
-  hardenSpawnEnvironment,
-  resolveTrustedCommandSync,
-  SpawnExecutableResolution,
-  type SpawnExecutableResolver,
-} from "@t3tools/shared/shell";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import { applyClaudePromptEffortPrefix } from "@t3tools/shared/model";
 import {
   CLAUDE_RESUME_COMPACTION_COMPACT_ANSWER,
@@ -133,7 +128,11 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
-import { resolveClaudeSdkExecutablePath } from "../../provider/Drivers/ClaudeExecutable.ts";
+import {
+  hardenClaudeSpawnOptions,
+  makeHardenedClaudeSpawn,
+  resolveClaudeSdkExecutablePath,
+} from "../../provider/Drivers/ClaudeExecutable.ts";
 import {
   planClaudeSkillDispatch,
   type ClaudeSkillTarget,
@@ -325,24 +324,6 @@ const CLAUDE_GROUP_WATCH_SCRIPT = [
   "{ trap '' TERM; read -r _ <&3; kill -TERM 0; sleep 5; kill -KILL 0; } </dev/null >/dev/null 2>&1 &",
   'exec "$@" 3<&-',
 ].join("\n");
-
-/**
- * The CLI runs in the thread's repository, so neither the `node` the SDK starts for a script
- * entry nor the PATH it searches may be answered from there: the command is resolved against the
- * absolute PATH entries, and the environment loses its relative ones.
- */
-export function hardenClaudeSpawnOptions(
-  options: ClaudeSpawnOptions,
-  platform: NodeJS.Platform,
-  resolveExecutable: SpawnExecutableResolver,
-): ClaudeSpawnOptions {
-  const env = hardenSpawnEnvironment(options.env, platform);
-  return {
-    ...options,
-    env,
-    command: resolveTrustedCommandSync(options.command, platform, env, resolveExecutable),
-  };
-}
 
 /**
  * Kill the CLI's group on exit to stop MCP grandchildren; `onExit` stops its agent scope for
@@ -996,17 +977,11 @@ export const layerQueryRunner: Layer.Layer<
                 resolveExecutable,
               );
               if (platform !== "win32") return spawnClaudeProcessGroup(spawnOptions, stopScope);
-              const child = NodeChildProcess.spawn(spawnOptions.command, spawnOptions.args, {
-                cwd: spawnOptions.cwd,
-                env: spawnOptions.env,
-                signal: spawnOptions.signal,
-                windowsHide: true,
-                stdio: ["pipe", "pipe", "pipe"],
-              });
-              child.stderr
-                .setEncoding("utf8")
-                .on("data", (chunk: string) => options.stderr?.(chunk));
-              return child;
+              return makeHardenedClaudeSpawn(
+                platform,
+                resolveExecutable,
+                options.stderr,
+              )(spawnOptions);
             });
           let spawnedProcess: ClaudeSpawnedProcess | undefined;
           let processExited = false;

@@ -842,7 +842,7 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
       );
 
       expect(command).toEqual({
-        command: "C:\\ompanel-command-not-found\\gh",
+        command: "C:\\Windows\\System32\\ompanel-command-not-found\\gh",
         args: ["auth", "status"],
         shell: false,
       });
@@ -953,7 +953,7 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
       );
 
       expect(command).toEqual({
-        command: String.raw`C:\ompanel-command-not-found\missing & calc`,
+        command: String.raw`C:\Windows\System32\ompanel-command-not-found\missing & calc`,
         args: ["unsafe & value"],
         shell: false,
       });
@@ -1125,8 +1125,23 @@ describe("spawn hardening", () => {
     });
   });
 
+  it("falls back to the system PATH when every entry was relative, never to the cwd", () => {
+    expect(hardenSpawnEnvironment({ PATH: ".:bin:" }, "linux").PATH).toBe(
+      "/usr/local/bin:/usr/bin:/bin",
+    );
+    expect(hardenSpawnEnvironment({ Path: ".;", SystemRoot: "D:\\Win" }, "win32").Path).toBe(
+      "D:\\Win\\System32;D:\\Win;D:\\Win\\System32\\Wbem",
+    );
+    expect(hardenSpawnEnvironment({ PATH: "" }, "linux").PATH).toBe("/usr/local/bin:/usr/bin:/bin");
+  });
+
   it("names a command no executable can answer", () => {
-    expect(nonexistentCommandPath("node", "win32")).toBe("C:\\ompanel-command-not-found\\node");
+    expect(nonexistentCommandPath("node", "win32", { SystemRoot: "D:\\Win" })).toBe(
+      "D:\\Win\\System32\\ompanel-command-not-found\\node",
+    );
+    expect(nonexistentCommandPath("node", "win32")).toBe(
+      "C:\\Windows\\System32\\ompanel-command-not-found\\node",
+    );
     expect(nonexistentCommandPath("node", "linux")).toBe("/ompanel-command-not-found/node");
     expect(resolveTrustedCommandSync("node", "linux", {}, () => undefined)).toBe(
       "/ompanel-command-not-found/node",

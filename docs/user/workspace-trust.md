@@ -26,6 +26,11 @@ Trust belongs to the folder the project pointed at when you granted it. If you c
 project's workspace root, Ompanel turns trust off, and you decide again for the new folder. Your
 other project settings stay as they were. Renaming a project or editing its scripts keeps trust.
 
+Trust is changed only by the **Trust project agent config** switch. An older app talking to a
+current server (or a stale browser tab) cannot switch trust on by saving some other project
+setting; use the switch in an up-to-date app. A current app talking to an older server saves trust
+the old way, and that server does not withdraw trust when a project's root changes.
+
 Trust needs OMP RPC contract 1.9.0. When the server's OMP is older, the setting reads "Not
 enforced by this server's OMP version": OMP still uses the project's own config whatever you
 choose.

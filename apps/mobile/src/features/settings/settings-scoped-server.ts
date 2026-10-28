@@ -61,8 +61,6 @@ export function planMobileScopedSettingsPatch(
     )
   )
     return [];
-  // Trust travels apart from the entry: the server keeps the stored value on whole-entry writes.
-  const { trustProjectAgentConfig, ...entryPatch } = patch;
   const writes = new Map<EnvironmentId, ServerSettingsPatch>();
   for (const target of targets) {
     if (
@@ -70,13 +68,19 @@ export function planMobileScopedSettingsPatch(
       target.environment.serverConfig.environment.capabilities.projectSettingsOverrides !== true
     )
       continue;
+    // A server that advertises it keeps the stored trust on whole-entry writes and takes trust
+    // only through its own field; an older one reads trust from the entry.
+    const dedicatedTrust =
+      target.environment.serverConfig.environment.capabilities.projectAgentConfigTrust === true;
+    const { trustProjectAgentConfig, ...patchWithoutTrust } = patch;
+    const entryValues = dedicatedTrust ? patchWithoutTrust : patch;
     const previous = writes.get(target.environment.environmentId);
     const entries: Record<string, unknown> = { ...previous?.projectSettingsOverrides };
-    if (Object.keys(entryPatch).length > 0) {
+    if (Object.keys(entryValues).length > 0) {
       const current =
         target.environment.serverConfig.settings.projectSettingsOverrides[target.projectId] ?? {};
       const next: Record<string, unknown> = { ...current };
-      for (const [key, value] of Object.entries(entryPatch)) {
+      for (const [key, value] of Object.entries(entryValues)) {
         if (
           value === null &&
           !isNullableProjectSettingsOverride(key as ProjectScopedServerSettingKey)
@@ -89,7 +93,7 @@ export function planMobileScopedSettingsPatch(
       entries[target.projectId] = next;
     }
     const trust =
-      trustProjectAgentConfig === undefined
+      !dedicatedTrust || trustProjectAgentConfig === undefined
         ? previous?.projectAgentConfigTrust
         : { ...previous?.projectAgentConfigTrust, [target.projectId]: trustProjectAgentConfig };
     writes.set(target.environment.environmentId, {
@@ -134,7 +138,8 @@ export function planMobileScopedSettingsClear(
     };
     writes.set(target.environment.environmentId, {
       projectSettingsOverrides: entries as ServerSettingsPatch["projectSettingsOverrides"],
-      ...(keys.includes("trustProjectAgentConfig")
+      ...(keys.includes("trustProjectAgentConfig") &&
+      target.environment.serverConfig.environment.capabilities.projectAgentConfigTrust === true
         ? {
             projectAgentConfigTrust: {
               ...previous?.projectAgentConfigTrust,

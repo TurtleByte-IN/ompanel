@@ -27,10 +27,10 @@ import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
 import {
   ClaudeAgentSdkQueryRunner,
   type ClaudeAgentSdkQueryOpenInput,
-  hardenClaudeSpawnOptions,
   layerQueryRunner,
   spawnClaudeProcessGroup,
 } from "./ClaudeAdapterV2.ts";
+import { hardenClaudeSpawnOptions } from "../../provider/Drivers/ClaudeExecutable.ts";
 
 vi.mock("@anthropic-ai/claude-agent-sdk", { spy: true });
 
@@ -514,7 +514,7 @@ describe("hardenClaudeSpawnOptions", () => {
 
   it("points a node PATH cannot find at a path that does not exist", () => {
     expect(hardenClaudeSpawnOptions(base, "win32", () => undefined).command).toBe(
-      "C:\\ompanel-command-not-found\\node",
+      "C:\\Windows\\System32\\ompanel-command-not-found\\node",
     );
     expect(
       hardenClaudeSpawnOptions(
@@ -522,6 +522,6 @@ describe("hardenClaudeSpawnOptions", () => {
         "linux",
         () => undefined,
       ),
-    ).toMatchObject({ command: "/usr/bin/claude", env: { PATH: "" } });
+    ).toMatchObject({ command: "/usr/bin/claude", env: { PATH: "/usr/local/bin:/usr/bin:/bin" } });
   });
 });

@@ -15,7 +15,8 @@ import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { createModelCapabilities } from "@t3tools/shared/model";
-import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { resolveSpawnCommand, SpawnExecutableResolution } from "@t3tools/shared/shell";
 import {
   query as claudeQuery,
   type Options as ClaudeQueryOptions,
@@ -35,7 +36,10 @@ import {
   spawnAndCollect,
   type ServerProviderDraft,
 } from "@t3tools/provider-core/server/snapshotProbe";
-import { resolveClaudeSdkExecutablePath } from "./Drivers/ClaudeExecutable.ts";
+import {
+  makeHardenedClaudeSpawn,
+  resolveClaudeSdkExecutablePath,
+} from "./Drivers/ClaudeExecutable.ts";
 import { hasClaudeManagedMcpConfig, makeClaudeEnvironment } from "./Drivers/ClaudeHome.ts";
 import { discoverClaudeSkills } from "./Drivers/ClaudeSkills.ts";
 import type { ProviderWorkspaceSnapshot } from "@t3tools/provider-core/server/driver";
@@ -203,10 +207,15 @@ export function buildClaudeCapabilitiesProbeQueryOptions(input: {
   readonly environment: NodeJS.ProcessEnv;
   readonly cwd: string | undefined;
   readonly managedMcpConfig: boolean;
+  /** The CLI starts in the project folder: its own `node` and PATH must not be found there. */
+  readonly spawnClaudeCodeProcess?: ClaudeQueryOptions["spawnClaudeCodeProcess"];
 }): ClaudeQueryOptions {
   return {
     persistSession: false,
     pathToClaudeCodeExecutable: input.executablePath,
+    ...(input.spawnClaudeCodeProcess === undefined
+      ? {}
+      : { spawnClaudeCodeProcess: input.spawnClaudeCodeProcess }),
     abortController: input.abortController,
     settingSources: [...CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES],
     // Keep settings for slash-command discovery, but disable hooks so health checks do not run SessionStart repeatedly.
@@ -335,6 +344,10 @@ const probeClaudeCapabilities = (
       claudeEnvironment,
     );
     const managedMcpConfig = yield* hasClaudeManagedMcpConfig();
+    const spawnClaudeCodeProcess = makeHardenedClaudeSpawn(
+      yield* HostProcess.Platform,
+      yield* SpawnExecutableResolution,
+    );
     return yield* Effect.tryPromise(async () => {
       const q = claudeQuery({
         // oxlint-disable-next-line require-yield -- never yields, so no prompt reaches the API
@@ -347,6 +360,7 @@ const probeClaudeCapabilities = (
           environment: claudeEnvironment,
           cwd,
           managedMcpConfig,
+          spawnClaudeCodeProcess,
         }),
       });
       const init = await q.initializationResult();

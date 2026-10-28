@@ -35,7 +35,10 @@ interface ScopedSettingsEnvironment {
   readonly serverConfig: {
     readonly settings: ServerSettings;
     readonly environment?: {
-      readonly capabilities: { readonly projectSettingsOverrides?: boolean | undefined };
+      readonly capabilities: {
+        readonly projectSettingsOverrides?: boolean | undefined;
+        readonly projectAgentConfigTrust?: boolean | undefined;
+      };
     };
   } | null;
 }
@@ -186,6 +189,7 @@ function projectOverrideWrites(
     current: ProjectSettingsOverrides,
     settings: ServerSettings,
     projectId: ProjectId,
+    dedicatedTrust: boolean,
   ) => ProjectSettingsOverrides | null,
   /** Trust travels apart from the entry: the server keeps the stored value on whole-entry writes. */
   trust?: boolean | undefined,
@@ -205,18 +209,23 @@ function projectOverrideWrites(
     }
     const settings = environment.serverConfig.settings;
     const existing = writes.get(member.environmentId);
-    const entries = writesEntries
-      ? {
-          ...existing?.patch.projectSettingsOverrides,
-          [member.id]: update(
-            settings.projectSettingsOverrides[member.id] ?? {},
-            settings,
-            member.id,
-          ),
-        }
-      : undefined;
+    // Older servers read trust from the entry; newer ones only from `projectAgentConfigTrust`.
+    const dedicatedTrust =
+      environment.serverConfig.environment.capabilities.projectAgentConfigTrust === true;
+    const entries =
+      writesEntries || !dedicatedTrust
+        ? {
+            ...existing?.patch.projectSettingsOverrides,
+            [member.id]: update(
+              settings.projectSettingsOverrides[member.id] ?? {},
+              settings,
+              member.id,
+              dedicatedTrust,
+            ),
+          }
+        : undefined;
     const trustEntries =
-      trust === undefined
+      trust === undefined || !dedicatedTrust
         ? existing?.patch.projectAgentConfigTrust
         : { ...existing?.patch.projectAgentConfigTrust, [member.id]: trust };
     writes.set(member.environmentId, {
@@ -265,13 +274,13 @@ export function planScopedSettingsPatch(
           : projectOverrideWrites(
               scope,
               environments,
-              (current, settings, projectId) => {
+              (current, settings, projectId, dedicatedTrust) => {
                 // Override entries store whole objects; complete partial patches from each target's effective
                 // value.
                 const effective = resolveProjectSettings(settings, projectId).settings;
                 const next: Record<string, unknown> = { ...current };
                 for (const [key, value] of Object.entries<unknown>(serverPatch)) {
-                  if (key === "trustProjectAgentConfig") continue;
+                  if (key === "trustProjectAgentConfig" && dedicatedTrust) continue;
                   if (key === "worktreeCleanup" && serverPatch.worktreeCleanup?.mode === "custom") {
                     next[key] = {
                       mode: "custom",

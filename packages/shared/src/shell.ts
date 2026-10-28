@@ -418,6 +418,13 @@ function absolutePathEntries(pathValue: string, platform: NodeJS.Platform): stri
     .join(pathDelimiterForPlatform(platform));
 }
 
+/** What a child searches when every PATH entry it was given was relative: never the cwd. */
+function defaultSystemPath(platform: NodeJS.Platform, env: NodeJS.ProcessEnv): string {
+  if (platform !== "win32") return "/usr/local/bin:/usr/bin:/bin";
+  const root = env.SystemRoot || env.windir || "C:\\Windows";
+  return [`${root}\\System32`, root, `${root}\\System32\\Wbem`].join(";");
+}
+
 /**
  * The environment a child process may start with when its working directory is untrusted: no
  * relative or empty PATH entry, and on Windows no implicit search of the working directory
@@ -431,7 +438,8 @@ export function hardenSpawnEnvironment(
   const hardened: NodeJS.ProcessEnv = { ...env };
   for (const key of Object.keys(hardened)) {
     if (key.toUpperCase() === "PATH" && hardened[key] !== undefined) {
-      hardened[key] = absolutePathEntries(hardened[key], platform);
+      hardened[key] =
+        absolutePathEntries(hardened[key], platform) || defaultSystemPath(platform, env);
     }
   }
   if (platform === "win32") hardened.NoDefaultCurrentDirectoryInExePath = "1";
@@ -449,7 +457,9 @@ export function resolveTrustedCommandSync(
   resolveExecutable: SpawnExecutableResolver = resolveSpawnExecutableWithNode,
 ): string {
   if (command.includes("/") || command.includes("\\")) return command;
-  return resolveExecutable(command, platform, env) ?? nonexistentCommandPath(command, platform);
+  return (
+    resolveExecutable(command, platform, env) ?? nonexistentCommandPath(command, platform, env)
+  );
 }
 
 function hardenCommand(
@@ -906,14 +916,21 @@ export interface SpawnCommandOptions extends CommandAvailabilityOptions {
 }
 
 /**
- * Windows looks a bare command name up in the child's working directory before `PATH`, and the
- * working directory is often an untrusted repository. A command that `PATH` did not resolve is
- * therefore replaced by this path, which names a directory that does not exist: the spawn still
- * fails with ENOENT, but no executable of that name can run, in the repository or anywhere else.
+ * Where an unresolved command is pointed so the spawn fails with ENOENT: a folder that does not
+ * exist and that a non-administrator cannot create (under System32, not a drive root).
  */
-export function nonexistentCommandPath(command: string, platform: NodeJS.Platform): string {
+export function nonexistentCommandPath(
+  command: string,
+  platform: NodeJS.Platform,
+  env: NodeJS.ProcessEnv = {},
+): string {
   return platform === "win32"
-    ? NodePath.win32.join("C:\\", "ompanel-command-not-found", command)
+    ? NodePath.win32.join(
+        env.SystemRoot || env.windir || "C:\\Windows",
+        "System32",
+        "ompanel-command-not-found",
+        command,
+      )
     : NodePath.posix.join("/ompanel-command-not-found", command);
 }
 
@@ -971,7 +988,7 @@ export const resolveSpawnCommand = Effect.fnUntraced(function* (
     }
   }
   const resolvedCommand =
-    resolvedExecutable ?? (explicitPath ? command : nonexistentCommandPath(command, platform));
+    resolvedExecutable ?? (explicitPath ? command : nonexistentCommandPath(command, platform, env));
   const extension = NodePath.win32.extname(resolvedCommand).toLowerCase();
   if (extension !== ".cmd" && extension !== ".bat") {
     return { command: resolvedCommand, args: [...args], shell: false };

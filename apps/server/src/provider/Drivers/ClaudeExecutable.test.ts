@@ -43,7 +43,7 @@ describe("resolveClaudeSdkExecutablePath", () => {
         yield* resolveClaudeSdkExecutablePath("claude", {}).pipe(
           withWindowsResolution({ resolvedCommand: undefined }),
         ),
-      ).toBe("C:\\ompanel-command-not-found\\claude");
+      ).toBe("C:\\Windows\\System32\\ompanel-command-not-found\\claude");
     }),
   );
 

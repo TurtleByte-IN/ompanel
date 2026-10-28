@@ -60,7 +60,9 @@ project, new or existing.
   failed withdrawal stops the move.
 - Trust changes only through the `projectAgentConfigTrust` settings patch (the toggle on web and
   mobile). A whole-entry `projectSettingsOverrides` write keeps the stored trust value, so a
-  client with a copy from before a root change cannot put trust back.
+  client with a copy from before a root change cannot put trust back. The server advertises
+  the field as the `projectAgentConfigTrust` capability; web and mobile use it when present and
+  write trust inside the entry for older servers.
 - The key is written only to an OMP with contract 1.9.0 or later; an older OMP would
   reject an overlay with an unknown key. On such an OMP the setting is not enforced: the
   server reports it (`ompWorkspaceTrust` capability), web and mobile say "Not enforced by
