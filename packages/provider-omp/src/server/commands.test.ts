@@ -354,6 +354,99 @@ describe("OmpCommandCatalog", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("never reuses lists found for the other trust state, in either direction", () =>
+    Effect.gen(function* () {
+      let trusted = false;
+      const sessions: Array<boolean | undefined> = [];
+      const control = {
+        // A trusted session also loads the project's own command and its model scope.
+        availableCommands: (session: OmpControlTarget) =>
+          Effect.sync(() => {
+            sessions.push(session.workspaceTrusted);
+            return session.workspaceTrusted === true
+              ? [...BUILTINS, { name: "project-cmd", source: "file" as const }]
+              : BUILTINS;
+          }),
+        skillList: (session: OmpControlTarget) => Effect.succeed(skillList(session.cwd)),
+        availableModels: (session: OmpControlTarget) =>
+          Effect.succeed(listedModels(session.workspaceTrusted === true ? "/repo" : "/other")),
+      } as unknown as OmpControlService;
+      const catalog = yield* makeOmpCommandCatalog({
+        control,
+        target: (cwd) =>
+          target(cwd).pipe(Effect.map((base) => ({ ...base, workspaceTrusted: trusted }))),
+        models: (listed) => ompProviderModels([], listed),
+      });
+      const hasProjectCommand = (found: {
+        readonly slashCommands: ReadonlyArray<{ readonly name: string }>;
+      }) => found.slashCommands.some((command) => command.name === "project-cmd");
+
+      const untrusted = yield* catalog.forCwd("/repo");
+      assert.isFalse(hasProjectCommand(untrusted));
+      assert.deepStrictEqual(slugs(untrusted.models), ["default", "lab/a", "lab/b"]);
+      yield* catalog.forCwd("/repo");
+      assert.deepStrictEqual(sessions, [false], "the same state is cached");
+
+      trusted = true;
+      const nowTrusted = yield* catalog.forCwd("/repo");
+      assert.isTrue(hasProjectCommand(nowTrusted));
+      assert.deepStrictEqual(slugs(nowTrusted.models), ["default", "lab/a"]);
+      assert.deepStrictEqual(sessions, [false, true]);
+
+      trusted = false;
+      const revoked = yield* catalog.forCwd("/repo");
+      assert.isFalse(hasProjectCommand(revoked));
+      assert.deepStrictEqual(slugs(revoked.models), ["default", "lab/a", "lab/b"]);
+      assert.deepStrictEqual(sessions, [false, true, false]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("rediscovers and republishes a directory when its project's trust changes", () =>
+    Effect.gen(function* () {
+      let trusted = false;
+      const control = {
+        availableCommands: (session: OmpControlTarget) =>
+          Effect.succeed(
+            session.workspaceTrusted === true
+              ? [...BUILTINS, { name: "project-cmd", source: "file" as const }]
+              : BUILTINS,
+          ),
+        skillList: (session: OmpControlTarget) => Effect.succeed(skillList(session.cwd)),
+        availableModels: () => Effect.succeed(listedModels("/other")),
+      } as unknown as OmpControlService;
+      const catalog = yield* makeOmpCommandCatalog({
+        control,
+        target: (cwd) =>
+          target(cwd).pipe(Effect.map((base) => ({ ...base, workspaceTrusted: trusted }))),
+        models: (listed) => ompProviderModels([], listed),
+      });
+      const published = () =>
+        catalog.workspaceSnapshots.pipe(
+          Stream.runHead,
+          Effect.map((head) =>
+            head._tag === "Some"
+              ? head.value
+                  .find((entry) => entry.cwd === "/repo")
+                  ?.slashCommands.map((command) => command.name)
+              : undefined,
+          ),
+        );
+      yield* catalog.forCwd("/repo");
+      assert.isFalse((yield* published())?.includes("project-cmd"));
+
+      yield* catalog.refreshTrust;
+      assert.isFalse((yield* published())?.includes("project-cmd"));
+
+      trusted = true;
+      yield* catalog.refreshTrust;
+      assert.isTrue((yield* published())?.includes("project-cmd"));
+
+      trusted = false;
+      yield* catalog.refreshTrust;
+      assert.isFalse((yield* published())?.includes("project-cmd"));
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("lists a workspace's project models", () =>
     Effect.gen(function* () {
       const { control, spawns } = fakeControl();

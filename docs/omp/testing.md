@@ -330,7 +330,9 @@ command line of the process that started it. Its steps:
 2. Trust project agent config turned on in Settings → Threads for the project
    (the setting does not say "Not enforced"): a new Supervised thread's command
    runs without an approval card, its `omp` started the MCP server and imported
-   the custom tool.
+   the custom tool. Right after the switch, before any thread starts, a control
+   `omp` (`--no-session`) already imported the tool: the project's commands are
+   rediscovered in a trusted control session.
 
 `apps/web/e2e/omp/omp-composer.spec.ts` covers the composer extras (goal mode,
 magic keywords, traits, Vibe Mode) and, last, a staged `ast_edit` card

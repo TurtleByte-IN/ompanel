@@ -131,6 +131,12 @@ export class ProviderHostTools extends Context.Service<
       readonly threadId: ThreadId;
       readonly workspace: ProviderHostThreadWorkspace;
     }) => Effect.Effect<void, ProviderHostToolError>;
+    /**
+     * Whether the user trusts the project that contains `cwd` to run its own agent config
+     * (server setting `trustProjectAgentConfig`, per project). False for a directory in no
+     * project and when the settings cannot be read.
+     */
+    readonly workspaceTrusted: (cwd: string) => Effect.Effect<boolean>;
     /** Connects to the thread's T3 MCP server with its session credential and lists its tools. */
     readonly connectMcp: (
       session: McpProviderSessionConfig,

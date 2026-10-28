@@ -32,6 +32,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 import {
@@ -155,6 +156,8 @@ export const make = Effect.gen(function* () {
   const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
   const threadManagement = yield* ThreadManagementService.ThreadManagementService;
   const projects = yield* ProjectService.ProjectService;
+  // Absent in a runtime without settings: every project is then untrusted.
+  const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
   const setupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -666,6 +669,30 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  /** The project containing `cwd` is its workspace root or the nearest ancestor that is one. */
+  const workspaceTrusted: ProviderHostTools["Service"]["workspaceTrusted"] = Effect.fn(
+    "ProviderHostTools.workspaceTrusted",
+  )(
+    function* (cwd) {
+      if (Option.isNone(serverSettings)) return false;
+      const settings = yield* serverSettings.value.getSettings;
+      let directory = cwd;
+      for (;;) {
+        const project = yield* projects.getByWorkspaceRoot(directory);
+        if (Option.isSome(project)) {
+          // Per project only: a server-wide value is never read.
+          return (
+            settings.projectSettingsOverrides[project.value.id]?.trustProjectAgentConfig === true
+          );
+        }
+        const parent = path.dirname(directory);
+        if (parent === directory) return false;
+        directory = parent;
+      }
+    },
+    Effect.orElseSucceed(() => false),
+  );
+
   const connectMcp: ProviderHostTools["Service"]["connectMcp"] = (
     session: McpProviderSessionConfig,
   ) =>
@@ -718,6 +745,7 @@ export const make = Effect.gen(function* () {
     resolveThreadWorkspace,
     moveThreadWorkspace,
     connectMcp,
+    workspaceTrusted,
   });
 });
 
@@ -766,6 +794,13 @@ export const layer = Layer.effect(
         const tools = yield* bound;
         return yield* tools.connectMcp(session);
       }),
+      workspaceTrusted: Effect.fn("ProviderHostTools.workspaceTrusted")(
+        function* (cwd) {
+          const tools = yield* bound;
+          return yield* tools.workspaceTrusted(cwd);
+        },
+        Effect.orElseSucceed(() => false),
+      ),
     });
   }),
 ).pipe(Layer.provide(layerBinding));

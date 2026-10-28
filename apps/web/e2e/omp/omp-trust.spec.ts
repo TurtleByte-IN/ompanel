@@ -53,10 +53,10 @@ const mcpStartLog = () =>
   NodeFS.existsSync(mcpStarts()) ? NodeFS.readFileSync(mcpStarts(), "utf8") : "";
 
 /**
- * A project custom tool (`.omp/tools/<name>/index.ts`) that records each time OMP imports it. A
- * background control `omp` (model and command lists) starts in the project folder before the
- * project is trusted, and `--no-tools` does not stop custom tools: the control overlay's
- * `workspace.trusted: false` does.
+ * A project custom tool (`.omp/tools/<name>/index.ts`) that records each time OMP imports it, with
+ * the command line of the process. A control `omp` (model and command lists, `--no-session`) starts
+ * in the project folder, and `--no-tools` does not stop custom tools: only the control overlay's
+ * `workspace.trusted: false` does, until the project is trusted.
  */
 const toolLoads = () => NodePath.join(suite.current().stack.home, "trust-tool-loads.txt");
 const toolLoadLog = () =>
@@ -68,7 +68,7 @@ const writeProbeTool = (workspace: string) => {
     NodePath.join(dir, "index.ts"),
     [
       'import * as fs from "node:fs";',
-      `fs.appendFileSync(${JSON.stringify(toolLoads())}, "loaded by pid " + process.pid + "\\n");`,
+      `fs.appendFileSync(${JSON.stringify(toolLoads())}, "loaded by " + process.argv.join(" ") + "\\n");`,
       "export default () => [];",
       "",
     ].join("\n"),
@@ -147,6 +147,8 @@ test("a trusted project's approval rule and MCP server apply in a new thread", a
   await expect(page.getByText(/Not enforced by this server's OMP version/)).toHaveCount(0);
   await trust.click();
   await expect(trust).toBeChecked();
+  // The flip rediscovers the project's commands in a trusted control `omp`, which loads the tool.
+  await expect.poll(toolLoadLog).toContain("--no-session");
   await screenshot("02a-trusted");
 
   await page.goto(new URL("/", page.url()).href);
@@ -158,7 +160,13 @@ test("a trusted project's approval rule and MCP server apply in a new thread", a
   expect(await sawApproval()).toBe(false);
   await expect(approvalCard()).toHaveCount(0);
   await expect.poll(mcpStartLog).toContain("started");
-  // The probe tool does load once trusted, so the untrusted step above proves something.
-  await expect.poll(toolLoadLog).toContain("loaded by pid");
+  // The thread's `omp` imported the probe tool too, so the untrusted step above proves something.
+  await expect
+    .poll(() =>
+      toolLoadLog()
+        .split("\n")
+        .some((line) => line.startsWith("loaded by") && !line.includes("--no-session")),
+    )
+    .toBe(true);
   await screenshot("02b-trusted-runs");
 });

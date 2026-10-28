@@ -28,15 +28,26 @@ overrides `--no-tools`, and `-e`, `--hook`, `--plugin-dir` or an extension's
 flag load code despite `--no-extensions`.
 
 Every control server (`omp --mode rpc`, started in the project's directory)
-also gets `--config <overlay>`, an owner-only temp file holding
-`workspace.trusted: false` and `mcp.enableProjectConfig: false`
-(`OMP_CONTROL_OVERLAY` in `control.ts`): `--no-tools` and `--no-extensions` do not
-stop OMP from loading a project's custom tools (`.omp/tools`, `.claude/tools`),
-plugin tools or `.mcp.json` / `.omp/mcp.json` servers, and a `--config` overlay
-outranks the project layer, which cannot set `workspace.trusted`. The file is
-put back before every spawn if a temp cleaner removed it (OMP rejects a missing
-`--config` file). `workspace.trusted` needs RPC contract 1.9.0 or later, as the
-thread overlay does.
+also gets `--config <overlay>`, an owner-only temp file chosen by the project's
+trust, which the server decides (`trustProjectAgentConfig`, per project; a
+directory in no project is untrusted):
+
+- untrusted holds `workspace.trusted: false` and `mcp.enableProjectConfig: false`.
+  `--no-tools` and `--no-extensions` do not stop OMP from loading a project's
+  custom tools (`.omp/tools`, `.claude/tools`), plugin tools or MCP servers, and a
+  `--config` overlay outranks the project layer, which cannot set
+  `workspace.trusted`. The project's own commands and `enabledModels` do not apply.
+- trusted holds only `mcp.enableProjectConfig: false`, so the user's own
+  `workspace.trusted` still applies (as in a thread's overlay): the project's
+  commands, tools and model scope load, and its MCP servers still do not.
+
+Control sessions and the lists found through them are keyed by the directory and
+the trust state, so a list found for one state is never served for the other.
+When a server setting changes, every cached directory whose project's trust
+differs from what its lists were found under is rediscovered and republished.
+`OMP_CONTROL_OVERLAYS` in `control.ts` holds both; a file a temp cleaner removed
+is put back before every spawn (OMP rejects a missing `--config` file).
+`workspace.trusted` needs RPC contract 1.9.0 or later, as the thread overlay does.
 
 The binary is resolved (and its sha256 checked, see [sidecar.md](./sidecar.md))
 right before each spawn. The process gets the server's environment plus the

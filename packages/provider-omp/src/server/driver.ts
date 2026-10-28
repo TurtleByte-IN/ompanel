@@ -9,6 +9,7 @@ import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
+import * as ProviderHostTools from "@t3tools/provider-core/server/ProviderHostTools";
 import type { ServerProviderDraft } from "@t3tools/provider-core/server/snapshotProbe";
 import {
   haveProviderSnapshotSettingsChanged,
@@ -19,6 +20,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -132,15 +134,21 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv, OmpUsageReader
       : Effect.fail(
           new OmpSidecarError({ reason: "invalid_launch_settings", detail: launch.message }),
         );
+    // The server decides a project's trust; without host tools nothing is trusted.
+    const hostTools = yield* Effect.serviceOption(ProviderHostTools.ProviderHostTools);
     const controlTarget = (cwd: string) =>
-      resolveBinary.pipe(
-        Effect.map((sidecar) => ({
+      Effect.all([
+        resolveBinary,
+        Option.isSome(hostTools) ? hostTools.value.workspaceTrusted(cwd) : Effect.succeed(false),
+      ]).pipe(
+        Effect.map(([sidecar, workspaceTrusted]) => ({
           binaryPath: sidecar.path,
           binaryIdentity: sidecar.identity,
           profile: effectiveConfig.profile,
           launchArgs,
           environment: processEnv,
           cwd,
+          workspaceTrusted,
         })),
       );
     // Commands, skills and models per directory: a project's own config scopes OMP's model list.
@@ -149,6 +157,11 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv, OmpUsageReader
       target: controlTarget,
       models: (listed) => ompProviderModels(effectiveConfig.customModels, listed),
     });
+    // A project's trust flips with a server setting: lists found under the other state go.
+    yield* host.settings.changes.pipe(
+      Stream.runForEach(() => catalog.refreshTrust),
+      Effect.forkScoped,
+    );
     const publishUpdateNotice = yield* makeOmpUpdateNotice({
       target: controlTarget(host.paths.cwd),
       updateCheck: control.updateCheck,

@@ -349,6 +349,39 @@ describe("OmpControlService.probe", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect(
+    "keys control sessions by trust: a trusted project gets its own overlay and cache",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const omp = fakeOmp();
+        const result = yield* withControl(omp, (control) =>
+          Effect.gen(function* () {
+            const rpc = () => omp.launches.filter((launch) => launch.args.includes("rpc"));
+            const overlayText = (index: number) =>
+              fileSystem.readFileString(rpc()[index]!.args.at(-1)!);
+            yield* control.probe(TARGET);
+            yield* control.probe({ ...TARGET, workspaceTrusted: true });
+            // Each state is cached on its own: neither answer serves the other.
+            yield* control.probe(TARGET);
+            yield* control.probe({ ...TARGET, workspaceTrusted: true });
+            return {
+              count: rpc().length,
+              files: [rpc()[0]!.args.at(-1), rpc()[1]!.args.at(-1)],
+              untrusted: yield* overlayText(0),
+              trusted: yield* overlayText(1),
+            };
+          }),
+        );
+        assert.strictEqual(result.count, 2);
+        assert.notStrictEqual(result.files[0], result.files[1]);
+        assert.match(result.untrusted, /workspace:\n {2}trusted: false\n/);
+        // Trusted leaves `workspace.trusted` to the user's config, as a thread's overlay does.
+        assert.notInclude(result.trusted, "workspace");
+        assert.include(result.trusted, "enableProjectConfig: false");
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("keeps a ready server whose login-provider request fails", () =>
     Effect.gen(function* () {
       const omp = fakeOmp({

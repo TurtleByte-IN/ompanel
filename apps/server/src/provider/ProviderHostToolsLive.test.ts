@@ -708,6 +708,7 @@ describe("ProviderHostToolsLive late binding", () => {
           resolveThreadWorkspace: () => Effect.die("unused"),
           moveThreadWorkspace: () => Effect.die("unused"),
           connectMcp: () => Effect.die("unused"),
+          workspaceTrusted: () => Effect.succeed(false),
         }),
       );
       expect((yield* Fiber.join(pending)).output).toBe("echo hi");
