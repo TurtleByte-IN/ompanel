@@ -212,6 +212,24 @@ export const make = Effect.gen(function* () {
         ),
       );
 
+  const clearProjectAgentConfigTrust = Effect.fn("ProjectService.clearProjectAgentConfigTrust")(
+    function* (projectId: ProjectId) {
+      const settings = yield* serverSettings.getSettings;
+      const stored = settings.projectSettingsOverrides[projectId];
+      if (stored === undefined || !Object.hasOwn(stored, "trustProjectAgentConfig")) return;
+      const { trustProjectAgentConfig: _trust, ...rest } = stored;
+      yield* serverSettings.updateSettings({
+        projectSettingsOverrides: { [projectId]: Object.keys(rest).length === 0 ? null : rest },
+      });
+    },
+    (effect, projectId) =>
+      Effect.mapError(
+        effect,
+        (cause) =>
+          new ProjectOperationError({ operation: "clear-agent-config-trust", projectId, cause }),
+      ),
+  );
+
   const commit = Effect.fn("ProjectService.commit")(function* (command: ProjectCommand) {
     const { projectId } = command;
     const dispatchError = (cause: unknown) =>
@@ -238,6 +256,18 @@ export const make = Effect.gen(function* () {
         now,
       });
       if (Result.isSuccess(planned)) {
+        // Trust is a decision about one directory's files. Withdraw it only once the move is
+        // validated, and before it is recorded: if the clear fails the move is not made, and if
+        // the record fails afterwards the project is left untrusted. Replays of an applied move
+        // see an unchanged root and leave any newer trust decision alone.
+        if (
+          command.type === "project.meta.update" &&
+          command.workspaceRoot !== undefined &&
+          project !== undefined &&
+          project.workspaceRoot !== command.workspaceRoot
+        ) {
+          yield* clearProjectAgentConfigTrust(projectId);
+        }
         const { receipt } = yield* eventSink.commitProjectCommand({
           commandId: command.commandId,
           projectId,
@@ -346,24 +376,6 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  const clearProjectAgentConfigTrust = Effect.fn("ProjectService.clearProjectAgentConfigTrust")(
-    function* (projectId: ProjectId) {
-      const settings = yield* serverSettings.getSettings;
-      const stored = settings.projectSettingsOverrides[projectId];
-      if (stored === undefined || !Object.hasOwn(stored, "trustProjectAgentConfig")) return;
-      const { trustProjectAgentConfig: _trust, ...rest } = stored;
-      yield* serverSettings.updateSettings({
-        projectSettingsOverrides: { [projectId]: Object.keys(rest).length === 0 ? null : rest },
-      });
-    },
-    (effect, projectId) =>
-      Effect.mapError(
-        effect,
-        (cause) =>
-          new ProjectOperationError({ operation: "clear-agent-config-trust", projectId, cause }),
-      ),
-  );
-
   const update: ProjectService["Service"]["update"] = Effect.fn("ProjectService.update")(
     function* (input) {
       const existing = yield* readRow(input.projectId);
@@ -378,11 +390,6 @@ export const make = Effect.gen(function* () {
               projectId: input.projectId,
               workspaceRoot: input.workspaceRoot,
             });
-      // Trust is a decision about the files in one directory. Withdraw it before the root moves, so
-      // a failure leaves the project untrusted rather than trusting whatever the new root holds.
-      if (workspaceRoot !== previousRoot) {
-        yield* clearProjectAgentConfigTrust(input.projectId);
-      }
       yield* commit({
         type: "project.meta.update",
         commandId: input.commandId,

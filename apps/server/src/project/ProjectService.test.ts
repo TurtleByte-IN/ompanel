@@ -466,6 +466,49 @@ it.layer(layerTest)("ProjectService", (it) => {
     }),
   );
 
+  it.effect("keeps project agent config trust when the move is rejected", () =>
+    Effect.gen(function* () {
+      const service = yield* ProjectService.ProjectService;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const projectId = ProjectId.make("project:trust:rejected");
+      yield* service.create({
+        commandId: CommandId.make("command:trust-rej:holder"),
+        projectId: ProjectId.make("project:trust-rej:holder"),
+        title: "Holder",
+        workspaceRoot: "/work/trust-rej-holder",
+      });
+      yield* service.create({
+        commandId: CommandId.make("command:trust-rej:create"),
+        projectId,
+        title: "Mover",
+        workspaceRoot: "/work/trust-rej-mover",
+      });
+      yield* settings.updateSettings({
+        projectSettingsOverrides: { [projectId]: { trustProjectAgentConfig: true } },
+      });
+
+      const rejected = yield* service
+        .update({
+          commandId: CommandId.make("command:trust-rej:conflict"),
+          projectId,
+          workspaceRoot: "/work/trust-rej-holder",
+        })
+        .pipe(Effect.flip);
+      assert.equal(rejected._tag, "ProjectConflictError");
+      assert.equal(
+        (yield* settings.getSettings).projectSettingsOverrides[projectId]?.trustProjectAgentConfig,
+        true,
+      );
+
+      yield* service.update({
+        commandId: CommandId.make("command:trust-rej:move"),
+        projectId,
+        workspaceRoot: "/work/trust-rej-free",
+      });
+      assert.equal((yield* settings.getSettings).projectSettingsOverrides[projectId], undefined);
+    }),
+  );
+
   it.effect("drops the whole override entry when trust was its only value", () =>
     Effect.gen(function* () {
       const service = yield* ProjectService.ProjectService;

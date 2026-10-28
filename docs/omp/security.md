@@ -54,8 +54,8 @@ project, new or existing.
   the overlay already holds the new value, and `omp` restarts; sending again uses it.
 - Trust is per project only: there is no server-wide value, a project without its own
   value is untrusted, and the toggle shows only when a project is selected (web and mobile).
-  Changing a project's workspace root withdraws its trust (`ProjectService.update`,
-  before the root changes): trust is a decision about one directory's files.
+  Changing a project's workspace root withdraws its trust (`ProjectService.commit`: after the
+  move validates, before it is recorded; a rejected move keeps trust): trust is a decision about one directory's files.
 - The key is written only to an OMP with contract 1.9.0 or later; an older OMP would
   reject an overlay with an unknown key. On such an OMP the setting is not enforced: the
   server reports it (`ompWorkspaceTrust` capability), web and mobile say "Not enforced by
