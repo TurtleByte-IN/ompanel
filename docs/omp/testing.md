@@ -341,7 +341,8 @@ makes the scripted model call `ast_edit` (or write its `xd://` device), and the
 model then hangs so the preview waits mid-turn. The card shows the proposal with
 Accept and Reject while the file is untouched; Accept applies it (the file
 changes, the card reads applied, no buttons, also after a reload); a second
-proposal is rejected and the file keeps its text.
+proposal, in a new thread, is rejected and the file keeps its text. A failure attaches
+the requests the scripted model served for that step.
 
 `apps/web/e2e/omp/omp-host-tools.spec.ts` covers T3's MCP tools in an OMP
 thread ([host-tools.md](host-tools.md)). Ompanel issues the thread an MCP

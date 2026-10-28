@@ -203,7 +203,7 @@ test("a Vibe Mode worker is a row in the Agents panel, not a new thread", async 
 });
 
 test("a staged ast_edit card: Accept applies the proposal, Reject discards the next", async () => {
-  const { page, screenshot, send, stack } = suite.current();
+  const { createOmpThread, page, screenshot, send, stack } = suite.current();
   await setVibeMode("Off");
   const file = NodePath.join(stack.workspace, "z05-proposal.ts");
   NodeFS.writeFileSync(file, "export const value = oldName(1);\n");
@@ -264,14 +264,34 @@ test("a staged ast_edit card: Accept applies the proposal, Reject discards the n
   await expect(card.getByRole("button", { name: "Accept" })).toHaveCount(0);
   await screenshot("z05-proposal-after-reload");
 
-  // Reject discards the next proposal: the file keeps its text.
+  // Reject discards a proposal: the file keeps its text. It runs in a thread of its own, so the
+  // first thread's stopped turn and reload cannot hide the new turn's card.
+  await createOmpThread("Full access");
   NodeFS.writeFileSync(file, "export const other = oldName(2);\n");
   const rejectFrom = stack.model.calls.length;
   await send(`${AST_EDIT_PREFIX}oldName($A) => newName($A) in z05-proposal.ts`);
-  await expect
-    .poll(() => stack.model.calls.slice(rejectFrom).length >= 2, { timeout: 60_000 })
-    .toBe(true);
-  await openProposal("proposed");
+  try {
+    await expect
+      .poll(() => stack.model.calls.slice(rejectFrom).length >= 2, { timeout: 60_000 })
+      .toBe(true);
+    await openProposal("proposed");
+  } catch (error) {
+    // What the scripted model served, so a failure shows whether OMP called the tool at all.
+    await test.info().attach("reject-model-calls", {
+      body: JSON.stringify(
+        stack.model.calls.slice(rejectFrom).map((call) => ({
+          lastRole: call.lastRole,
+          lastText: call.lastText.slice(0, 200),
+          tools: call.tools,
+          devices: call.devices,
+        })),
+        null,
+        2,
+      ),
+      contentType: "application/json",
+    });
+    throw error;
+  }
   await card.getByRole("button", { name: "Reject" }).click();
   await expect(card.locator("[data-omp-proposal=discarded]")).toBeVisible();
   await expect(card.getByRole("button", { name: "Reject" })).toHaveCount(0);
