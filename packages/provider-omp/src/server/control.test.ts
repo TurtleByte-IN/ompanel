@@ -283,8 +283,9 @@ const TARGET: OmpControlTarget = {
 const withControl = <A, E>(
   omp: FakeOmp,
   use: (control: OmpControlService) => Effect.Effect<A, E>,
+  options?: Parameters<typeof makeOmpControlService>[0],
 ) =>
-  makeOmpControlService().pipe(
+  makeOmpControlService(options).pipe(
     Effect.flatMap(use),
     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, omp.spawner),
     Effect.scoped,
@@ -380,6 +381,80 @@ describe("OmpControlService.probe", () => {
         assert.notInclude(result.trusted, "workspace");
         assert.include(result.trusted, "enableProjectConfig: false");
       }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("keeps its overlays in the private directory it is given, owner-only", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "ompanel-overlay-test-" });
+      const overlayDir = path.join(root, "state", "omp", "control");
+      const omp = fakeOmp();
+      yield* withControl(
+        omp,
+        (control) =>
+          Effect.gen(function* () {
+            yield* control.probe(TARGET);
+            yield* control.probe({ ...TARGET, workspaceTrusted: true });
+          }),
+        { overlayDir },
+      );
+      const files = (yield* fileSystem.readDirectory(overlayDir)).toSorted();
+      // Written by rename: no staging file is left behind.
+      assert.deepStrictEqual(files, ["control-overlay-trusted.yml", "control-overlay.yml"]);
+      const rpc = omp.launches.filter((launch) => launch.args.includes("rpc"));
+      assert.deepStrictEqual(
+        rpc.map((launch) => path.dirname(launch.args.at(-1)!)),
+        [overlayDir, overlayDir],
+      );
+      if (HostProcess.Platform.defaultValue() !== "win32") {
+        assert.strictEqual((yield* fileSystem.stat(overlayDir)).mode & 0o777, 0o700);
+      }
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("tightens a loose overlay directory and replaces a planted overlay file", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "ompanel-overlay-test-" });
+      const overlayDir = path.join(root, "control");
+      yield* fileSystem.makeDirectory(overlayDir, { mode: 0o777 });
+      yield* fileSystem.chmod(overlayDir, 0o777);
+      yield* fileSystem.writeFileString(
+        path.join(overlayDir, "control-overlay.yml"),
+        "planted: 1\n",
+      );
+      yield* withControl(fakeOmp(), (control) => control.probe(TARGET), { overlayDir });
+      const text = yield* fileSystem.readFileString(path.join(overlayDir, "control-overlay.yml"));
+      assert.match(text, /workspace:\n {2}trusted: false\n/);
+      if (HostProcess.Platform.defaultValue() !== "win32") {
+        assert.strictEqual((yield* fileSystem.stat(overlayDir)).mode & 0o777, 0o700);
+      }
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("refuses an overlay directory that is a symlink", () =>
+    Effect.gen(function* () {
+      if (HostProcess.Platform.defaultValue() === "win32") return;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "ompanel-overlay-test-" });
+      const elsewhere = path.join(root, "elsewhere");
+      yield* fileSystem.makeDirectory(elsewhere);
+      const overlayDir = path.join(root, "control");
+      yield* fileSystem.symlink(elsewhere, overlayDir);
+      const omp = fakeOmp();
+      const probed = yield* withControl(omp, (control) => control.probe(TARGET), {
+        overlayDir,
+      }).pipe(Effect.result);
+      assert.isTrue(Result.isFailure(probed) || probed.success.status !== "ready");
+      assert.deepStrictEqual(yield* fileSystem.readDirectory(elsewhere), []);
+      assert.lengthOf(
+        omp.launches.filter((launch) => launch.args.includes("rpc")),
+        0,
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("keeps a ready server whose login-provider request fails", () =>

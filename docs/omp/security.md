@@ -54,7 +54,10 @@ project, new or existing.
   the overlay already holds the new value, and `omp` restarts; sending again uses it.
 - Ompanel's own `omp` processes outside threads never start a project's MCP servers. A
   control server (`omp --mode rpc` for sign-in, models and commands) runs in the project's
-  directory and gets a `--config` overlay by the project's trust: untrusted it holds
+  directory and gets a `--config` overlay by the project's trust (granted only to a project's
+  own root or git worktree, never to a folder inside it or to a worktree of another project under
+  a trusted parent; `serverRefreshProviders` scans only such folders), kept in Ompanel's private
+  state directory, not a temp one: untrusted it holds
   `workspace.trusted: false`, so no project custom tool, plugin tool or extension loads
   (`--no-tools` does not stop them); trusted it leaves that key to the user's config, so the
   project's commands and model scope appear in the composer. Control sessions and their

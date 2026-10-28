@@ -126,7 +126,9 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv, OmpUsageReader
     const effectiveConfig = { ...config, enabled } satisfies OmpSettings;
     // Downloads the pinned sidecar into the cache on first use when none is bundled or cached.
     const resolver = yield* makeOmpSidecarProvisioner();
-    const control = yield* makeOmpControlService();
+    const control = yield* makeOmpControlService({
+      overlayDir: path.join(host.paths.stateDir, "omp", "control"),
+    });
     const resolveBinary = launch.ok
       ? resolver
           .resolve({ overridePath: effectiveConfig.binaryPath, bundledPath, cacheDir })

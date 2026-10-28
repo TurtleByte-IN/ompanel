@@ -28,9 +28,11 @@ overrides `--no-tools`, and `-e`, `--hook`, `--plugin-dir` or an extension's
 flag load code despite `--no-extensions`.
 
 Every control server (`omp --mode rpc`, started in the project's directory)
-also gets `--config <overlay>`, an owner-only temp file chosen by the project's
-trust, which the server decides (`trustProjectAgentConfig`, per project; a
-directory in no project is untrusted):
+also gets `--config <overlay>`, a file chosen by the project's trust. The
+server decides trust (`trustProjectAgentConfig`, per project) for a directory
+that is a project's own workspace root or one of its git worktrees (the
+worktree listing `vcs.listRefs` and threads use); a folder inside a project and
+any other directory are untrusted:
 
 - untrusted holds `workspace.trusted: false` and `mcp.enableProjectConfig: false`.
   `--no-tools` and `--no-extensions` do not stop OMP from loading a project's
@@ -45,8 +47,12 @@ Control sessions and the lists found through them are keyed by the directory and
 the trust state, so a list found for one state is never served for the other.
 When a server setting changes, every cached directory whose project's trust
 differs from what its lists were found under is rediscovered and republished.
-`OMP_CONTROL_OVERLAYS` in `control.ts` holds both; a file a temp cleaner removed
-is put back before every spawn (OMP rejects a missing `--config` file).
+`OMP_CONTROL_OVERLAYS` in `control.ts` holds both. The files live in
+`<stateDir>/omp/control`, Ompanel's private state (directory created 0700, a
+symlink or a directory owned by another user is refused, a loose mode is
+tightened); a temp directory would let another local user plant a file. Every
+spawn writes the file afresh through a staging file and a rename, so a removed,
+stale or planted file never reaches `omp` (which rejects a missing `--config`).
 `workspace.trusted` needs RPC contract 1.9.0 or later, as the thread overlay does.
 
 The binary is resolved (and its sha256 checked, see [sidecar.md](./sidecar.md))

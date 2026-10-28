@@ -4,6 +4,7 @@
  * under a hard deadline; on it the process group gets SIGTERM, then SIGKILL after
  * {@link OMP_CONTROL_KILL_GRACE_MS}, so a hung omp never outlives the call.
  */
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -764,6 +765,11 @@ export interface OmpControlServiceOptions {
   readonly timeoutsMs?: Partial<Record<OmpControlBudget, number>>;
   readonly killGraceMs?: number;
   readonly cacheTtlMs?: number;
+  /**
+   * Where the control overlay files go: a directory in Ompanel's private state, created 0700.
+   * Without it each service uses its own random temp directory.
+   */
+  readonly overlayDir?: string;
 }
 
 const profileArgs = (profile: string): ReadonlyArray<string> =>
@@ -813,26 +819,52 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
   const killGraceMs = options.killGraceMs ?? OMP_CONTROL_KILL_GRACE_MS;
   const cacheTtlMs = options.cacheTtlMs ?? OMP_CONTROL_CACHE_TTL_MS;
 
-  // The control overlays live in an owner-only temp directory the service scope removes. A failed
-  // setup fails every control session instead of running one that would start the project's MCP
-  // servers.
+  // The control overlays live in an owner-only directory: Ompanel's private state directory when
+  // the instance gives one, else a fresh random temp directory the service scope removes. A failed
+  // setup fails every control session instead of running one that would load the project's code.
   const overlayDir = yield* Effect.acquireRelease(
-    Effect.try(() =>
-      NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "ompanel-omp-control-")),
-    ).pipe(Effect.result),
+    Effect.try(() => {
+      if (options.overlayDir === undefined) {
+        return {
+          dir: NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "ompanel-omp-control-")),
+          temp: true,
+        };
+      }
+      return { dir: options.overlayDir, temp: false };
+    }).pipe(Effect.result),
     (made) =>
-      Result.isSuccess(made)
-        ? Effect.sync(() => NodeFS.rmSync(made.success, { recursive: true, force: true }))
+      Result.isSuccess(made) && made.success.temp
+        ? Effect.sync(() => NodeFS.rmSync(made.success.dir, { recursive: true, force: true }))
         : Effect.void,
   );
-  /** The overlay file for the target's trust state, put back if a temp cleaner removed it (OMP rejects a missing `--config` file). */
+  /**
+   * The overlay file for the target's trust state, written afresh before every spawn: the file is
+   * replaced atomically (a spawn never reads half a file) and a temp cleaner or another user
+   * cannot leave us a stale or foreign one. The directory is created 0700 and must be ours.
+   */
   const ensureOverlay = (target: OmpControlTarget, dir: string) => {
+    NodeFS.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const uid = process.getuid?.();
+    if (uid !== undefined) {
+      const stat = NodeFS.lstatSync(dir);
+      if (!stat.isDirectory() || stat.uid !== uid) {
+        throw new Error(`control overlay directory ${dir} is not a directory owned by this user`);
+      }
+      if ((stat.mode & 0o077) !== 0) NodeFS.chmodSync(dir, 0o700);
+    }
     const overlay =
       OMP_CONTROL_OVERLAYS[target.workspaceTrusted === true ? "trusted" : "untrusted"];
     const file = NodePath.join(dir, overlay.file);
-    if (!NodeFS.existsSync(file)) {
-      NodeFS.mkdirSync(dir, { recursive: true, mode: 0o700 });
-      NodeFS.writeFileSync(file, overlay.text, { mode: 0o600 });
+    const staging = NodePath.join(
+      dir,
+      `.${overlay.file}.${process.pid}.${NodeCrypto.randomUUID()}`,
+    );
+    try {
+      NodeFS.writeFileSync(staging, overlay.text, { mode: 0o600, flag: "wx" });
+      NodeFS.renameSync(staging, file);
+    } catch (cause) {
+      NodeFS.rmSync(staging, { force: true });
+      throw cause;
     }
     return file;
   };
@@ -1047,7 +1079,7 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
       return yield* new OmpControlError({ operation, reason: "spawn", cause: overlayDir.failure });
     }
     const overlayFile = yield* Effect.try({
-      try: () => ensureOverlay(target, overlayDir.success),
+      try: () => ensureOverlay(target, overlayDir.success.dir),
       catch: (cause) => new OmpControlError({ operation, reason: "spawn", cause }),
     });
     const outgoing = yield* Queue.unbounded<Uint8Array>();

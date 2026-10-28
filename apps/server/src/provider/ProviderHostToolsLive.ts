@@ -33,6 +33,7 @@ import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { resolveWorkspaceOwner } from "./WorkspaceOwner.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 import {
@@ -669,26 +670,17 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  /** The project containing `cwd` is its workspace root or the nearest ancestor that is one. */
+  /** Trusted only for a project's own root or git worktree, by that project's trust. */
   const workspaceTrusted: ProviderHostTools["Service"]["workspaceTrusted"] = Effect.fn(
     "ProviderHostTools.workspaceTrusted",
   )(
     function* (cwd) {
       if (Option.isNone(serverSettings)) return false;
+      const owner = yield* resolveWorkspaceOwner({ projects, gitWorkflow, fileSystem, path }, cwd);
+      if (Option.isNone(owner)) return false;
       const settings = yield* serverSettings.value.getSettings;
-      let directory = cwd;
-      for (;;) {
-        const project = yield* projects.getByWorkspaceRoot(directory);
-        if (Option.isSome(project)) {
-          // Per project only: a server-wide value is never read.
-          return (
-            settings.projectSettingsOverrides[project.value.id]?.trustProjectAgentConfig === true
-          );
-        }
-        const parent = path.dirname(directory);
-        if (parent === directory) return false;
-        directory = parent;
-      }
+      // Per project only: a server-wide value is never read.
+      return settings.projectSettingsOverrides[owner.value]?.trustProjectAgentConfig === true;
     },
     Effect.orElseSucceed(() => false),
   );

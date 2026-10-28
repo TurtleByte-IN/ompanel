@@ -223,6 +223,7 @@ import { linkCreatedPullRequest } from "./git/linkCreatedPullRequest.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as ProjectEnrichmentService from "./project/ProjectEnrichmentService.ts";
 import * as ProjectService from "./project/ProjectService.ts";
+import { resolveWorkspaceOwner } from "./provider/WorkspaceOwner.ts";
 import { threadWorkspaceRoot } from "./project/threadWorkspaceRoot.ts";
 import * as ManagedProjectFolders from "./project/ManagedProjectFolders.ts";
 import { projectMutationOperation } from "./project/ProjectMutation.ts";
@@ -1344,6 +1345,8 @@ export const layerWsRpc = (
       const remoteOpenTargets = yield* RemoteOpenTargets.RemoteOpenTargets;
       const directEndpoints = yield* DirectEndpoints.DirectEndpoints;
       const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
+      const hostFileSystem = yield* FileSystem.FileSystem;
+      const hostPath = yield* Path.Path;
       const review = yield* ReviewService.ReviewService;
       const vcsProvisioning = yield* VcsProvisioningService.VcsProvisioningService;
       const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
@@ -3016,10 +3019,28 @@ export const layerWsRpc = (
             if (input.instanceId === undefined) {
               yield* usageLimitSources.refresh;
             }
-            let providers = yield* input.cwd !== undefined && input.instanceId !== undefined
+            // The client names the folder: only a project's root or git worktree is scanned, so a
+            // request cannot start provider processes in an arbitrary directory.
+            const workspaceCwd =
+              input.cwd === undefined
+                ? undefined
+                : Option.isSome(
+                      yield* resolveWorkspaceOwner(
+                        {
+                          projects: projectService,
+                          gitWorkflow,
+                          fileSystem: hostFileSystem,
+                          path: hostPath,
+                        },
+                        input.cwd,
+                      ),
+                    )
+                  ? input.cwd
+                  : undefined;
+            let providers = yield* workspaceCwd !== undefined && input.instanceId !== undefined
               ? providerRegistry.refreshWorkspaceSnapshot({
                   instanceId: input.instanceId,
-                  cwd: input.cwd,
+                  cwd: workspaceCwd,
                   fresh: input.fresh === true,
                 })
               : input.instanceId !== undefined
