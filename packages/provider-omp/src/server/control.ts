@@ -148,7 +148,7 @@ export const OMP_CONTROL_RPC_ARGS = [
  * the project's directory, and OMP loads a project's `.mcp.json` / `.omp/mcp.json` servers unless
  * `mcp.enableProjectConfig` is off; a `--config` overlay outranks the project layer.
  */
-export const OMP_CONTROL_OVERLAY = "mcp:\n  enableProjectConfig: false\n";
+const OMP_CONTROL_OVERLAY = "mcp:\n  enableProjectConfig: false\n";
 
 /**
  * The lines `omp --mode rpc` writes to stderr before exiting 1 when no model resolves: no default
