@@ -36,6 +36,7 @@ import { makeOmpControlService } from "./control.ts";
 import { makeOmpPidfiles } from "./pidfiles.ts";
 import {
   listOmpSessions,
+  type OmpSessionsFilter,
   readOmpThreadSessionRecords,
   resolveOmpSessionsLocation,
 } from "./ompSessions.ts";
@@ -339,10 +340,11 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv, OmpUsageReader
       }),
       // Unreadable buckets and files are skipped, so listing itself does not fail.
       ompSessions: {
+        sessionsDirectory: sessionsLocation.root,
         list: Effect.fn("OmpSessions.list")(
-          function* ({ cwd }: { readonly cwd: string }) {
+          function* (filter: OmpSessionsFilter) {
             const owners = yield* readOmpThreadSessionRecords(stateDirs.threads);
-            const sessions = yield* listOmpSessions(sessionsLocation, cwd);
+            const sessions = yield* listOmpSessions(sessionsLocation, filter);
             return sessions.map((session) => ({
               sessionId: session.sessionId,
               cwd: session.cwd,
@@ -351,6 +353,7 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv, OmpUsageReader
               createdAt: session.createdAt === "" ? session.updatedAt : session.createdAt,
               updatedAt: session.updatedAt,
               threadId: owners.get(session.sessionId) ?? null,
+              roots: session.roots,
             }));
           },
           Effect.provideService(FileSystem.FileSystem, fileSystem),

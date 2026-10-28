@@ -102,6 +102,17 @@ export interface OmpSessionHead {
 export interface OmpStoredSession extends OmpSessionHead {
   /** File modification time, ISO. */
   readonly updatedAt: string;
+  /** The listing's `roots` that hold the session's `cwd`, as given. */
+  readonly roots: ReadonlyArray<string>;
+}
+
+export interface OmpSessionsFilter {
+  /** Folders each session is attributed to when its `cwd` is one of them or below one. */
+  readonly roots: ReadonlyArray<string>;
+  /** Only sessions working in one of these folders or below; null keeps every folder. */
+  readonly within: ReadonlyArray<string> | null;
+  /** Only the session with this id. */
+  readonly sessionId?: string;
 }
 
 const asRecord = (value: unknown): Record<string, unknown> | undefined =>
@@ -261,23 +272,32 @@ const directorySpellings = Effect.fn("ompDirectorySpellings")(function* (dir: st
   const path = yield* Path.Path;
   const resolved = path.resolve(dir);
   const real = yield* fileSystem.realPath(resolved).pipe(Effect.orElseSucceed(() => resolved));
-  return new Set([resolved, real]);
+  return resolved === real ? [resolved] : [resolved, real];
 });
 
 /**
- * Sessions working in `cwd` (header `cwd`, symlinks resolved), newest first. Empty stubs (no
- * message and no title) are left out, as OMP's own pickers do.
+ * Sessions newest first, each with the `roots` holding its `cwd` (symlinks resolved on both
+ * sides). Empty stubs (no message and no title) are left out, as OMP's own pickers do.
  */
 export const listOmpSessions = Effect.fn("listOmpSessions")(function* (
   location: OmpSessionsLocation,
-  cwd: string,
+  filter: OmpSessionsFilter,
 ) {
-  const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const wanted = yield* directorySpellings(cwd);
+  const spell = (dirs: ReadonlyArray<string>) =>
+    Effect.forEach(dirs, (dir) =>
+      directorySpellings(dir).pipe(Effect.map((spellings) => ({ dir, spellings }))),
+    );
+  const roots = yield* spell(filter.roots);
+  const within = filter.within === null ? null : yield* spell(filter.within);
+  const holds = (folder: ReadonlyArray<string>, cwd: ReadonlyArray<string>) =>
+    folder.some((root) => {
+      const prefix = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
+      return cwd.some((spelling) => spelling === root || spelling.startsWith(prefix));
+    });
   const files: Array<SessionFile> = [];
   for (const dir of yield* sessionDirectories(location)) {
-    files.push(...(yield* sessionFilesIn(dir)));
+    files.push(...(yield* sessionFilesIn(dir, filter.sessionId)));
   }
   files.sort((a, b) => b.modifiedMs - a.modifiedMs);
   const sessions: Array<OmpStoredSession> = [];
@@ -285,12 +305,14 @@ export const listOmpSessions = Effect.fn("listOmpSessions")(function* (
     if (sessions.length >= OMP_SESSION_LIST_LIMIT) break;
     const head = yield* readOmpSessionHead(file);
     if (head === null || (!head.hasMessages && head.title === null)) continue;
-    const resolved = path.resolve(head.cwd);
-    const matches =
-      wanted.has(resolved) ||
-      wanted.has(yield* fileSystem.realPath(resolved).pipe(Effect.orElseSucceed(() => resolved)));
-    if (!matches) continue;
-    sessions.push({ ...head, updatedAt: DateTime.formatIso(DateTime.makeUnsafe(modifiedMs)) });
+    if (filter.sessionId !== undefined && head.sessionId !== filter.sessionId) continue;
+    const cwd = yield* directorySpellings(head.cwd);
+    if (within !== null && !within.some((folder) => holds(folder.spellings, cwd))) continue;
+    sessions.push({
+      ...head,
+      updatedAt: DateTime.formatIso(DateTime.makeUnsafe(modifiedMs)),
+      roots: roots.filter((root) => holds(root.spellings, cwd)).map((root) => root.dir),
+    });
   }
   return sessions;
 });

@@ -1,6 +1,7 @@
 // Settings → OMP sessions on mobile: the sessions OMP saved for a project, read-only, as the web
-// import list shows them (apps/web/src/components/settings/OmpSessionImportSection.tsx, same
-// `server.listOmpSessions` RPC). Importing creates a thread, so it stays on web and desktop.
+// "Continue an OMP session" dialog lists them (apps/web/src/components/ompSessions/
+// ContinueOmpSessionDialog.tsx, same `server.listOmpSessions` RPC). Importing creates a thread, so
+// it stays on web and desktop.
 import type {
   EnvironmentId,
   OmpListSessionsResult,

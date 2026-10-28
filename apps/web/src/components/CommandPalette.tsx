@@ -54,6 +54,7 @@ import {
   ArrowLeftIcon,
   ChartNoAxesColumnIcon,
   CheckIcon,
+  HistoryIcon,
   ChevronRightIcon,
   CornerLeftUpIcon,
   FileSearchIcon,
@@ -116,6 +117,11 @@ import {
 } from "../state/environments";
 import { useProjects, useServerConfigs, useThreadShells, waitForProject } from "../state/entities";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
+import {
+  CONTINUE_OMP_SESSION_LABEL,
+  openContinueOmpSessionDialog,
+  resolveContinueOmpSessionRequest,
+} from "./ompSessions/ContinueOmpSessionDialog";
 import {
   appendBrowsePathSegment,
   ensureBrowseDirectoryPath,
@@ -1195,6 +1201,24 @@ function OpenCommandPaletteDialog(props: {
       icon: <MessageSquareDashedIcon className={ITEM_ICON_CLASS} />,
       shortcutCommand: "chat.newWithoutProject",
       run: () => startScratchThread(scratchTargetEnvironmentId),
+    });
+  }
+
+  const continueOmpSessionRequest = resolveContinueOmpSessionRequest(
+    providersByEnvironment,
+    [contextualProjectRef],
+    primaryEnvironmentId,
+  );
+  if (continueOmpSessionRequest !== null) {
+    actionItems.push({
+      kind: "action",
+      value: "action:continue-omp-session",
+      searchTerms: ["omp", "session", "import", "resume", "continue", "terminal"],
+      title: CONTINUE_OMP_SESSION_LABEL,
+      icon: <HistoryIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        openContinueOmpSessionDialog(continueOmpSessionRequest);
+      },
     });
   }
 

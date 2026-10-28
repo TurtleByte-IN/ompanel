@@ -1481,7 +1481,7 @@ export function createServerEnvironmentAtoms<R, E>(
       concurrency: {
         mode: "singleFlight",
         key: ({ environmentId, input }) =>
-          `${environmentId}:${input.instanceId}:${input.projectId}`,
+          `${environmentId}:${input.instanceId}:${input.projectId}:${input.scope ?? "project"}`,
       },
     }),
     importOmpSession: createEnvironmentRpcCommand(runtime, {
@@ -1490,7 +1490,7 @@ export function createServerEnvironmentAtoms<R, E>(
       concurrency: {
         mode: "singleFlight",
         key: ({ environmentId, input }) =>
-          `${environmentId}:${input.instanceId}:${input.projectId}:${input.sessionId}`,
+          `${environmentId}:${input.instanceId}:${input.sessionId}`,
       },
     }),
     exportOmpThreadHtml: createEnvironmentRpcCommand(runtime, {

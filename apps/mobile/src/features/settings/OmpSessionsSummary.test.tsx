@@ -80,9 +80,14 @@ function session(overrides: Partial<OmpSessionSummary> = {}): OmpSessionSummary 
     createdAt: "2026-10-01T10:00:00.000Z",
     updatedAt: "not a date",
     importedThreadId: null,
+    projectId: null,
+    worktreePath: null,
+    branch: null,
     ...overrides,
   };
 }
+
+const listed = { searchedDirectories: ["/work/a"], sessionsDirectory: "/home/.omp/agent/sessions" };
 
 let container: HTMLDivElement;
 let root: Root;
@@ -129,6 +134,7 @@ describe("OmpSessionsSummaryView", () => {
                 }),
                 session({ sessionId: "s-3" }),
               ],
+              ...listed,
             },
           }}
         />,
@@ -169,7 +175,7 @@ describe("OmpSessionsSummaryView", () => {
       );
     render({ projects: [], projectId: null });
     expect(container.textContent).toContain("Add a project to see its OMP sessions.");
-    render({ read: { status: "ok", value: { sessions: [] } } });
+    render({ read: { status: "ok", value: { ...listed, sessions: [] } } });
     expect(container.textContent).toContain("No OMP sessions for this project.");
     render({});
     expect(container.textContent).toContain("Reading OMP sessions…");
@@ -189,6 +195,7 @@ describe("OmpSessionsSummary", () => {
     mocks.listSessions.mockImplementation(async (target: { input: { projectId: string } }) => ({
       _tag: "Success",
       value: {
+        ...listed,
         sessions: [session({ sessionId: `in-${target.input.projectId}`, title: "Saved" })],
       },
     }));

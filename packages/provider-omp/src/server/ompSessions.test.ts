@@ -239,7 +239,8 @@ describe("OMP session files", () => {
         );
         writeSession(root, "-work", "notes.txt", "not a session", 6_000);
 
-        const sessions = yield* listOmpSessions({ root, flat: false }, work);
+        const only = (dir: string) => ({ roots: [dir], within: [dir] });
+        const sessions = yield* listOmpSessions({ root, flat: false }, only(work));
         assert.deepStrictEqual(
           sessions.map((session) => [session.sessionId, session.title, session.firstMessage]),
           [
@@ -251,10 +252,71 @@ describe("OMP session files", () => {
         // A symlinked spelling of the directory finds the same sessions.
         const link = NodePath.join(root, "link");
         NodeFS.symlinkSync(work, link);
-        assert.lengthOf(yield* listOmpSessions({ root, flat: false }, link), 2);
+        assert.lengthOf(yield* listOmpSessions({ root, flat: false }, only(link)), 2);
         assert.deepStrictEqual(
-          yield* listOmpSessions({ root: NodePath.join(root, "missing"), flat: false }, work),
+          yield* listOmpSessions({ root: NodePath.join(root, "missing"), flat: false }, only(work)),
           [],
+        );
+      }).pipe(Effect.scoped),
+    ),
+  );
+
+  it.effect("matches sessions in folders below a root and attributes each to its roots", () =>
+    run(
+      Effect.gen(function* () {
+        const root = yield* scratch;
+        const project = NodePath.join(root, "project");
+        const nested = NodePath.join(project, "packages", "app");
+        const worktree = NodePath.join(root, "worktrees", "feature");
+        const sibling = NodePath.join(root, "project-other");
+        for (const dir of [nested, worktree, sibling]) NodeFS.mkdirSync(dir, { recursive: true });
+        const write = (id: string, cwd: string, at: number) =>
+          writeSession(
+            root,
+            `-${id}`,
+            `2026-10-25T10-00-00-000Z_${id}.jsonl`,
+            sessionFile({ id, cwd, messages: [user(id)] }),
+            at,
+          );
+        write("root", project, 1_000);
+        write("nested", nested, 2_000);
+        write("worktree", worktree, 3_000);
+        // Shares the root's name as a prefix but is not below it.
+        write("sibling", sibling, 4_000);
+        const location = { root, flat: false };
+
+        const inProject = yield* listOmpSessions(location, {
+          roots: [project, nested, worktree],
+          within: [project, worktree],
+        });
+        assert.deepStrictEqual(
+          inProject.map((session) => [session.sessionId, session.roots]),
+          [
+            ["worktree", [worktree]],
+            ["nested", [project, nested]],
+            ["root", [project]],
+          ],
+        );
+
+        const everywhere = yield* listOmpSessions(location, { roots: [project], within: null });
+        assert.deepStrictEqual(
+          everywhere.map((session) => [session.sessionId, session.roots]),
+          [
+            ["sibling", []],
+            ["worktree", []],
+            ["nested", [project]],
+            ["root", [project]],
+          ],
+        );
+
+        const one = yield* listOmpSessions(location, {
+          roots: [],
+          within: null,
+          sessionId: "nested",
+        });
+        assert.deepStrictEqual(
+          one.map((session) => session.sessionId),
+          ["nested"],
         );
       }).pipe(Effect.scoped),
     ),

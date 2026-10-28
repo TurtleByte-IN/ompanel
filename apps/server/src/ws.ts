@@ -577,6 +577,15 @@ function projectFileFailureContext(
 
 const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 
+/** A folder OMP sessions work in: a project's root, or that folder in one of its git worktrees. */
+interface OmpSessionFolder {
+  readonly path: string;
+  readonly projectId: ProjectId;
+  /** The git worktree; null for the project root. */
+  readonly worktreePath: string | null;
+  readonly branch: string | null;
+}
+
 // Middleware added later wraps middleware added earlier, so instrumentation wraps authorization.
 const ServerWsRpcGroup = WsRpcGroup.middleware(RpcInstrumentation);
 
@@ -1819,27 +1828,122 @@ export const layerWsRpc = (
         return { instance, controller: instance.ompSessions };
       });
 
-      const ompSessionsCwd = Effect.fn("ws.ompSessions.cwd")(function* (projectId: ProjectId) {
-        const project = yield* projectService.getById(projectId).pipe(
+      /**
+       * The folders a project's OMP sessions can work in: its root, and the same folder in each
+       * of its repository's other git worktrees (a project below the repository's top maps to
+       * that subfolder of every worktree).
+       */
+      const ompSessionFolders = Effect.fn("ws.ompSessions.folders")(function* (
+        project: { readonly id: ProjectId; readonly workspaceRoot: string },
+        refresh: boolean,
+      ) {
+        const path = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const root = path.resolve(project.workspaceRoot);
+        const realRoot = yield* fileSystem.realPath(root).pipe(Effect.orElseSucceed(() => root));
+        const checkouts: Array<{ readonly path: string; readonly branch: string }> = [];
+        let cursor: number | undefined;
+        do {
+          const page = yield* gitWorkflow
+            .listRefs({
+              cwd: root,
+              refKind: "local",
+              limit: 200,
+              ...(cursor === undefined ? (refresh ? { refresh: true } : {}) : { cursor }),
+            })
+            .pipe(Effect.option);
+          if (Option.isNone(page) || !page.value.isRepo) break;
+          for (const ref of page.value.refs) {
+            if (ref.isRemote !== true && ref.worktreePath !== null) {
+              checkouts.push({ path: path.resolve(ref.worktreePath), branch: ref.name });
+            }
+          }
+          cursor = page.value.nextCursor ?? undefined;
+        } while (cursor !== undefined);
+        const folders: Array<OmpSessionFolder> = [
+          { path: root, projectId: project.id, worktreePath: null, branch: null },
+        ];
+        let subfolder: string | undefined;
+        let own: string | undefined;
+        for (const checkout of checkouts) {
+          for (const spelling of [root, realRoot]) {
+            const relative = path.relative(checkout.path, spelling);
+            const inside =
+              relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+            if (inside && (own === undefined || checkout.path.length > own.length)) {
+              own = checkout.path;
+              subfolder = relative;
+            }
+          }
+        }
+        if (own === undefined || subfolder === undefined) return folders;
+        for (const checkout of checkouts) {
+          if (checkout.path === own) continue;
+          folders.push({
+            path: path.join(checkout.path, subfolder),
+            projectId: project.id,
+            worktreePath: checkout.path,
+            branch: checkout.branch,
+          });
+        }
+        return folders;
+      });
+
+      /** Every project's session folders; `refreshProjectId` re-reads that project's worktrees. */
+      const ompSessionFolderIndex = Effect.fn("ws.ompSessions.folderIndex")(function* (
+        refreshProjectId: ProjectId | null,
+      ) {
+        const projects = yield* projectService.listShells().pipe(
           Effect.mapError(
             () =>
               new OmpSessionsOperationError({
-                reason: "project_not_found",
-                message: `Project ${projectId} is unavailable.`,
+                reason: "read_failed",
+                message: "Could not read this environment's projects.",
               }),
           ),
         );
-        return yield* Option.match(project, {
-          onNone: () =>
-            Effect.fail(
-              new OmpSessionsOperationError({
-                reason: "project_not_found",
-                message: `Project ${projectId} was not found.`,
-              }),
+        const foldersByProject = new Map<ProjectId, ReadonlyArray<OmpSessionFolder>>();
+        const byPath = new Map<string, OmpSessionFolder>();
+        yield* Effect.forEach(
+          projects,
+          (project) =>
+            ompSessionFolders(project, project.id === refreshProjectId).pipe(
+              Effect.tap((folders) => Effect.sync(() => foldersByProject.set(project.id, folders))),
             ),
-          onSome: (found) => Effect.succeed(found.workspaceRoot),
-        });
+          { concurrency: 4, discard: true },
+        );
+        for (const project of projects) {
+          for (const folder of foldersByProject.get(project.id) ?? []) {
+            const existing = byPath.get(folder.path);
+            // A folder that is one project's root belongs to it, not to another's worktree.
+            if (
+              existing === undefined ||
+              (existing.worktreePath !== null && folder.worktreePath === null)
+            ) {
+              byPath.set(folder.path, folder);
+            }
+          }
+        }
+        return { foldersByProject, byPath };
       });
+
+      /** The innermost of `roots` that is a known session folder. */
+      const ompSessionFolderOf = (
+        byPath: ReadonlyMap<string, OmpSessionFolder>,
+        roots: ReadonlyArray<string>,
+      ) => {
+        let best: OmpSessionFolder | undefined;
+        for (const root of roots) {
+          const folder = byPath.get(root);
+          if (
+            folder !== undefined &&
+            (best === undefined || folder.path.length > best.path.length)
+          ) {
+            best = folder;
+          }
+        }
+        return best;
+      };
 
       /**
        * The thread bound to an OMP session: the one the instance last bound it to, else the thread
@@ -1874,34 +1978,59 @@ export const layerWsRpc = (
         input: OmpListSessionsInput,
       ) {
         const { instance, controller } = yield* ompSessionsController(input.instanceId);
-        const cwd = yield* ompSessionsCwd(input.projectId);
-        const listed = yield* controller.list({ cwd });
+        const all = input.scope === "all";
+        const index = yield* ompSessionFolderIndex(all ? null : (input.projectId ?? null));
+        const projectFolders =
+          input.projectId === undefined ? undefined : index.foldersByProject.get(input.projectId);
+        if (!all && projectFolders === undefined) {
+          return yield* new OmpSessionsOperationError({
+            reason: "project_not_found",
+            message: `Project ${input.projectId ?? "(none)"} was not found.`,
+          });
+        }
+        const searchedDirectories = all ? [] : (projectFolders ?? []).map((folder) => folder.path);
+        const listed = yield* controller.list({
+          roots: [...index.byPath.keys()],
+          within: all ? null : searchedDirectories,
+        });
         const sessions = yield* Effect.forEach(
           listed,
-          ({ threadId, ...session }) =>
-            ompSessionThread({
+          ({ threadId, roots, ...session }) => {
+            const folder = ompSessionFolderOf(index.byPath, roots);
+            return ompSessionThread({
               driver: instance.driverKind,
               instanceId: input.instanceId,
               sessionId: session.sessionId,
               hintedThreadId: threadId,
-            }).pipe(Effect.map((importedThreadId) => ({ ...session, importedThreadId }))),
+            }).pipe(
+              Effect.map((importedThreadId) => ({
+                ...session,
+                importedThreadId,
+                projectId: folder?.projectId ?? null,
+                worktreePath: folder?.worktreePath ?? null,
+                branch: folder?.branch ?? null,
+              })),
+            );
+          },
           { concurrency: 16 },
         );
-        return { sessions };
+        return { sessions, searchedDirectories, sessionsDirectory: controller.sessionsDirectory };
       });
 
       const importOmpSession = Effect.fn("ws.ompSessions.import")(function* (
         input: OmpImportSessionInput,
       ) {
         const { instance, controller } = yield* ompSessionsController(input.instanceId);
-        const cwd = yield* ompSessionsCwd(input.projectId);
-        const session = (yield* controller.list({ cwd })).find(
-          (candidate) => candidate.sessionId === input.sessionId,
-        );
+        const index = yield* ompSessionFolderIndex(null);
+        const [session] = yield* controller.list({
+          roots: [...index.byPath.keys()],
+          within: null,
+          sessionId: input.sessionId,
+        });
         if (session === undefined) {
           return yield* new OmpSessionsOperationError({
             reason: "session_not_found",
-            message: `OMP session ${input.sessionId} was not found for this project.`,
+            message: `OMP session ${input.sessionId} was not found.`,
           });
         }
         const existing = yield* ompSessionThread({
@@ -1911,6 +2040,13 @@ export const layerWsRpc = (
           hintedThreadId: session.threadId,
         });
         if (existing !== null) return { threadId: existing, imported: false } as const;
+        const folder = ompSessionFolderOf(index.byPath, session.roots);
+        if (folder === undefined) {
+          return yield* new OmpSessionsOperationError({
+            reason: "project_not_found",
+            message: `No project holds ${session.cwd}, where OMP session ${input.sessionId} works.`,
+          });
+        }
 
         const threadId = importedAcpThreadId({
           driver: instance.driverKind,
@@ -1937,12 +2073,19 @@ export const layerWsRpc = (
             threadLaunch.launch({
               commandId,
               threadId,
-              projectId: input.projectId,
+              projectId: folder.projectId,
               title,
               modelSelection: { instanceId: input.instanceId, model },
               runtimeMode: "approval-required",
               interactionMode: "default",
-              workspaceStrategy: { type: "root" },
+              workspaceStrategy:
+                folder.worktreePath === null
+                  ? { type: "root" }
+                  : {
+                      type: "existing_worktree",
+                      worktreePath: folder.worktreePath,
+                      ...(folder.branch === null ? {} : { branch: folder.branch }),
+                    },
               importedNativeThread: {
                 ref: {
                   driver: instance.driverKind,
