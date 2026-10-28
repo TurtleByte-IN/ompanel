@@ -61,34 +61,45 @@ export function planMobileScopedSettingsPatch(
     )
   )
     return [];
-  const writes = new Map<EnvironmentId, Record<string, unknown>>();
+  // Trust travels apart from the entry: the server keeps the stored value on whole-entry writes.
+  const { trustProjectAgentConfig, ...entryPatch } = patch;
+  const writes = new Map<EnvironmentId, ServerSettingsPatch>();
   for (const target of targets) {
     if (
       target.projectId === null ||
       target.environment.serverConfig.environment.capabilities.projectSettingsOverrides !== true
     )
       continue;
-    const current =
-      target.environment.serverConfig.settings.projectSettingsOverrides[target.projectId] ?? {};
-    const next: Record<string, unknown> = { ...current };
-    for (const [key, value] of Object.entries(patch)) {
-      if (
-        value === null &&
-        !isNullableProjectSettingsOverride(key as ProjectScopedServerSettingKey)
-      ) {
-        delete next[key];
-      } else {
-        next[key] = value;
+    const previous = writes.get(target.environment.environmentId);
+    const entries: Record<string, unknown> = { ...previous?.projectSettingsOverrides };
+    if (Object.keys(entryPatch).length > 0) {
+      const current =
+        target.environment.serverConfig.settings.projectSettingsOverrides[target.projectId] ?? {};
+      const next: Record<string, unknown> = { ...current };
+      for (const [key, value] of Object.entries(entryPatch)) {
+        if (
+          value === null &&
+          !isNullableProjectSettingsOverride(key as ProjectScopedServerSettingKey)
+        ) {
+          delete next[key];
+        } else {
+          next[key] = value;
+        }
       }
+      entries[target.projectId] = next;
     }
-    const overrides = writes.get(target.environment.environmentId) ?? {};
-    overrides[target.projectId] = next;
-    writes.set(target.environment.environmentId, overrides);
+    const trust =
+      trustProjectAgentConfig === undefined
+        ? previous?.projectAgentConfigTrust
+        : { ...previous?.projectAgentConfigTrust, [target.projectId]: trustProjectAgentConfig };
+    writes.set(target.environment.environmentId, {
+      ...(Object.keys(entries).length > 0
+        ? { projectSettingsOverrides: entries as ServerSettingsPatch["projectSettingsOverrides"] }
+        : {}),
+      ...(trust === undefined ? {} : { projectAgentConfigTrust: trust }),
+    });
   }
-  return [...writes].map(([environmentId, projectSettingsOverrides]) => ({
-    environmentId,
-    patch: { projectSettingsOverrides } as ServerSettingsPatch,
-  }));
+  return [...writes].map(([environmentId, writePatch]) => ({ environmentId, patch: writePatch }));
 }
 
 export function uniformMobileSetting<K extends keyof ServerSettings>(
@@ -105,23 +116,35 @@ export function planMobileScopedSettingsClear(
   targets: readonly ScopedMobileSettingsTarget[],
   keys: readonly ProjectScopedServerSettingKey[],
 ) {
-  const writes = new Map<EnvironmentId, Record<string, unknown>>();
+  const writes = new Map<EnvironmentId, ServerSettingsPatch>();
   for (const target of targets) {
     if (
       target.projectId === null ||
       target.environment.serverConfig.environment.capabilities.projectSettingsOverrides !== true
     )
       continue;
-    const overrides = writes.get(target.environment.environmentId) ?? {};
-    overrides[target.projectId] = clearProjectSettingsOverrides(
-      target.environment.serverConfig.settings,
-      target.projectId,
-      keys,
-    );
-    writes.set(target.environment.environmentId, overrides);
+    const previous = writes.get(target.environment.environmentId);
+    const entries: Record<string, unknown> = {
+      ...previous?.projectSettingsOverrides,
+      [target.projectId]: clearProjectSettingsOverrides(
+        target.environment.serverConfig.settings,
+        target.projectId,
+        keys,
+      ),
+    };
+    writes.set(target.environment.environmentId, {
+      projectSettingsOverrides: entries as ServerSettingsPatch["projectSettingsOverrides"],
+      ...(keys.includes("trustProjectAgentConfig")
+        ? {
+            projectAgentConfigTrust: {
+              ...previous?.projectAgentConfigTrust,
+              [target.projectId]: false,
+            },
+          }
+        : previous?.projectAgentConfigTrust === undefined
+          ? {}
+          : { projectAgentConfigTrust: previous.projectAgentConfigTrust }),
+    });
   }
-  return [...writes].map(([environmentId, projectSettingsOverrides]) => ({
-    environmentId,
-    patch: { projectSettingsOverrides } as ServerSettingsPatch,
-  }));
+  return [...writes].map(([environmentId, writePatch]) => ({ environmentId, patch: writePatch }));
 }

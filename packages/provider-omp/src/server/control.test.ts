@@ -238,8 +238,9 @@ function fakeOmp(
   const spawner = ChildProcessSpawner.make((command) => {
     if (!ChildProcess.isStandardCommand(command)) return Effect.die("Unexpected pipeline");
     launches.push(command);
+    // A shell-dispatched gh is one command line with no args.
     const behaviour =
-      command.args[0] === "auth"
+      command.args[0] === "auth" || command.options.shell === true
         ? (input.gh ?? { stdout: "", exitCode: 0 })
         : command.args.includes("--version")
           ? (input.version ?? { stdout: "omp/18.12.6\n", exitCode: 0 })
@@ -971,6 +972,21 @@ describe("OmpControlService.gistReady", () => {
       assert.deepStrictEqual(omp.launches[0]?.args, ["auth", "status"]);
       assert.strictEqual(omp.launches[0]?.options.cwd, "C:\\repo");
     }),
+  );
+
+  it.effect(
+    "runs a gh package-manager shim through the shell instead of calling it signed out",
+    () =>
+      Effect.gen(function* () {
+        const omp = fakeOmp();
+        const state = yield* asWindows(
+          withControl(omp, (control) => control.gistReady(WINDOWS_TARGET)),
+          () => "C:\\tools\\gh.cmd",
+        );
+        assert.strictEqual(state, "ready");
+        assert.strictEqual(omp.launches[0]?.options.shell, true);
+        assert.include(omp.launches[0]?.command ?? "", "gh.cmd");
+      }),
   );
 
   it.effect("reports a missing gh without starting anything", () =>

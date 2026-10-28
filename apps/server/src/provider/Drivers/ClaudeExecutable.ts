@@ -3,7 +3,7 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { SpawnExecutableResolution } from "@t3tools/shared/shell";
+import { nonexistentCommandPath, SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 
@@ -46,7 +46,11 @@ export const resolveClaudeSdkExecutablePath = Effect.fn("resolveClaudeSdkExecuta
 
     const resolveExecutable = yield* SpawnExecutableResolution;
     const isFile = yield* ClaudeExecutableFileCheck;
-    const resolved = resolveExecutable(binaryPath, platform, environment) ?? binaryPath;
+    const explicitPath = binaryPath.includes("/") || binaryPath.includes("\\");
+    // A bare name the SDK would look up in the thread's repository must not survive a miss.
+    const resolved =
+      resolveExecutable(binaryPath, platform, environment) ??
+      (explicitPath ? binaryPath : nonexistentCommandPath(binaryPath, platform));
     const extension = NodePath.win32.extname(resolved).toLowerCase();
     if (!WINDOWS_SHIM_EXTENSIONS.has(extension)) {
       return resolved;
@@ -64,6 +68,6 @@ export const resolveClaudeSdkExecutablePath = Effect.fn("resolveClaudeSdkExecuta
       "Claude launcher shim resolved but no known package entry was found next to it; the Claude Agent SDK cannot spawn launcher scripts directly.",
       { binaryPath, resolvedShimPath: resolved },
     );
-    return binaryPath;
+    return resolved;
   },
 );

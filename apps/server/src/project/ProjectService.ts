@@ -212,23 +212,15 @@ export const make = Effect.gen(function* () {
         ),
       );
 
-  const clearProjectAgentConfigTrust = Effect.fn("ProjectService.clearProjectAgentConfigTrust")(
-    function* (projectId: ProjectId) {
-      const settings = yield* serverSettings.getSettings;
-      const stored = settings.projectSettingsOverrides[projectId];
-      if (stored === undefined || !Object.hasOwn(stored, "trustProjectAgentConfig")) return;
-      const { trustProjectAgentConfig: _trust, ...rest } = stored;
-      yield* serverSettings.updateSettings({
-        projectSettingsOverrides: { [projectId]: Object.keys(rest).length === 0 ? null : rest },
-      });
-    },
-    (effect, projectId) =>
+  const clearProjectAgentConfigTrust = (projectId: ProjectId) =>
+    serverSettings.updateSettings({ projectAgentConfigTrust: { [projectId]: false } }).pipe(
+      Effect.asVoid,
       Effect.mapError(
-        effect,
         (cause) =>
           new ProjectOperationError({ operation: "clear-agent-config-trust", projectId, cause }),
       ),
-  );
+      Effect.withSpan("ProjectService.clearProjectAgentConfigTrust"),
+    );
 
   const commit = Effect.fn("ProjectService.commit")(function* (command: ProjectCommand) {
     const { projectId } = command;
@@ -256,24 +248,21 @@ export const make = Effect.gen(function* () {
         now,
       });
       if (Result.isSuccess(planned)) {
-        // Trust is a decision about one directory's files. Withdraw it only once the move is
-        // validated, and before it is recorded: if the clear fails the move is not made, and if
-        // the record fails afterwards the project is left untrusted. Replays of an applied move
-        // see an unchanged root and leave any newer trust decision alone.
-        if (
+        // Trust is a decision about one directory's files. It is withdrawn inside the commit that
+        // records the move: never for a rejected or replayed command, and a failed withdrawal
+        // stops the move. If recording fails afterwards the project is merely left untrusted.
+        const movesRoot =
           command.type === "project.meta.update" &&
           command.workspaceRoot !== undefined &&
           project !== undefined &&
-          project.workspaceRoot !== command.workspaceRoot
-        ) {
-          yield* clearProjectAgentConfigTrust(projectId);
-        }
+          project.workspaceRoot !== command.workspaceRoot;
         const { receipt } = yield* eventSink.commitProjectCommand({
           commandId: command.commandId,
           projectId,
           commandType: command.type,
           acceptedAt: now,
           event: planned.success,
+          ...(movesRoot ? { beforeRecord: clearProjectAgentConfigTrust(projectId) } : {}),
         });
         return receipt;
       }

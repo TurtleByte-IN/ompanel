@@ -37,6 +37,26 @@ describe("resolveClaudeSdkExecutablePath", () => {
     }),
   );
 
+  it.effect("never falls back to a bare name the thread's repository could answer", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* resolveClaudeSdkExecutablePath("claude", {}).pipe(
+          withWindowsResolution({ resolvedCommand: undefined }),
+        ),
+      ).toBe("C:\\ompanel-command-not-found\\claude");
+    }),
+  );
+
+  it.effect("keeps an explicit path as given", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* resolveClaudeSdkExecutablePath("D:\\tools\\claude.exe", {}).pipe(
+          withWindowsResolution({ resolvedCommand: undefined }),
+        ),
+      ).toBe("D:\\tools\\claude.exe");
+    }),
+  );
+
   it.effect("follows .bat and .ps1 launcher shims the same way", () =>
     Effect.gen(function* () {
       for (const shim of [`${NPM_DIR}\\claude.bat`, `${NPM_DIR}\\claude.ps1`]) {
@@ -78,13 +98,15 @@ describe("resolveClaudeSdkExecutablePath", () => {
     }),
   );
 
-  it.effect("returns the configured path when a shim has no known package entry", () =>
-    Effect.gen(function* () {
-      expect(
-        yield* resolveClaudeSdkExecutablePath("claude", {}).pipe(
-          withWindowsResolution({ resolvedCommand: NPM_SHIM }),
-        ),
-      ).toBe("claude");
-    }),
+  it.effect(
+    "returns the resolved shim, never the bare name, when it has no known package entry",
+    () =>
+      Effect.gen(function* () {
+        expect(
+          yield* resolveClaudeSdkExecutablePath("claude", {}).pipe(
+            withWindowsResolution({ resolvedCommand: NPM_SHIM }),
+          ),
+        ).toBe(NPM_SHIM);
+      }),
   );
 });

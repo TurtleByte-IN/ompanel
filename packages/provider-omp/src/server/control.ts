@@ -9,7 +9,7 @@ import {
   spawnAndCollect,
 } from "@t3tools/provider-core/server/snapshotProbe";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { SpawnExecutableResolution } from "@t3tools/shared/shell";
+import { resolveSpawnCommand, SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -1508,12 +1508,18 @@ export const makeOmpControlService = Effect.fn("makeOmpControlService")(function
     const resolveExecutable = yield* SpawnExecutableResolution;
     const ghPath = resolveExecutable("gh", platform, target.environment);
     if (ghPath === undefined) return "missing" as const;
+    // A .cmd/.bat gh (a package-manager shim) needs the shell dispatch resolveSpawnCommand builds.
+    const launch = yield* resolveSpawnCommand(ghPath, ["auth", "status"], {
+      env: target.environment,
+      extendEnv: false,
+    });
     return yield* withDeadline(
       "gh_auth",
       "ghAuth",
       spawnAndCollect(
         ghPath,
-        ChildProcess.make(ghPath, ["auth", "status"], {
+        ChildProcess.make(launch.command, launch.args, {
+          shell: launch.shell,
           cwd: target.cwd,
           env: target.environment,
           extendEnv: false,
