@@ -68,8 +68,8 @@ carry `--approval-mode` followed by one of `always-ask`, `always-ask-cached`,
 (`reason: "spawn"`) and no process is created. This covers a runtime mode the
 build does not know as well as a caller that builds its own command line. The
 fork's `omp --mode rpc-ui` refuses to start without the flag as well from tag
-v18.12.6-ompanel.4 (TurtleByte-IN/oh-my-pi#46); while `omp.lock` pins an
-earlier tag, the check here is the only one.
+v18.12.6-ompanel.4 (TurtleByte-IN/oh-my-pi#46), which `omp.lock` pins or exceeds; the check
+here stays as the earlier, structured failure.
 
 ## Permission mode changes
 
