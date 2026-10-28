@@ -138,10 +138,13 @@ export const ompSidecarCachePath = (
  * platform, an asset name that is not a single path segment, or no sha256 to verify against.
  */
 export const pinnedOmpSidecar = Effect.fn("pinnedOmpSidecar")(function* (lock: OmpLock) {
+  const hostPlatform = yield* HostProcess.Platform;
   const platform = ompSidecarPlatform(
-    yield* HostProcess.Platform,
+    hostPlatform,
     yield* HostProcess.Architecture,
-    yield* OmpHostLinuxLibc,
+    // Only a Linux asset depends on the libc. Detecting it builds a process report, which on
+    // Windows intermittently corrupted the heap and crashed the server at startup.
+    hostPlatform === "linux" ? yield* OmpHostLinuxLibc : "gnu",
   );
   const pinned = platform === undefined ? undefined : lock.sidecars[platform];
   if (platform === undefined || pinned === undefined) {
