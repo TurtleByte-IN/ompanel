@@ -20,6 +20,7 @@ import { CustomSnoozeDialogHost } from "../components/CustomSnoozeDialog";
 import { GuestShareDialogHost } from "../components/chat/GuestShareControls";
 import { OmpThreadDialogHost } from "../components/chat/OmpThreadMenu";
 import { AddProjectToMachineDialogHost } from "../components/AddProjectToMachineDialog";
+import { ContinueOmpSessionDialogHost } from "../components/ompSessions/ContinueOmpSessionDialog";
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
 import { FirstRunGate } from "../components/onboarding/FirstRunGate";
 import { ConnectOnboardingDialog } from "../components/cloud/ConnectOnboardingDialog";
@@ -167,6 +168,7 @@ function RootRouteBranch() {
       <>
         <CustomSnoozeDialogHost />
         <GuestShareDialogHost />
+        <ContinueOmpSessionDialogHost />
         <CommandPalette>
           <AppSidebarLayout>
             <Outlet />
@@ -207,6 +209,7 @@ function RootRouteBranch() {
         <CustomSnoozeDialogHost />
         <GuestShareDialogHost />
         <OmpThreadDialogHost />
+        <ContinueOmpSessionDialogHost />
         <ProjectCloneToastCoordinator />
         <AddProjectToMachineDialogHost />
         {primaryEnvironmentAuthenticated ? (

@@ -161,10 +161,6 @@ vi.mock(import("./OmpOnboardingSection"), async (original) => ({
   ...(await original()),
   OmpOnboardingSection: (() => null) as never,
 }));
-vi.mock(import("./OmpSessionImportSection"), async (original) => ({
-  ...(await original()),
-  OmpSessionImportSection: (() => null) as never,
-}));
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { EnvironmentProviderSettings } from "./ProviderSettingsPanel";

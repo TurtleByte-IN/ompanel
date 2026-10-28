@@ -67,7 +67,10 @@ import { SettingResetButton, SettingsRow, SettingsSection } from "./settingsLayo
 import { AcpSessionManagementSection } from "./AcpSessionManagementSection";
 import { OmpAccountsSection } from "./OmpAccountsSection";
 import { OmpOnboardingSection } from "./OmpOnboardingSection";
-import { OmpSessionImportSection } from "./OmpSessionImportSection";
+import {
+  CONTINUE_OMP_SESSION_LABEL,
+  openContinueOmpSessionDialog,
+} from "../ompSessions/ContinueOmpSessionDialog";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { readCodexSetupMode } from "./CodexSetupSection.logic";
 import {
@@ -1256,10 +1259,21 @@ export function ProviderInstanceCard({
         />
       ) : null}
       {environmentId !== undefined && liveProvider?.driver === "omp" ? (
-        <OmpSessionImportSection
-          environmentId={environmentId}
-          instanceId={instanceId}
-          projects={acpProjects}
+        <SettingsRow
+          title="OMP sessions"
+          description="Sessions OMP saved, in a terminal or elsewhere, continue as threads."
+          control={
+            <Button
+              type="button"
+              size="xs"
+              variant="link"
+              onClick={() =>
+                openContinueOmpSessionDialog({ environmentId, projectId: null, instanceId })
+              }
+            >
+              {CONTINUE_OMP_SESSION_LABEL}
+            </Button>
+          }
         />
       ) : null}
 

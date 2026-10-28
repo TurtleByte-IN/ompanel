@@ -71,6 +71,11 @@ import {
 } from "@t3tools/client-runtime/environment";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import {
+  CONTINUE_OMP_SESSION_LABEL,
+  openContinueOmpSessionDialog,
+  readContinueOmpSessionRequest,
+} from "./ompSessions/ContinueOmpSessionDialog";
+import {
   isAtomCommandInterrupted,
   settlePromise,
   squashAtomCommandFailure,
@@ -1704,9 +1709,21 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           params: { projectKey: project.projectKey },
         });
       });
+      const ompSessionRequest = readContinueOmpSessionRequest(
+        project.memberProjects.map((member) => scopeProjectRef(member.environmentId, member.id)),
+      );
+      if (ompSessionRequest !== null) {
+        actionHandlers.set("continue-omp-session", () => {
+          if (isMobile) setOpenMobile(false);
+          openContinueOmpSessionDialog(ompSessionRequest);
+        });
+      }
 
       const clicked = await api.contextMenu.show(
         [
+          ...(ompSessionRequest === null
+            ? []
+            : [{ id: "continue-omp-session", label: CONTINUE_OMP_SESSION_LABEL }]),
           buildTargetedItem("rename", "Rename", {
             isDisabled: (member) =>
               !readEnvironmentScope(member.environmentId, AuthOrchestrationOperateScope),

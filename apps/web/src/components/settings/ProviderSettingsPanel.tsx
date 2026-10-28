@@ -1269,7 +1269,7 @@ function ProviderInstanceRow({
 }) {
   const allProjects = useProjects();
   const acpProjects =
-    mode === "editor" && (liveProvider?.driver === "acpRegistry" || liveProvider?.driver === "omp")
+    mode === "editor" && liveProvider?.driver === "acpRegistry"
       ? allProjects.filter((project) => project.environmentId === environmentId)
       : undefined;
   const instance = explicitInstance ?? { driver };
