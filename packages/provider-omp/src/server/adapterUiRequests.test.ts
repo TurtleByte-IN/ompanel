@@ -167,12 +167,24 @@ const startUiTurn = Effect.fnUntraced(function* (script: {
   });
   const replies = () =>
     state.commands().filter((command) => command["type"] === "extension_ui_response");
+  /**
+   * The answers OMP has received, once it has `count` of them. The adapter reports a dialog
+   * closed as soon as it has queued the answer on OMP's stdin, so the fake's command log (a
+   * separate process) can still lag behind the event the test just saw.
+   */
+  const repliesAfter = Effect.fnUntraced(function* (count: number) {
+    assert.isTrue(
+      yield* waitUntil(() => replies().length >= count),
+      `omp received fewer than ${count} dialog answers`,
+    );
+    return replies();
+  });
   const itemFor = (requestId: OrchestrationV2RuntimeRequest["id"]) =>
     items().findLast(
       (item): item is Extract<OrchestrationV2TurnItem, { requestId: unknown }> =>
         "requestId" in item && item.requestId === requestId,
     );
-  return { session, state, request, terminal, replies, itemFor };
+  return { session, state, request, terminal, replies, repliesAfter, itemFor };
 });
 
 const APPROVAL_PROMPT = [
@@ -226,7 +238,7 @@ posixOnly("OmpAdapter UI requests", () => {
         const resolved = yield* turn.request("resolved");
         assert.strictEqual(resolved.id, pending.id);
         assert.strictEqual(turn.itemFor(pending.id)?.status, "completed");
-        assert.deepStrictEqual(turn.replies(), [
+        assert.deepStrictEqual(yield* turn.repliesAfter(1), [
           { type: "extension_ui_response", id: "ui-approve", value },
         ]);
         const terminal = yield* turn.terminal();
@@ -262,7 +274,7 @@ posixOnly("OmpAdapter UI requests", () => {
       const expired = yield* turn.request("expired");
       assert.strictEqual(expired.id, pending.id);
       assert.strictEqual(turn.itemFor(pending.id)?.status, "cancelled");
-      assert.deepStrictEqual(turn.replies(), [
+      assert.deepStrictEqual(yield* turn.repliesAfter(1), [
         { type: "extension_ui_response", id: "ui-confirm", cancelled: true, timedOut: true },
       ]);
       yield* turn.terminal();
@@ -336,7 +348,7 @@ posixOnly("OmpAdapter UI requests", () => {
         answers: { parts: ["API", "Docs"], tone: "Friendly but brief" },
       });
       yield* turn.request("resolved");
-      assert.deepStrictEqual(turn.replies(), [
+      assert.deepStrictEqual(yield* turn.repliesAfter(1), [
         {
           type: "extension_ui_response",
           id: "ui-ask",
@@ -392,7 +404,7 @@ posixOnly("OmpAdapter UI requests", () => {
           .map((command) => command["message"]),
         ["/review"],
       );
-      assert.deepStrictEqual(turn.replies(), [
+      assert.deepStrictEqual(yield* turn.repliesAfter(1), [
         { type: "extension_ui_response", id: "ui-review", value: "2. Review uncommitted changes" },
       ]);
       yield* turn.terminal();
