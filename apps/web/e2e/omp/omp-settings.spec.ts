@@ -338,9 +338,7 @@ test("edits enabledModels' global entries on the Models page and keeps the folde
   await field.fill("fake/fake-model\nfake/second-model");
   await field.blur();
   // The write replaced only the plain entries; the folder-scoped one is still in the global file.
-  await expect
-    .poll(globalEnabledModels)
-    .toEqual(["fake/fake-model", "fake/second-model", scoped]);
+  await expect.poll(globalEnabledModels).toEqual(["fake/fake-model", "fake/second-model", scoped]);
   await expect(field).toHaveValue("fake/fake-model\nfake/second-model");
   await expect(row.getByRole("list", { name: "enabledModels folder entries" })).toContainText(
     `Only in ${folder}: fake/folder-model`,
