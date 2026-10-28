@@ -43,7 +43,7 @@ describe.runIf(binary !== undefined && HostProcess.Platform.defaultValue() !== "
           NodeFS.mkdirSync(dir, { recursive: true });
         }
         NodeFS.writeFileSync(NodePath.join(agentDir, "models.yml"), MODELS);
-        // The project's own config limits sessions there to lab-a.
+        // The project's own config limits sessions there to lab-a, once the project is trusted.
         NodeFS.writeFileSync(
           NodePath.join(project, ".omp", "config.yml"),
           "enabledModels: [lab/lab-a]\n",
@@ -67,7 +67,8 @@ describe.runIf(binary !== undefined && HostProcess.Platform.defaultValue() !== "
               ),
             );
 
-        assert.deepStrictEqual(yield* models(project), ["lab-a"]);
+        // A control session starts untrusted, so it ignores the project's own `enabledModels`.
+        assert.deepStrictEqual(yield* models(project), ["lab-a", "lab-b"]);
         assert.deepStrictEqual(yield* models(other), ["lab-a", "lab-b"]);
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );

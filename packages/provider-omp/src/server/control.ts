@@ -144,12 +144,9 @@ export const OMP_CONTROL_RPC_ARGS = [
 ] as const;
 
 /**
- * The `--config` overlay every `omp --mode rpc` control session runs with. The process starts in
- * the project's directory, before the project is trusted. `workspace.trusted: false` (RPC contract
- * 1.10.0's `workspace-trust`; a `--config` overlay outranks the project layer, which cannot set
- * it) stops OMP loading the project's own code: custom tools, plugins, extensions, hooks, MCP,
- * LSP and DAP servers. `--no-tools` and `--no-extensions` do not stop custom tools, so the
- * overlay does. `mcp.enableProjectConfig` stays off as well.
+ * The `--config` overlay of every control session, which starts in the project before it is
+ * trusted: `workspace.trusted: false` stops OMP loading the project's own code (`--no-tools`
+ * does not), and the project's MCP config stays off. It outranks the project layer.
  */
 const OMP_CONTROL_OVERLAY = "workspace:\n  trusted: false\nmcp:\n  enableProjectConfig: false\n";
 
