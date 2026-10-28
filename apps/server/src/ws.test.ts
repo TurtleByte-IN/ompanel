@@ -416,7 +416,9 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(CodexInstallation.CodexInstallation)({ managedDirectory: "/unused" }),
   Layer.mock(DeviceService.DeviceService)({}),
   Layer.mock(EnvironmentTheme.EnvironmentThemeService)({}),
-  Layer.mock(GitWorkflowService.GitWorkflowService)({}),
+  Layer.mock(GitWorkflowService.GitWorkflowService)({
+    listRefs: () => Effect.succeed({ isRepo: false, refs: [], nextCursor: null } as never),
+  }),
   Layer.mock(HostResources.HostResources)({}),
   Layer.mock(McpAppRequests.McpAppRequests)({}),
   Layer.mock(ModelManifest.ModelManifest)({}),
@@ -429,7 +431,11 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(ProcessDiagnostics.ProcessDiagnostics)({}),
   Layer.mock(ProcessResourceMonitor.ProcessResourceMonitor)({}),
   Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({}),
-  Layer.mock(ProjectService.ProjectService)({}),
+  // `/b` is a project's workspace root: provider refreshes accept only a project's folders.
+  Layer.mock(ProjectService.ProjectService)({
+    listShells: () =>
+      Effect.succeed([{ id: ProjectId.make("project-b"), workspaceRoot: "/b" }] as never),
+  }),
   Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({}),
   Layer.mock(ProjectStore.ProjectStoreV2)({}),
   Layer.mock(ProviderAuthService.ProviderAuthService)({}),
@@ -829,6 +835,7 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
         snapshotFor("/b", "2026-10-25T00:00:00.000Z"),
       ],
     };
+    const scanned: Array<string> = [];
     const providerChanges = yield* Queue.unbounded<ReadonlyArray<ServerProvider>>();
     const pulled = yield* Queue.unbounded<void>();
     const responses = yield* Queue.unbounded<unknown>();
@@ -838,7 +845,12 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
         subscribeChanges: Effect.succeed(
           Stream.fromQueue(providerChanges).pipe(Stream.tap(() => Queue.offer(pulled, undefined))),
         ),
-        refreshWorkspaceSnapshot: () => Effect.succeed([provider]),
+        refreshWorkspaceSnapshot: (input) =>
+          Effect.sync(() => {
+            scanned.push(input.cwd);
+            return [provider];
+          }),
+        refreshInstance: () => Effect.succeed([provider]),
       },
       responses,
     );
@@ -883,6 +895,18 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
       refreshed.providers.map((entry) => [entry.workspaceSnapshots, entry.slashCommands]),
       [[[snapshotFor("/b", "2026-10-25T00:00:00.000Z")], []]],
     );
+    assert.deepEqual(scanned, ["/b"]);
+
+    // A folder the client names that is no project's root or worktree is never scanned.
+    yield* server.write(0, {
+      _tag: "Request",
+      id: RpcMessage.RequestId("refresh-outside"),
+      tag: WS_METHODS.serverRefreshProviders,
+      payload: { instanceId, cwd: "/b/node_modules/pkg", workspaceSnapshotsOnDemand: true },
+      headers: Headers.empty,
+    });
+    yield* Queue.take(responses);
+    assert.deepEqual(scanned, ["/b"]);
     yield* server.write(0, { _tag: "Interrupt", requestId: configRequest, interruptors: [] });
   }).pipe(Effect.provide(layerConfigRpcTest), Effect.scoped),
 );
