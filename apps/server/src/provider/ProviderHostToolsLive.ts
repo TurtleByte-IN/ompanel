@@ -33,7 +33,7 @@ import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { resolveWorkspaceOwner } from "./WorkspaceOwner.ts";
+import { makeWorkspaceOwnerResolver } from "./WorkspaceOwner.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 import {
@@ -670,13 +670,15 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  const workspaceOwner = makeWorkspaceOwnerResolver({ projects, gitWorkflow, fileSystem, path });
+
   /** Trusted only for a project's own root or git worktree, by that project's trust. */
   const workspaceTrusted: ProviderHostTools["Service"]["workspaceTrusted"] = Effect.fn(
     "ProviderHostTools.workspaceTrusted",
   )(
     function* (cwd) {
       if (Option.isNone(serverSettings)) return false;
-      const owner = yield* resolveWorkspaceOwner({ projects, gitWorkflow, fileSystem, path }, cwd);
+      const owner = yield* workspaceOwner(cwd);
       if (Option.isNone(owner)) return false;
       const settings = yield* serverSettings.value.getSettings;
       // Per project only: a server-wide value is never read.

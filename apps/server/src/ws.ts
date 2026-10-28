@@ -223,7 +223,7 @@ import { linkCreatedPullRequest } from "./git/linkCreatedPullRequest.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as ProjectEnrichmentService from "./project/ProjectEnrichmentService.ts";
 import * as ProjectService from "./project/ProjectService.ts";
-import { resolveWorkspaceOwner } from "./provider/WorkspaceOwner.ts";
+import { makeWorkspaceOwnerResolver } from "./provider/WorkspaceOwner.ts";
 import { threadWorkspaceRoot } from "./project/threadWorkspaceRoot.ts";
 import * as ManagedProjectFolders from "./project/ManagedProjectFolders.ts";
 import { projectMutationOperation } from "./project/ProjectMutation.ts";
@@ -1347,6 +1347,12 @@ export const layerWsRpc = (
       const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
       const hostFileSystem = yield* FileSystem.FileSystem;
       const hostPath = yield* Path.Path;
+      const workspaceOwner = makeWorkspaceOwnerResolver({
+        projects: projectService,
+        gitWorkflow,
+        fileSystem: hostFileSystem,
+        path: hostPath,
+      });
       const review = yield* ReviewService.ReviewService;
       const vcsProvisioning = yield* VcsProvisioningService.VcsProvisioningService;
       const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
@@ -3024,17 +3030,7 @@ export const layerWsRpc = (
             const workspaceCwd =
               input.cwd === undefined
                 ? undefined
-                : Option.isSome(
-                      yield* resolveWorkspaceOwner(
-                        {
-                          projects: projectService,
-                          gitWorkflow,
-                          fileSystem: hostFileSystem,
-                          path: hostPath,
-                        },
-                        input.cwd,
-                      ),
-                    )
+                : Option.isSome(yield* workspaceOwner(input.cwd))
                   ? input.cwd
                   : undefined;
             let providers = yield* workspaceCwd !== undefined && input.instanceId !== undefined

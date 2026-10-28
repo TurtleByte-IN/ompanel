@@ -30,9 +30,12 @@ flag load code despite `--no-extensions`.
 Every control server (`omp --mode rpc`, started in the project's directory)
 also gets `--config <overlay>`, a file chosen by the project's trust. The
 server decides trust (`trustProjectAgentConfig`, per project) for a directory
-that is a project's own workspace root or one of its git worktrees (the
-worktree listing `vcs.listRefs` and threads use); a folder inside a project and
-any other directory are untrusted:
+that is a project's own workspace root, or the same folder of one of its git
+worktrees (the worktree path plus the project's subpath inside the repository,
+from the listing `vcs.listRefs` and threads use; a project at `repo/app` owns
+`repo/app` and `<worktree>/app`, not the repository root). A folder two projects
+claim, a folder inside a project and any other directory are untrusted. Each
+project's worktree listing is reused for 5 seconds:
 
 - untrusted holds `workspace.trusted: false` and `mcp.enableProjectConfig: false`.
   `--no-tools` and `--no-extensions` do not stop OMP from loading a project's
